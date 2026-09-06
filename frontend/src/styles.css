@@ -2,15 +2,36 @@
 * { box-sizing: border-box; }
 body { margin: 0; }
 .page { min-height: 100vh; padding: 24px 16px; }
-.card { max-width: 720px; margin: 0 auto; background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px #17202a14; }
+.card { max-width: 760px; margin: 0 auto; background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px #17202a14; }
 h1 { margin: 0; font-size: 1.5rem; }
 h2 { margin: 8px 0 24px; font-size: 1rem; color: #52616b; letter-spacing: .04em; }
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 14px 10px; border-bottom: 1px solid #e6eaed; }
-th { color: #52616b; font-size: .8rem; text-transform: uppercase; }
-.event { display: inline-block; border-radius: 999px; padding: 5px 10px; font-size: .78rem; font-weight: 700; }
-.entry { color: #176b36; background: #dff5e7; }
-.exit { color: #a22828; background: #fde5e5; }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 28px; }
+.summary div { padding: 14px; border-radius: 10px; background: #f3f5f7; }
+.summary span { display: block; margin-bottom: 5px; color: #52616b; font-size: .78rem; text-transform: uppercase; }
+.summary strong { font-size: 1.25rem; }
+.summary .problem-count { color: #a05b00; }
+.days { display: grid; gap: 24px; }
+.day { border-top: 1px solid #dce2e6; padding-top: 18px; }
+.day-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 10px; }
+.day-heading h3 { margin: 0; font-size: 1.08rem; text-transform: capitalize; }
+.day-heading span { color: #52616b; font-size: .9rem; white-space: nowrap; }
+.sessions { display: grid; gap: 8px; }
+.session { display: flex; justify-content: space-between; gap: 20px; padding: 12px 14px; border-left: 4px solid; border-radius: 8px; background: #f8fafb; }
+.session.valid { border-color: #2d8a4e; }
+.session.warning { border-color: #d98b19; background: #fff8ec; }
+.session strong { display: block; }
+.location { display: block; margin-top: 4px; color: #687780; font-size: .78rem; }
+.session-result { text-align: right; }
+.anomaly { display: block; align-self: center; color: #8a4d00; font-size: .86rem; font-weight: 700; text-align: right; }
+.raw-events { display: grid; gap: 3px; }
+.raw-events > span:not(.location) { font-size: .9rem; font-weight: 600; }
 .message { margin: 24px 0; color: #52616b; }
 .error { color: #a22828; }
-@media (max-width: 480px) { .card { padding: 18px; } th, td { padding: 12px 5px; } }
+@media (max-width: 560px) {
+  .card { padding: 18px; }
+  .summary { grid-template-columns: 1fr; }
+  .summary div { display: flex; justify-content: space-between; align-items: center; }
+  .summary span { margin: 0; }
+  .session { flex-direction: column; gap: 8px; }
+  .session-result, .anomaly { text-align: left; }
+}

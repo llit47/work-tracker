@@ -1,6 +1,6 @@
 # Work Tracker
 
-Prosta aplikacja działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i udostępnia API. Frontend React wyświetla zdarzenia bieżącego miesiąca.
+Prosta aplikacja działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i wylicza sesje pracy bez zmiany danych źródłowych. Frontend React pokazuje sesje, dzienne sumy, miesięczne podsumowanie i anomalie bieżącego miesiąca.
 
 Nie konfiguruje publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
 
@@ -199,6 +199,7 @@ npm run build
 
 - `POST /api/webhook/home-assistant` — przyjmuje JSON webhooka; wymaga nagłówka `X-Webhook-Token`.
 - `GET /api/work-events?year=2026&month=9` — zwraca chronologicznie zdarzenia dla wskazanego miesiąca kalendarzowego w offsetcie przekazanym przez Home Assistanta.
+- `GET /api/work-summary?year=2026&month=9` — wylicza sesje, dni, miesięczny czas pracy i anomalie na podstawie niezmienionych raw events.
 - `GET /api/health` — prosty status API.
 
 Przykładowy webhook:

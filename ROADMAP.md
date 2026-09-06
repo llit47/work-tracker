@@ -28,7 +28,7 @@ Zakończony zakres:
 
 ## Phase 1 — Work-time calculation
 
-**Status: NEXT**
+**Status: DONE**
 
 Cel: przekształcić surowe eventy w czytelne sesje pracy i podsumowania bez modyfikowania danych źródłowych.
 
@@ -65,20 +65,20 @@ Poza zakresem Phase 1:
 
 ### Acceptance criteria
 
-- [ ] Poprawna para `entry → exit` tworzy jedną sesję z prawidłowym czasem trwania.
-- [ ] Czas trwania jest liczony na podstawie jednoznacznych chwil UTC, z zachowaniem oryginalnych timestampów i offsetów do prezentacji.
-- [ ] Wyniki obejmują czas każdego dnia, sumę miesiąca oraz liczbę dni pracy.
-- [ ] Eventy są przetwarzane chronologicznie; kolejność odbioru HTTP nie zmienia wyniku.
-- [ ] Każdy typ anomalii jest wykrywany i widoczny, bez zgadywania brakującego czasu pracy.
-- [ ] Reguła dla sesji przechodzącej przez północ jest jawnie opisana i pokryta testami.
-- [ ] Frontend pokazuje sesje/dni i podsumowanie bieżącego miesiąca oraz zachowuje obsługę ładowania, braku danych i błędu.
-- [ ] Testy obejmują zwykłe sesje, anomalie, eventy poza kolejnością, północ oraz zmianę czasu letniego/zimowego.
-- [ ] Rekordy raw events nie są aktualizowane ani usuwane przez logikę wyliczeń.
-- [ ] `PROJECT_STATUS.md` i status Phase 1 zostają zaktualizowane po zakończeniu etapu.
+- [x] Poprawna para `entry → exit` tworzy jedną sesję z prawidłowym czasem trwania.
+- [x] Czas trwania jest liczony na podstawie jednoznacznych chwil UTC, z zachowaniem oryginalnych timestampów i offsetów do prezentacji.
+- [x] Wyniki obejmują czas każdego dnia, sumę miesiąca oraz liczbę dni pracy.
+- [x] Eventy są przetwarzane chronologicznie; kolejność odbioru HTTP nie zmienia wyniku.
+- [x] Każdy typ anomalii jest wykrywany i widoczny, bez zgadywania brakującego czasu pracy.
+- [x] Reguła dla sesji przechodzącej przez północ jest jawnie opisana i pokryta testami.
+- [x] Frontend pokazuje sesje/dni i podsumowanie bieżącego miesiąca oraz zachowuje obsługę ładowania, braku danych i błędu.
+- [x] Testy obejmują zwykłe sesje, anomalie, eventy poza kolejnością, północ oraz zmianę czasu letniego/zimowego.
+- [x] Rekordy raw events nie są aktualizowane ani usuwane przez logikę wyliczeń.
+- [x] `PROJECT_STATUS.md` i status Phase 1 zostają zaktualizowane po zakończeniu etapu.
 
 ## Phase 2 — Monthly navigation and summaries
 
-**Status: PLANNED**
+**Status: NEXT**
 
 - poprzedni i następny miesiąc,
 - wybór miesiąca,
