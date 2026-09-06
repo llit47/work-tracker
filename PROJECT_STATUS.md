@@ -1,127 +1,71 @@
-# Dziennik projektu — Work Tracker
+# Work Tracker — project status
 
-## Cel projektu
+## Current status
 
-Lokalna aplikacja LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy wysyłanych w przyszłości przez Home Assistant.
+- **Phase 0 — Deployment and Home Assistant ingestion: DONE**
+- **Phase 1 — Work-time calculation: NEXT**
 
-## Aktualny stan
+Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
-Podstawowa wersja aplikacji jest zaimplementowana. Dodano instalację i aktualizację dla Debiana/Ubuntu: trwałe dane poza repozytorium, usługę systemd i produkcyjne serwowanie zbudowanego frontendu przez FastAPI.
+## What currently works
 
-## Ukończone etapy
+- Backend FastAPI odbiera zabezpieczone tokenem webhooki Home Assistant.
+- Eventy `entry` i `exit` są walidowane i zapisywane w SQLite.
+- API udostępnia eventy wskazanego miesiąca oraz endpoint health check.
+- Frontend pokazuje eventy bieżącego miesiąca.
+- Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
+- Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
-- Struktura projektu z rozdzielonym `backend/` i `frontend/`.
-- Backend FastAPI, SQLAlchemy, SQLite i Alembic.
-- Migracja tworząca tabelę zdarzeń oraz indeksy.
-- Zabezpieczony tokenem endpoint webhooka i endpoint odczytu miesiąca.
-- Widok bieżącego miesiąca z obsługą ładowania, braku danych i błędu.
-- Testy backendu oraz dokumentacja uruchomienia.
-- Review modelu czasu, tokenu, CORS i działania w LAN.
-- Interaktywny instalator oraz updater z backupem SQLite.
-- Automatyczny rollback kodu/unitu, a po rozpoczęciu migracji również bazy danych.
-- Dedykowany użytkownik i utwardzona usługa systemd.
-- Manifest wykrywający nowe wymagane ustawienia.
-- Produkcyjne serwowanie `frontend/dist` przez FastAPI.
-- Jawne pakowanie backendu oraz kontrolowane, tylko do odczytu uprawnienia kodu dla użytkownika usługi.
-
-## Aktualnie wykonywany etap
-
-Etap wdrożenia na Debianie/Ubuntu jest zaimplementowany i podlega kolejnym testom na świeżym Debianie 13 LXC. Kod pozostaje własnością roota, a użytkownik `work-tracker` otrzymuje grupowy dostęp do odczytu i wykonania potrzebny do migracji oraz uruchomienia usługi. Updater i rollback ponownie stosują ten sam model po przebudowie plików.
-
-## Następne kroki
-
-- Ustalić docelowy sposób uruchomienia w LAN na serwerze/VM/kontenerze.
-- Skonfigurować Home Assistant do wysyłania webhooków po decyzji o adresie LAN.
-- Przetestować pełną instalację na docelowym kontenerze LXC z systemd.
-- Dopiero w kolejnych etapach: obliczanie czasu pracy, widok poprzednich miesięcy, korekty ręczne i rozszerzenia lokalizacji.
-
-## Architektura
-
-- **Backend:** FastAPI w Pythonie; logika API jest w `backend/app/`.
-- **Frontend:** React + Vite w `frontend/`; po buildzie FastAPI serwuje `frontend/dist` na `/`.
-- **Baza danych:** lokalny plik SQLite, tworzony przez Alembic.
-- **API:** REST pod `/api`.
-- **Komunikacja z Home Assistant:** przyszły Home Assistant wyśle `POST` z nagłówkiem `X-Webhook-Token`; sama integracja nie jest obecnie konfigurowana.
-- **Deployment:** `install.sh`, `update.sh`, manifest konfiguracji i unit systemd dla Debiana/Ubuntu.
-
-## Endpointy API
+Aktualne endpointy:
 
 - `POST /api/webhook/home-assistant`
 - `GET /api/work-events?year=YYYY&month=MM`
 - `GET /api/health`
 
-## Model danych
+## Production/deployment state
 
-Tabela `work_events` przechowuje wszystkie otrzymane zdarzenia: `id`, `event_type`, `location`, `event_timestamp`, `received_at`, `source` oraz techniczne `event_timestamp_utc`. Baza dodatkowo wymusza, że `event_type` jest `entry` albo `exit`.
+- Środowisko: Debian 13 LXC na Proxmox, wyłącznie w sieci LAN.
+- Proces: `work-tracker.service`; autostart po restarcie LXC i restart po awarii.
+- Instalacja: `install.sh`.
+- Aktualizacja: `update.sh` z backupem SQLite i rollbackiem.
+- Kod: `/opt/work-tracker`.
+- Konfiguracja: `/etc/work-tracker/work-tracker.env`.
+- Baza: `/var/lib/work-tracker/work_tracker.db`.
+- Backupy: `/var/backups/work-tracker`.
 
-SQLite nie zachowuje niezawodnie stref czasowych w natywnym typie daty, dlatego timestampy są świadomie przechowywane jako tekst ISO-8601. `event_timestamp` zachowuje oryginalny timestamp Home Assistanta wraz z offsetem i wyznacza lokalny miesiąc kalendarzowy. `received_at` rejestruje niezależnie moment dotarcia żądania w UTC. `event_timestamp_utc` jest zawsze znormalizowany do UTC i służy do poprawnego sortowania oraz przyszłych obliczeń czasu pracy, także przy zmianie czasu. Indeksy istnieją dla timestampu zdarzenia, jego wartości UTC oraz lokalizacji.
+## Current data model / important assumptions
 
-## Konfiguracja
+- Raw events z Home Assistant są źródłem prawdy (`source of truth`).
+- Logika czasu pracy nie może niszczyć ani nadpisywać raw events.
+- Raw event zawiera m.in. `id`, `event_type`, `location`, `event_timestamp`, `event_timestamp_utc`, `received_at` i `source`.
+- Jedyna aktywna lokalizacja to `gabinet_zabki`.
+- Obsługiwane typy eventów to `entry` i `exit`.
+- `event_timestamp` pochodzi z Home Assistant i zachowuje lokalny offset.
+- `event_timestamp_utc` przechowuje odpowiadającą mu chwilę UTC.
+- `received_at` oznacza czas odebrania webhooka przez backend.
 
-W `backend/.env` wymagane jest:
+## Next implementation target
 
-- `WEBHOOK_TOKEN` — losowy token wymagany przez webhook, co najmniej 32 znaki.
+**Phase 1 — Work-time calculation**
 
-Opcjonalne wartości:
+Najbliższy PR funkcjonalny powinien dotyczyć wyłącznie przekształcenia raw events w sesje pracy, dzienne czasy oraz miesięczne podsumowanie, łącznie z jawną obsługą anomalii. Szczegółowe acceptance criteria są w `ROADMAP.md`.
 
-- `DATABASE_URL` — domyślnie `sqlite:///./work_tracker.db`.
-- `CORS_ORIGINS` — adresy lokalnego serwera Vite.
+## Known intentional limitations
 
-`frontend/.env` może ustawić `VITE_API_BASE_URL`, domyślnie `http://localhost:8000` zgodnie z plikiem przykładowym.
+- jedna praca i jedna aktywna lokalizacja,
+- brak ręcznych korekt,
+- brak wyliczania wynagrodzenia,
+- brak logowania użytkownika,
+- brak eksportów,
+- brak publicznego dostępu do aplikacji.
 
-Instalacja systemowa używa `/etc/work-tracker/work-tracker.env`. Klucze `APP_HOST`, `APP_PORT`, `WEBHOOK_TOKEN` i `DATABASE_URL` są wymagane; `CORS_ORIGINS` jest opcjonalny. Definicje są utrzymywane w `deploy/config.manifest`, co pozwala updaterowi wykrywać nowe wymagane wartości bez zmieniania istniejących wpisów.
+## Recent milestones
 
-## Wdrożenie Debian/Ubuntu
+- PR #1 — `feat: initial local Work Tracker`
+- PR #2 — `feat: add Debian installer and safe updater`
+- PR #3 — `fix: make fresh Debian installation work`
+- PR #4 — `fix: allow service user to run deployed application`
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/llit47/work-tracker/main/install.sh | sudo bash
-```
+## Maintenance rule
 
-Kod jest instalowany w `/opt/work-tracker`, konfiguracja w `/etc/work-tracker`, baza w `/var/lib/work-tracker`, a backupy w `/var/backups/work-tracker`. Proces działa jako użytkownik `work-tracker` i automatycznie startuje przez systemd.
-
-Aktualizacja:
-
-```bash
-sudo /opt/work-tracker/update.sh
-```
-
-## Uruchamianie
-
-```bash
-cp .env.example backend/.env
-cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[dev]'
-alembic upgrade head
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-W osobnym terminalu:
-
-```bash
-cd frontend
-cp .env.example .env
-npm install
-npm run dev
-```
-
-Gdy Home Assistant działa na osobnym hoście zaufanej sieci LAN, backend należy uruchomić z `--host 0.0.0.0`. Nie należy otwierać portu poza LAN ani konfigurować tunelu. CORS nie dotyczy webhooka Home Assistanta; `CORS_ORIGINS` ustawia się wyłącznie dla originu frontendu uruchomionego w przeglądarce.
-
-## Testowanie
-
-```bash
-cd backend
-source .venv/bin/activate
-pytest
-bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/tests/config_update_test.sh
-../deploy/tests/config_update_test.sh
-```
-
-```bash
-cd frontend
-npm run build
-```
-
-## Home Assistant
-
-Integracja z Home Assistant nie została jeszcze skonfigurowana. Backend jest przygotowany do przyjmowania webhooków.
+Każdy PR realizujący roadmapę powinien aktualizować ten plik oraz status właściwego etapu w `ROADMAP.md`. Nie należy rozpoczynać następnej fazy bez jawnie określonego zakresu PR.
