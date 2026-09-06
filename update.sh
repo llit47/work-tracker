@@ -21,6 +21,37 @@ readonly SERVICE_FILE="/etc/systemd/system/work-tracker.service"
 readonly SERVICE_USER="work-tracker"
 readonly MANIFEST_FILE="${APP_DIR}/deploy/config.manifest"
 
+repository_was_clean=false
+repository_changed=false
+migration_started=false
+service_was_active=false
+backup_file=""
+previous_commit=""
+unit_backup=""
+
+[[ -f "${APP_DIR}/deploy/update_rollback.sh" ]] || {
+    printf '[work-tracker] ERROR: Missing rollback helpers.\n' >&2
+    exit 1
+}
+# shellcheck source=deploy/update_rollback.sh
+source "${APP_DIR}/deploy/update_rollback.sh"
+
+on_exit() {
+    local exit_status="$1"
+    trap - ERR EXIT
+    set +e
+    if ((exit_status != 0)) && [[ "${repository_changed}" == true ]]; then
+        perform_update_rollback \
+            "${APP_DIR}" "${previous_commit}" "${repository_was_clean}" "${migration_started}" \
+            "${DATABASE_FILE}" "${backup_file}" "${SERVICE_FILE}" "${unit_backup}" \
+            "${SERVICE_USER}" "${service_was_active}"
+    fi
+    [[ -z "${unit_backup}" ]] || rm -f "${unit_backup}"
+    rm -f "${WORK_TRACKER_STAGED_UPDATER}"
+    exit "${exit_status}"
+}
+trap 'on_exit "$?"' EXIT
+
 on_error() {
     local line="$1"
     printf '[work-tracker] ERROR: update failed near line %s. Any database backup has been retained.\n' "${line}" >&2
@@ -32,6 +63,7 @@ trap 'on_error "${LINENO}"' ERR
 [[ -d "${APP_DIR}/.git" ]] || { printf '[work-tracker] ERROR: No installation found at %s.\n' "${APP_DIR}" >&2; exit 1; }
 [[ -f "${CONFIG_FILE}" ]] || { printf '[work-tracker] ERROR: Missing configuration: %s.\n' "${CONFIG_FILE}" >&2; exit 1; }
 [[ -f "${DATABASE_FILE}" ]] || { printf '[work-tracker] ERROR: Missing database: %s.\n' "${DATABASE_FILE}" >&2; exit 1; }
+[[ -f "${SERVICE_FILE}" ]] || { printf '[work-tracker] ERROR: Missing systemd unit: %s.\n' "${SERVICE_FILE}" >&2; exit 1; }
 [[ -f "${APP_DIR}/deploy/common.sh" ]] || { printf '[work-tracker] ERROR: Missing deployment helpers.\n' >&2; exit 1; }
 
 # shellcheck source=deploy/common.sh
@@ -42,6 +74,7 @@ getent group "${SERVICE_USER}" >/dev/null 2>&1 || fail "Missing system group: ${
 
 cd "${APP_DIR}"
 [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || fail "Repository has local changes. Resolve them before updating."
+repository_was_clean=true
 git remote get-url origin >/dev/null
 log "Checking access to the main branch on GitHub."
 git ls-remote --exit-code origin refs/heads/main >/dev/null
@@ -53,16 +86,25 @@ log "Creating SQLite backup: ${backup_file}"
 sqlite3 "${DATABASE_FILE}" ".backup '${backup_file}'"
 chmod 0600 "${backup_file}"
 
+unit_backup="$(mktemp /tmp/work-tracker-service.XXXXXX)"
+cp -p "${SERVICE_FILE}" "${unit_backup}"
+if systemctl is-active --quiet work-tracker.service; then
+    service_was_active=true
+fi
+
 previous_commit="$(git rev-parse HEAD)"
 log "Fetching the latest main branch."
 git fetch origin main
 git merge --ff-only origin/main
+repository_changed=true
 new_commit="$(git rev-parse HEAD)"
 
 [[ -f "${MANIFEST_FILE}" ]] || fail "Missing configuration manifest in the updated code."
 # Load helper changes delivered by the new release before interpreting its manifest.
 # shellcheck source=deploy/common.sh
 source "${APP_DIR}/deploy/common.sh"
+# shellcheck source=deploy/update_rollback.sh
+source "${APP_DIR}/deploy/update_rollback.sh"
 sync_missing_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
 validate_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
 chown root:"${SERVICE_USER}" "${CONFIG_FILE}"
@@ -91,6 +133,7 @@ install -o root -g root -m 0644 "${APP_DIR}/deploy/work-tracker.service" "${SERV
 systemctl daemon-reload
 systemctl stop work-tracker.service
 log "Applying database migrations."
+migration_started=true
 (
     cd "${APP_DIR}/backend"
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="${database_url}" .venv/bin/alembic upgrade head

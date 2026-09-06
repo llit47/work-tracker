@@ -51,7 +51,7 @@ Instalator nie otwiera firewalla, nie konfiguruje routera, publicznego IP, tunel
 sudo /opt/work-tracker/update.sh
 ```
 
-Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Przed zmianami wykonuje spójny backup SQLite, następnie pobiera kod przez fast-forward, aktualizuje zależności, instaluje frontend według `package-lock.json`, wykonuje build i migracje oraz restartuje usługę. W razie błędu kończy się niezerowym kodem i zachowuje backup.
+Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Przed zmianami wykonuje spójny backup SQLite, następnie pobiera kod przez fast-forward, aktualizuje zależności, instaluje frontend według `package-lock.json`, wykonuje build i migracje oraz restartuje usługę. W razie błędu po zmianie commita automatycznie przywraca poprzedni commit, zależności, frontend i unit systemd. Jeżeli migracja już się rozpoczęła, najpierw zatrzymuje usługę i odtwarza bazę z backupu. Backup nie jest usuwany. Przy niepełnym rollbacku updater nie próbuje uruchamiać usługi i wyświetla wyraźne ostrzeżenia oraz instrukcje diagnostyczne; ostrzega też osobno, jeśli samego zatrzymania usługi nie udało się potwierdzić.
 
 Nowe wymagane ustawienia są definiowane w `deploy/config.manifest`. Updater dopisuje wyłącznie brakujące wymagane klucze, pyta o ich wartości i pokazuje bezpieczne wartości domyślne. Nie zmienia istniejących wartości, nie usuwa starszych lub nieznanych wpisów i nigdy nie wypisuje sekretów. Jeśli nie ma nowych wymaganych kluczy, aktualizacja nie zadaje pytań konfiguracyjnych.
 
@@ -169,8 +169,9 @@ alembic revision --autogenerate -m "opis zmiany"
 cd backend
 source .venv/bin/activate
 pytest
-bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/tests/config_update_test.sh
+bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/update_rollback.sh ../deploy/tests/config_update_test.sh ../deploy/tests/update_rollback_test.sh
 ../deploy/tests/config_update_test.sh
+../deploy/tests/update_rollback_test.sh
 ```
 
 Frontend można sprawdzić komendą:

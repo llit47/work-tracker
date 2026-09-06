@@ -18,13 +18,14 @@ Podstawowa wersja aplikacji jest zaimplementowana. Dodano instalację i aktualiz
 - Testy backendu oraz dokumentacja uruchomienia.
 - Review modelu czasu, tokenu, CORS i działania w LAN.
 - Interaktywny instalator oraz updater z backupem SQLite.
+- Automatyczny rollback kodu/unitu, a po rozpoczęciu migracji również bazy danych.
 - Dedykowany użytkownik i utwardzona usługa systemd.
 - Manifest wykrywający nowe wymagane ustawienia.
 - Produkcyjne serwowanie `frontend/dist` przez FastAPI.
 
 ## Aktualnie wykonywany etap
 
-Etap wdrożenia na Debianie/Ubuntu jest zaimplementowany i oczekuje na review w osobnym PR. Weryfikacja obejmuje 10 testów backendu, produkcyjny build frontendu, składnię Bash, logikę aktualizacji konfiguracji oraz migrację świeżej i istniejącej bazy.
+Etap wdrożenia na Debianie/Ubuntu jest zaimplementowany i oczekuje na review w osobnym PR. Updater cofa częściowo wykonaną aktualizację do poprzedniego commita; bazę odtwarza wyłącznie wtedy, gdy migracja już się rozpoczęła, i tylko przy zatrzymanej usłudze. Weryfikacja obejmuje testy backendu, produkcyjny build frontendu, składnię Bash, konfigurację, rollback oraz migrację świeżej i istniejącej bazy.
 
 ## Następne kroki
 
