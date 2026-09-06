@@ -74,6 +74,8 @@ Najbliższy PR funkcjonalny powinien dotyczyć nawigacji poprzedni/następny mie
 - PR #2 — `feat: add Debian installer and safe updater`
 - PR #3 — `fix: make fresh Debian installation work`
 - PR #4 — `fix: allow service user to run deployed application`
+- PR #5 — `docs: add project roadmap and update project status`
+- PR #6 — `feat: add work-time calculation` (ten PR)
 
 ## Maintenance rule
 
