@@ -1,0 +1,16 @@
+:root { font-family: Inter, system-ui, sans-serif; color: #17202a; background: #f3f5f7; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.page { min-height: 100vh; padding: 24px 16px; }
+.card { max-width: 720px; margin: 0 auto; background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px #17202a14; }
+h1 { margin: 0; font-size: 1.5rem; }
+h2 { margin: 8px 0 24px; font-size: 1rem; color: #52616b; letter-spacing: .04em; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 14px 10px; border-bottom: 1px solid #e6eaed; }
+th { color: #52616b; font-size: .8rem; text-transform: uppercase; }
+.event { display: inline-block; border-radius: 999px; padding: 5px 10px; font-size: .78rem; font-weight: 700; }
+.entry { color: #176b36; background: #dff5e7; }
+.exit { color: #a22828; background: #fde5e5; }
+.message { margin: 24px 0; color: #52616b; }
+.error { color: #a22828; }
+@media (max-width: 480px) { .card { padding: 18px; } th, td { padding: 12px 5px; } }
