@@ -1,9 +1,12 @@
 .env
 __pycache__/
 *.py[cod]
+*.egg-info/
+backend/build/
 .pytest_cache/
 .venv/
 backend/work_tracker.db
 backend/*.db
 frontend/node_modules/
 frontend/dist/
+*.tsbuildinfo

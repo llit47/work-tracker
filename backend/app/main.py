@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
 import hmac
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,7 +14,7 @@ from .models import WorkEvent
 from .schemas import HomeAssistantWebhook, WebhookAccepted, WorkEventResponse
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, frontend_dist: Path | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Work Tracker API", version="0.1.0")
     app.state.session_factory = build_session_factory(settings.database_url)
@@ -65,6 +67,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    frontend_dist = frontend_dist or Path(__file__).resolve().parents[2] / "frontend" / "dist"
+    if frontend_dist.is_dir():
+        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
     return app
 
