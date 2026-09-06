@@ -4,7 +4,8 @@
 
 - **Phase 0 — Deployment and Home Assistant ingestion: DONE**
 - **Phase 1 — Work-time calculation: DONE**
-- **Phase 2 — Monthly navigation and summaries: NEXT**
+- **Phase 2 — Monthly navigation and summaries: DONE**
+- **Phase 3 — Manual corrections: NEXT**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
@@ -13,9 +14,11 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Backend FastAPI odbiera zabezpieczone tokenem webhooki Home Assistant.
 - Eventy `entry` i `exit` są walidowane i zapisywane w SQLite.
 - API udostępnia eventy wskazanego miesiąca oraz endpoint health check.
-- Frontend pokazuje eventy bieżącego miesiąca.
+- Frontend pozwala przechodzić między miesiącami, wybrać konkretny miesiąc i wrócić do miesiąca bieżącego.
 - Backend wylicza sesje, dzienne sumy, miesięczny czas, liczbę dni pracy i anomalie bez zmiany raw events.
-- Frontend pokazuje podsumowanie miesiąca oraz sesje i problemy pogrupowane według dni.
+- Frontend pokazuje podsumowanie wybranego miesiąca, średni czas dziennie oraz sesje i problemy pogrupowane według dni.
+- Wybrany miesiąc jest zapisany jako `/?year=YYYY&month=MM`; odświeżenie i Back/Forward zachowują właściwy widok.
+- Błędne parametry URL wracają deterministycznie do bieżącego miesiąca, a błędy API można ponowić bez przeładowania strony.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
@@ -55,9 +58,9 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 2 — Monthly navigation and summaries**
+**Phase 3 — Manual corrections**
 
-Najbliższy PR funkcjonalny powinien dotyczyć nawigacji poprzedni/następny miesiąc, wyboru miesiąca i rozszerzonego podsumowania. Szczegółowy zakres znajduje się w `ROADMAP.md`.
+Najbliższy PR funkcjonalny powinien dotyczyć audytowalnych korekt brakujących lub błędnych zdarzeń bez nadpisywania raw events z Home Assistant. Szczegółowy zakres znajduje się w `ROADMAP.md`.
 
 ## Known intentional limitations
 

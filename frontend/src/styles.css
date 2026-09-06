@@ -4,8 +4,18 @@ body { margin: 0; }
 .page { min-height: 100vh; padding: 24px 16px; }
 .card { max-width: 760px; margin: 0 auto; background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px #17202a14; }
 h1 { margin: 0; font-size: 1.5rem; }
-h2 { margin: 8px 0 24px; font-size: 1rem; color: #52616b; letter-spacing: .04em; }
-.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 28px; }
+h2 { margin: 0; font-size: 1rem; color: #52616b; letter-spacing: .04em; text-align: center; }
+button, input { font: inherit; }
+button { min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; padding: 7px 13px; color: #26343c; background: #fff; cursor: pointer; }
+button:hover:not(:disabled) { border-color: #6c7d87; background: #f8fafb; }
+button:focus-visible, input:focus-visible { outline: 3px solid #8ab9dc; outline-offset: 2px; }
+button:disabled { cursor: default; opacity: .45; }
+.month-navigation { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 12px; margin: 14px 0 12px; }
+.month-arrow { padding: 0; font-size: 1.8rem; line-height: 1; }
+.month-actions { display: flex; justify-content: center; align-items: end; gap: 10px; margin-bottom: 24px; }
+.month-actions label { display: grid; gap: 4px; color: #52616b; font-size: .76rem; text-transform: uppercase; }
+.month-actions input { min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; padding: 6px 9px; color: #26343c; background: #fff; }
+.summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 28px; }
 .summary div { padding: 14px; border-radius: 10px; background: #f3f5f7; }
 .summary span { display: block; margin-bottom: 5px; color: #52616b; font-size: .78rem; text-transform: uppercase; }
 .summary strong { font-size: 1.25rem; }
@@ -27,8 +37,12 @@ h2 { margin: 8px 0 24px; font-size: 1rem; color: #52616b; letter-spacing: .04em;
 .raw-events > span:not(.location) { font-size: .9rem; font-weight: 600; }
 .message { margin: 24px 0; color: #52616b; }
 .error { color: #a22828; }
+.error-message p { margin: 0 0 12px; color: #a22828; }
 @media (max-width: 560px) {
   .card { padding: 18px; }
+  .month-navigation { gap: 8px; }
+  .month-actions { align-items: stretch; }
+  .month-actions label { flex: 1; }
   .summary { grid-template-columns: 1fr; }
   .summary div { display: flex; justify-content: space-between; align-items: center; }
   .summary span { margin: 0; }

@@ -9,4 +9,5 @@ backend/work_tracker.db
 backend/*.db
 frontend/node_modules/
 frontend/dist/
+frontend/.test-dist/
 *.tsbuildinfo

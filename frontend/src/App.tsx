@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react'
 
+import {
+  MAX_YEAR,
+  MIN_YEAR,
+  currentMonth,
+  isSameMonth,
+  monthInputValue,
+  monthSearch,
+  parseMonthInput,
+  readMonthFromSearch,
+  shiftMonth,
+  type MonthSelection,
+} from './monthNavigation'
+
 type WorkEvent = {
   id: number
   event_type: 'entry' | 'exit'
@@ -52,7 +65,8 @@ const anomalyLabels: Record<Exclude<SessionStatus, 'valid'>, string> = {
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
 
-function formatMonth(date: Date) {
+function formatMonth(selection: MonthSelection) {
+  const date = new Date(selection.year, selection.month - 1, 1)
   return new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric' }).format(date).toUpperCase()
 }
 
@@ -111,36 +125,134 @@ function SessionItem({ item }: { item: WorkTimeItem }) {
   )
 }
 
+function writeMonthToUrl(selection: MonthSelection, mode: 'push' | 'replace') {
+  const url = `${window.location.pathname}${monthSearch(selection)}`
+  if (mode === 'push') window.history.pushState(null, '', url)
+  else window.history.replaceState(null, '', url)
+}
+
 function App() {
-  const now = new Date()
+  const [today] = useState(() => currentMonth())
+  const [initialUrlMonth] = useState(() => readMonthFromSearch(window.location.search, today))
+  const [selectedMonth, setSelectedMonth] = useState(initialUrlMonth.selection)
   const [summary, setSummary] = useState<WorkSummary | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [retryRequest, setRetryRequest] = useState(0)
 
   useEffect(() => {
+    if (initialUrlMonth.shouldNormalize) writeMonthToUrl(initialUrlMonth.selection, 'replace')
+  }, [initialUrlMonth])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const urlMonth = readMonthFromSearch(window.location.search, today)
+      if (urlMonth.shouldNormalize) writeMonthToUrl(urlMonth.selection, 'replace')
+      setSelectedMonth(urlMonth.selection)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [today])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let ignoreResponse = false
+
+    setSummary(null)
+    setState('loading')
+
     const load = async () => {
       try {
-        const response = await fetch(`${apiBase}/api/work-summary?year=${now.getFullYear()}&month=${now.getMonth() + 1}`)
+        const response = await fetch(
+          `${apiBase}/api/work-summary?year=${selectedMonth.year}&month=${selectedMonth.month}`,
+          { signal: controller.signal },
+        )
         if (!response.ok) throw new Error('API request failed')
-        setSummary(await response.json())
-        setState('ready')
+        const loadedSummary: WorkSummary = await response.json()
+        if (!ignoreResponse) {
+          setSummary(loadedSummary)
+          setState('ready')
+        }
       } catch {
-        setState('error')
+        if (!ignoreResponse) setState('error')
       }
     }
     void load()
-  }, [])
+
+    return () => {
+      ignoreResponse = true
+      controller.abort()
+    }
+  }, [selectedMonth.year, selectedMonth.month, retryRequest])
+
+  const selectMonth = (selection: MonthSelection) => {
+    if (isSameMonth(selection, selectedMonth)) return
+    writeMonthToUrl(selection, 'push')
+    setSelectedMonth(selection)
+  }
+
+  const isFirstSupportedMonth = selectedMonth.year === MIN_YEAR && selectedMonth.month === 1
+  const isLastSupportedMonth = selectedMonth.year === MAX_YEAR && selectedMonth.month === 12
+  const isCurrentMonth = isSameMonth(selectedMonth, today)
+  const averageDayDuration = summary && summary.work_days > 0
+    ? Math.floor(summary.total_duration_seconds / summary.work_days)
+    : 0
 
   return (
     <main className="page">
       <section className="card" aria-live="polite">
         <h1>Work Tracker</h1>
-        <h2>{formatMonth(now)}</h2>
+        <nav className="month-navigation" aria-label="Nawigacja miesiąca">
+          <button
+            className="month-arrow"
+            type="button"
+            aria-label="Poprzedni miesiąc"
+            title="Poprzedni miesiąc"
+            disabled={isFirstSupportedMonth}
+            onClick={() => selectMonth(shiftMonth(selectedMonth, -1))}
+          >
+            ‹
+          </button>
+          <h2>{formatMonth(selectedMonth)}</h2>
+          <button
+            className="month-arrow"
+            type="button"
+            aria-label="Następny miesiąc"
+            title="Następny miesiąc"
+            disabled={isLastSupportedMonth}
+            onClick={() => selectMonth(shiftMonth(selectedMonth, 1))}
+          >
+            ›
+          </button>
+        </nav>
+        <div className="month-actions">
+          <label>
+            <span>Wybierz miesiąc</span>
+            <input
+              type="month"
+              min={`${MIN_YEAR}-01`}
+              max={`${MAX_YEAR}-12`}
+              value={monthInputValue(selectedMonth)}
+              onChange={(event) => {
+                const selection = parseMonthInput(event.target.value)
+                if (selection) selectMonth(selection)
+              }}
+            />
+          </label>
+          <button type="button" disabled={isCurrentMonth} onClick={() => selectMonth(today)}>Dzisiaj</button>
+        </div>
         {state === 'loading' && <p className="message">Ładowanie czasu pracy…</p>}
-        {state === 'error' && <p className="message error">Nie udało się pobrać danych. Sprawdź połączenie z API.</p>}
+        {state === 'error' && (
+          <div className="message error-message">
+            <p>Nie udało się pobrać danych. Sprawdź połączenie z API.</p>
+            <button type="button" onClick={() => setRetryRequest((request) => request + 1)}>Spróbuj ponownie</button>
+          </div>
+        )}
         {state === 'ready' && summary && <>
           <section className="summary" aria-label="Podsumowanie miesiąca">
             <div><span>Czas pracy</span><strong>{formatDuration(summary.total_duration_seconds)}</strong></div>
             <div><span>Dni pracy</span><strong>{summary.work_days}</strong></div>
+            <div><span>Średnio dziennie</span><strong>{formatDuration(averageDayDuration)}</strong></div>
             <div><span>Problemy</span><strong className={summary.anomaly_count > 0 ? 'problem-count' : ''}>{summary.anomaly_count}</strong></div>
           </section>
 
