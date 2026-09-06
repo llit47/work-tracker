@@ -11,7 +11,15 @@ from sqlalchemy.orm import Session
 from .config import Settings, get_settings
 from .database import build_session_factory, get_session
 from .models import WorkEvent
-from .schemas import HomeAssistantWebhook, WebhookAccepted, WorkEventResponse
+from .schemas import (
+    HomeAssistantWebhook,
+    MonthlyWorkSummaryResponse,
+    WebhookAccepted,
+    WorkDayResponse,
+    WorkEventResponse,
+    WorkTimeItemResponse,
+)
+from .work_time import RawWorkEvent, calculate_monthly_work_time
 
 
 def create_app(settings: Settings | None = None, frontend_dist: Path | None = None) -> FastAPI:
@@ -63,6 +71,52 @@ def create_app(settings: Settings | None = None, frontend_dist: Path | None = No
             .order_by(WorkEvent.event_timestamp_utc.asc(), WorkEvent.id.asc())
         )
         return list(session.scalars(statement))
+
+    @app.get("/api/work-summary", response_model=MonthlyWorkSummaryResponse)
+    def get_work_summary(
+        year: int = Query(ge=2000, le=2100),
+        month: int = Query(ge=1, le=12),
+        session: Session = Depends(get_session),
+    ) -> MonthlyWorkSummaryResponse:
+        statement = select(WorkEvent).order_by(WorkEvent.event_timestamp_utc.asc(), WorkEvent.id.asc())
+        raw_events = [
+            RawWorkEvent(
+                id=event.id,
+                event_type=event.event_type,
+                location=event.location,
+                event_timestamp=event.event_timestamp,
+                event_timestamp_utc=event.event_timestamp_utc,
+                received_at=event.received_at,
+                source=event.source,
+            )
+            for event in session.scalars(statement)
+        ]
+        summary = calculate_monthly_work_time(raw_events, year, month)
+        return MonthlyWorkSummaryResponse(
+            year=summary.year,
+            month=summary.month,
+            total_duration_seconds=summary.total_duration_seconds,
+            work_days=summary.work_days,
+            anomaly_count=summary.anomaly_count,
+            days=[
+                WorkDayResponse(
+                    date=day.date,
+                    total_duration_seconds=day.total_duration_seconds,
+                    anomaly_count=day.anomaly_count,
+                    items=[
+                        WorkTimeItemResponse(
+                            status=item.status,
+                            location=item.location,
+                            local_date=item.local_date,
+                            duration_seconds=item.duration_seconds,
+                            events=[WorkEventResponse.model_validate(event) for event in item.events],
+                        )
+                        for item in day.items
+                    ],
+                )
+                for day in summary.days
+            ],
+        )
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

@@ -1,8 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .work_time import SessionStatus
 
 LOCATION_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,99}$")
 
@@ -51,5 +53,30 @@ class WorkEventResponse(BaseModel):
     event_type: EventType
     location: str
     event_timestamp: datetime
+    event_timestamp_utc: datetime
     received_at: datetime
     source: str
+
+
+class WorkTimeItemResponse(BaseModel):
+    status: SessionStatus
+    location: str
+    local_date: date
+    duration_seconds: int | None
+    events: list[WorkEventResponse]
+
+
+class WorkDayResponse(BaseModel):
+    date: date
+    total_duration_seconds: int
+    anomaly_count: int
+    items: list[WorkTimeItemResponse]
+
+
+class MonthlyWorkSummaryResponse(BaseModel):
+    year: int
+    month: int
+    total_duration_seconds: int
+    work_days: int
+    anomaly_count: int
+    days: list[WorkDayResponse]
