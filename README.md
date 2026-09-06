@@ -4,12 +4,97 @@ Prosta aplikacja działająca lokalnie w sieci LAN do rejestrowania zdarzeń wej
 
 Nie konfiguruje publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
 
+## Quick install
+
+Na świeżym Debianie lub Ubuntu, w tym w kontenerze LXC z działającym systemd:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/llit47/work-tracker/main/install.sh | sudo bash
+```
+
+Skrypt pobierany przez `curl` jest wykonywany jako root. Bezpieczniejszy wariant pozwalający najpierw przeczytać skrypt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/llit47/work-tracker/main/install.sh -o /tmp/work-tracker-install.sh
+less /tmp/work-tracker-install.sh
+sudo bash /tmp/work-tracker-install.sh
+```
+
+Instalator nie nadpisze istniejącego `/opt/work-tracker`. Instaluje wymagane pakiety, tworzy użytkownika systemowego, buduje frontend, wykonuje migracje i uruchamia usługę systemd.
+
+## First configuration
+
+Instalator pyta interaktywnie o:
+
+- adres nasłuchu, domyślnie `0.0.0.0`,
+- port backendu, domyślnie `8000`,
+- token webhooka (minimum 32 znaki) lub zgodę przez pozostawienie pustej wartości na jego bezpieczne wygenerowanie,
+- originy CORS, jeśli frontend ma działać z innego originu.
+
+Wygenerowany token nie jest wyświetlany. Zostaje zapisany w `/etc/work-tracker/work-tracker.env`, dostępnym tylko dla roota i grupy usługi. Baza zawsze znajduje się poza repozytorium pod `/var/lib/work-tracker/work_tracker.db`.
+
+## Access in LAN
+
+Przy domyślnym `APP_HOST=0.0.0.0` aplikacja nasłuchuje na interfejsach serwera i jest dostępna pod:
+
+```text
+http://<adres-IP-serwera-w-LAN>:8000
+```
+
+FastAPI serwuje zbudowany frontend z `frontend/dist`, więc osobny Vite, nginx ani reverse proxy nie są potrzebne. CORS nie dotyczy webhooka Home Assistanta; jest potrzebny tylko wtedy, gdy przeglądarkowy frontend pochodzi z innego originu.
+
+Instalator nie otwiera firewalla, nie konfiguruje routera, publicznego IP, tunelu ani HTTPS. Dostęp należy pozostawić wyłącznie w zaufanej sieci LAN.
+
+## Update
+
+```bash
+sudo /opt/work-tracker/update.sh
+```
+
+Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Przed zmianami wykonuje spójny backup SQLite, następnie pobiera kod przez fast-forward, aktualizuje zależności, instaluje frontend według `package-lock.json`, wykonuje build i migracje oraz restartuje usługę. W razie błędu kończy się niezerowym kodem i zachowuje backup.
+
+Nowe wymagane ustawienia są definiowane w `deploy/config.manifest`. Updater dopisuje wyłącznie brakujące wymagane klucze, pyta o ich wartości i pokazuje bezpieczne wartości domyślne. Nie zmienia istniejących wartości, nie usuwa starszych lub nieznanych wpisów i nigdy nie wypisuje sekretów. Jeśli nie ma nowych wymaganych kluczy, aktualizacja nie zadaje pytań konfiguracyjnych.
+
+## Logs/status/restart
+
+```bash
+sudo systemctl status work-tracker
+sudo journalctl -u work-tracker -f
+sudo systemctl restart work-tracker
+```
+
+## Backup
+
+Updater zapisuje backupy jako `/var/backups/work-tracker/work_tracker-<timestamp-UTC>.db`. Pliki są własnością roota i mają restrykcyjne uprawnienia. Backupy nie są automatycznie usuwane.
+
+## File locations
+
+- Kod: `/opt/work-tracker/`
+- Konfiguracja: `/etc/work-tracker/work-tracker.env`
+- Baza SQLite: `/var/lib/work-tracker/work_tracker.db`
+- Backupy: `/var/backups/work-tracker/`
+- Unit systemd: `/etc/systemd/system/work-tracker.service`
+
+## Uninstall
+
+Poniższe polecenia usuwają usługę i kod, ale celowo zachowują konfigurację, bazę i backupy:
+
+```bash
+sudo systemctl disable --now work-tracker
+sudo rm /etc/systemd/system/work-tracker.service
+sudo systemctl daemon-reload
+sudo rm -r /opt/work-tracker
+sudo userdel work-tracker
+```
+
+Katalogi `/etc/work-tracker`, `/var/lib/work-tracker` i `/var/backups/work-tracker` należy usunąć osobno tylko po świadomej decyzji, że dane nie będą już potrzebne.
+
 ## Wymagania
 
 - Python 3.11+
-- Node.js 20+ i npm
+- Node.js 18+ i npm
 
-## Instalacja i konfiguracja
+## Instalacja developerska
 
 1. Skopiuj konfigurację i ustaw własny losowy sekret o długości co najmniej 32 znaków:
 
@@ -84,6 +169,8 @@ alembic revision --autogenerate -m "opis zmiany"
 cd backend
 source .venv/bin/activate
 pytest
+bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/tests/config_update_test.sh
+../deploy/tests/config_update_test.sh
 ```
 
 Frontend można sprawdzić komendą:

@@ -6,7 +6,7 @@ Lokalna aplikacja LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy wysy
 
 ## Aktualny stan
 
-Podstawowa wersja jest zaimplementowana: bezpiecznie odbiera webhooki, waliduje je, zapisuje wszystkie zdarzenia do SQLite i wyświetla zdarzenia bieżącego miesiąca w prostym interfejsie React. Zawiera zestaw 9 testów backendu, w tym sortowanie w czasie zmiany czasu letniego/zimowego.
+Podstawowa wersja aplikacji jest zaimplementowana. Dodano instalację i aktualizację dla Debiana/Ubuntu: trwałe dane poza repozytorium, usługę systemd i produkcyjne serwowanie zbudowanego frontendu przez FastAPI.
 
 ## Ukończone etapy
 
@@ -17,24 +17,30 @@ Podstawowa wersja jest zaimplementowana: bezpiecznie odbiera webhooki, waliduje 
 - Widok bieżącego miesiąca z obsługą ładowania, braku danych i błędu.
 - Testy backendu oraz dokumentacja uruchomienia.
 - Review modelu czasu, tokenu, CORS i działania w LAN.
+- Interaktywny instalator oraz updater z backupem SQLite.
+- Dedykowany użytkownik i utwardzona usługa systemd.
+- Manifest wykrywający nowe wymagane ustawienia.
+- Produkcyjne serwowanie `frontend/dist` przez FastAPI.
 
 ## Aktualnie wykonywany etap
 
-Etap 1 — podstawowe rejestrowanie i prezentacja zdarzeń — został zaimplementowany i zweryfikowany testami backendu. Przed wdrożeniem należy uruchomić frontendowy build w środowisku z Node/npm.
+Etap wdrożenia na Debianie/Ubuntu jest zaimplementowany i oczekuje na review w osobnym PR. Weryfikacja obejmuje 10 testów backendu, produkcyjny build frontendu, składnię Bash, logikę aktualizacji konfiguracji oraz migrację świeżej i istniejącej bazy.
 
 ## Następne kroki
 
 - Ustalić docelowy sposób uruchomienia w LAN na serwerze/VM/kontenerze.
 - Skonfigurować Home Assistant do wysyłania webhooków po decyzji o adresie LAN.
+- Przetestować pełną instalację na docelowym kontenerze LXC z systemd.
 - Dopiero w kolejnych etapach: obliczanie czasu pracy, widok poprzednich miesięcy, korekty ręczne i rozszerzenia lokalizacji.
 
 ## Architektura
 
 - **Backend:** FastAPI w Pythonie; logika API jest w `backend/app/`.
-- **Frontend:** React + Vite w `frontend/`.
+- **Frontend:** React + Vite w `frontend/`; po buildzie FastAPI serwuje `frontend/dist` na `/`.
 - **Baza danych:** lokalny plik SQLite, tworzony przez Alembic.
 - **API:** REST pod `/api`.
 - **Komunikacja z Home Assistant:** przyszły Home Assistant wyśle `POST` z nagłówkiem `X-Webhook-Token`; sama integracja nie jest obecnie konfigurowana.
+- **Deployment:** `install.sh`, `update.sh`, manifest konfiguracji i unit systemd dla Debiana/Ubuntu.
 
 ## Endpointy API
 
@@ -60,6 +66,22 @@ Opcjonalne wartości:
 - `CORS_ORIGINS` — adresy lokalnego serwera Vite.
 
 `frontend/.env` może ustawić `VITE_API_BASE_URL`, domyślnie `http://localhost:8000` zgodnie z plikiem przykładowym.
+
+Instalacja systemowa używa `/etc/work-tracker/work-tracker.env`. Klucze `APP_HOST`, `APP_PORT`, `WEBHOOK_TOKEN` i `DATABASE_URL` są wymagane; `CORS_ORIGINS` jest opcjonalny. Definicje są utrzymywane w `deploy/config.manifest`, co pozwala updaterowi wykrywać nowe wymagane wartości bez zmieniania istniejących wpisów.
+
+## Wdrożenie Debian/Ubuntu
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/llit47/work-tracker/main/install.sh | sudo bash
+```
+
+Kod jest instalowany w `/opt/work-tracker`, konfiguracja w `/etc/work-tracker`, baza w `/var/lib/work-tracker`, a backupy w `/var/backups/work-tracker`. Proces działa jako użytkownik `work-tracker` i automatycznie startuje przez systemd.
+
+Aktualizacja:
+
+```bash
+sudo /opt/work-tracker/update.sh
+```
 
 ## Uruchamianie
 
@@ -89,6 +111,8 @@ Gdy Home Assistant działa na osobnym hoście zaufanej sieci LAN, backend należ
 cd backend
 source .venv/bin/activate
 pytest
+bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/tests/config_update_test.sh
+../deploy/tests/config_update_test.sh
 ```
 
 ```bash
