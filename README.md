@@ -6,9 +6,18 @@ Nie konfiguruje publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
 
 ## Quick install
 
-Na świeżym Debianie lub Ubuntu, w tym w kontenerze LXC z działającym systemd:
+Na minimalnym Debianie lub Ubuntu trzeba najpierw zainstalować `curl`. Jeśli jesteś zalogowany jako `root`:
 
 ```bash
+apt update && apt install -y curl
+curl -fsSL https://raw.githubusercontent.com/llit47/work-tracker/main/install.sh | bash
+```
+
+Jeśli pracujesz jako zwykły użytkownik z dostępem do `sudo`:
+
+```bash
+sudo apt update
+sudo apt install -y curl
 curl -fsSL https://raw.githubusercontent.com/llit47/work-tracker/main/install.sh | sudo bash
 ```
 
@@ -169,9 +178,10 @@ alembic revision --autogenerate -m "opis zmiany"
 cd backend
 source .venv/bin/activate
 pytest
-bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/update_rollback.sh ../deploy/tests/config_update_test.sh ../deploy/tests/update_rollback_test.sh
+bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/update_rollback.sh ../deploy/tests/*.sh
 ../deploy/tests/config_update_test.sh
 ../deploy/tests/update_rollback_test.sh
+../deploy/tests/backend_package_install_test.sh
 ```
 
 Frontend można sprawdzić komendą:
