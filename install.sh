@@ -123,6 +123,9 @@ log "Installing and building frontend."
     npm run build
 )
 
+log "Granting the service user read-only access to the application."
+set_application_permissions "${APP_DIR}" root "${SERVICE_USER}" root
+
 read_env_value "${CONFIG_FILE}" DATABASE_URL
 database_url="${REPLY}"
 log "Applying database migrations."

@@ -22,10 +22,11 @@ Podstawowa wersja aplikacji jest zaimplementowana. Dodano instalację i aktualiz
 - Dedykowany użytkownik i utwardzona usługa systemd.
 - Manifest wykrywający nowe wymagane ustawienia.
 - Produkcyjne serwowanie `frontend/dist` przez FastAPI.
+- Jawne pakowanie backendu oraz kontrolowane, tylko do odczytu uprawnienia kodu dla użytkownika usługi.
 
 ## Aktualnie wykonywany etap
 
-Etap wdrożenia na Debianie/Ubuntu jest zaimplementowany i oczekuje na review w osobnym PR. Updater cofa częściowo wykonaną aktualizację do poprzedniego commita; bazę odtwarza wyłącznie wtedy, gdy migracja już się rozpoczęła, i tylko przy zatrzymanej usłudze. Weryfikacja obejmuje testy backendu, produkcyjny build frontendu, składnię Bash, konfigurację, rollback oraz migrację świeżej i istniejącej bazy.
+Etap wdrożenia na Debianie/Ubuntu jest zaimplementowany i podlega kolejnym testom na świeżym Debianie 13 LXC. Kod pozostaje własnością roota, a użytkownik `work-tracker` otrzymuje grupowy dostęp do odczytu i wykonania potrzebny do migracji oraz uruchomienia usługi. Updater i rollback ponownie stosują ten sam model po przebudowie plików.
 
 ## Następne kroki
 

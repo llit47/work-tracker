@@ -24,6 +24,7 @@ restore_previous_application() {
     local app_dir="$1"
     local previous_commit="$2"
     local repository_was_clean="$3"
+    local service_user="$4"
     local restored=0
 
     if [[ "${repository_was_clean}" != true ]]; then
@@ -49,6 +50,10 @@ restore_previous_application() {
         npm run build
     ); then
         rollback_warning "Could not rebuild the frontend for the previous commit."
+        restored=1
+    fi
+    if ! set_application_permissions "${app_dir}" root "${service_user}" root; then
+        rollback_warning "Could not restore application permissions for the service user."
         restored=1
     fi
     return "${restored}"
@@ -98,7 +103,7 @@ perform_update_rollback() {
         rollback_log "Database migration had not started; database left untouched."
     fi
 
-    if ! restore_previous_application "${app_dir}" "${previous_commit}" "${repository_was_clean}"; then
+    if ! restore_previous_application "${app_dir}" "${previous_commit}" "${repository_was_clean}" "${service_user}"; then
         repository_restored=false
         rollback_failed=1
     fi

@@ -54,6 +54,12 @@ export PATH="${BIN_DIR}:${PATH}"
 # shellcheck source=../update_rollback.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/update_rollback.sh"
 
+permission_calls=0
+set_application_permissions() {
+    [[ "$1" == "${APP_DIR}" && "$2" == root && "$3" == "${SERVICE_USER}" && "$4" == root ]]
+    permission_calls=$((permission_calls + 1))
+}
+
 # Before migration: repository/unit are restored, database is untouched.
 printf 'live database before migration\n' >"${DATABASE_FILE}"
 touch "${STATE_DIR}/active"
@@ -97,5 +103,7 @@ grep -q "${PREVIOUS_COMMIT}" "${TEST_DIR}/failure-output"
 grep -q 'missing-backup.db' "${TEST_DIR}/failure-output"
 [[ ! -f "${STATE_DIR}/active" ]]
 cmp -s "${ENV_FILE}" "${ENV_FILE}.snapshot"
+
+[[ "${permission_calls}" -eq 3 ]]
 
 printf 'Update rollback tests passed.\n'

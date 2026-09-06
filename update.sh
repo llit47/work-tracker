@@ -125,6 +125,9 @@ log "Updating and building frontend."
     npm run build
 )
 
+log "Restoring read-only application access for the service user."
+set_application_permissions "${APP_DIR}" root "${SERVICE_USER}" root
+
 read_env_value "${CONFIG_FILE}" DATABASE_URL
 database_url="${REPLY}"
 validate_config_value database_url "${database_url}" || fail "DATABASE_URL is missing or invalid."
