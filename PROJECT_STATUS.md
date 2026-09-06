@@ -6,7 +6,7 @@ Lokalna aplikacja LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy wysy
 
 ## Aktualny stan
 
-Podstawowa wersja jest zaimplementowana: bezpiecznie odbiera webhooki, waliduje je, zapisuje wszystkie zdarzenia do SQLite i wyświetla zdarzenia bieżącego miesiąca w prostym interfejsie React. Zawiera też zestaw testów backendu.
+Podstawowa wersja jest zaimplementowana: bezpiecznie odbiera webhooki, waliduje je, zapisuje wszystkie zdarzenia do SQLite i wyświetla zdarzenia bieżącego miesiąca w prostym interfejsie React. Zawiera zestaw 9 testów backendu, w tym sortowanie w czasie zmiany czasu letniego/zimowego.
 
 ## Ukończone etapy
 
@@ -16,10 +16,11 @@ Podstawowa wersja jest zaimplementowana: bezpiecznie odbiera webhooki, waliduje 
 - Zabezpieczony tokenem endpoint webhooka i endpoint odczytu miesiąca.
 - Widok bieżącego miesiąca z obsługą ładowania, braku danych i błędu.
 - Testy backendu oraz dokumentacja uruchomienia.
+- Review modelu czasu, tokenu, CORS i działania w LAN.
 
 ## Aktualnie wykonywany etap
 
-Etap 1 — podstawowe rejestrowanie i prezentacja zdarzeń — został zaimplementowany. Przed wdrożeniem należy uruchomić testy w środowisku z Python `venv`/`pip` i Node/npm.
+Etap 1 — podstawowe rejestrowanie i prezentacja zdarzeń — został zaimplementowany i zweryfikowany testami backendu. Przed wdrożeniem należy uruchomić frontendowy build w środowisku z Node/npm.
 
 ## Następne kroki
 
@@ -43,15 +44,15 @@ Etap 1 — podstawowe rejestrowanie i prezentacja zdarzeń — został zaimpleme
 
 ## Model danych
 
-Tabela `work_events` przechowuje wszystkie otrzymane zdarzenia: `id`, `event_type`, `location`, `event_timestamp`, `received_at`, `source` oraz techniczne `event_timestamp_utc`.
+Tabela `work_events` przechowuje wszystkie otrzymane zdarzenia: `id`, `event_type`, `location`, `event_timestamp`, `received_at`, `source` oraz techniczne `event_timestamp_utc`. Baza dodatkowo wymusza, że `event_type` jest `entry` albo `exit`.
 
-`event_timestamp` zachowuje oryginalny timestamp Home Assistanta wraz z offsetem. `received_at` rejestruje niezależnie moment dotarcia żądania w UTC. `event_timestamp_utc` służy do poprawnego sortowania chronologicznego, także przy zmianie czasu. Indeksy istnieją dla timestampu zdarzenia, jego wartości UTC oraz lokalizacji.
+SQLite nie zachowuje niezawodnie stref czasowych w natywnym typie daty, dlatego timestampy są świadomie przechowywane jako tekst ISO-8601. `event_timestamp` zachowuje oryginalny timestamp Home Assistanta wraz z offsetem i wyznacza lokalny miesiąc kalendarzowy. `received_at` rejestruje niezależnie moment dotarcia żądania w UTC. `event_timestamp_utc` jest zawsze znormalizowany do UTC i służy do poprawnego sortowania oraz przyszłych obliczeń czasu pracy, także przy zmianie czasu. Indeksy istnieją dla timestampu zdarzenia, jego wartości UTC oraz lokalizacji.
 
 ## Konfiguracja
 
 W `backend/.env` wymagane jest:
 
-- `WEBHOOK_TOKEN` — tajny token wymagany przez webhook.
+- `WEBHOOK_TOKEN` — losowy token wymagany przez webhook, co najmniej 32 znaki.
 
 Opcjonalne wartości:
 
@@ -79,6 +80,8 @@ cp .env.example .env
 npm install
 npm run dev
 ```
+
+Gdy Home Assistant działa na osobnym hoście zaufanej sieci LAN, backend należy uruchomić z `--host 0.0.0.0`. Nie należy otwierać portu poza LAN ani konfigurować tunelu. CORS nie dotyczy webhooka Home Assistanta; `CORS_ORIGINS` ustawia się wyłącznie dla originu frontendu uruchomionego w przeglądarce.
 
 ## Testowanie
 

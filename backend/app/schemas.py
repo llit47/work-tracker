@@ -32,6 +32,13 @@ class HomeAssistantWebhook(BaseModel):
             raise ValueError("timestamp must include a timezone offset")
         return value
 
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, value: str) -> str:
+        if value != "home_assistant":
+            raise ValueError("source must be home_assistant")
+        return value
+
 
 class WebhookAccepted(BaseModel):
     id: int

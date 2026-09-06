@@ -13,6 +13,15 @@ function formatMonth(date: Date) {
   return new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric' }).format(date).toUpperCase()
 }
 
+function formatEventDate(timestamp: string) {
+  const [year, month, day] = timestamp.slice(0, 10).split('-')
+  return `${day}.${month}.${year}`
+}
+
+function formatEventTime(timestamp: string) {
+  return timestamp.slice(11, 16)
+}
+
 function App() {
   const now = new Date()
   const [events, setEvents] = useState<WorkEvent[]>([])
@@ -43,11 +52,10 @@ function App() {
         {state === 'ready' && events.length > 0 && <table>
           <thead><tr><th>Data</th><th>Godzina</th><th>Zdarzenie</th></tr></thead>
           <tbody>{events.map((event) => {
-            const date = new Date(event.event_timestamp)
             const entering = event.event_type === 'entry'
             return <tr key={event.id}>
-              <td data-label="Data">{date.toLocaleDateString('pl-PL')}</td>
-              <td data-label="Godzina">{date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}</td>
+              <td data-label="Data">{formatEventDate(event.event_timestamp)}</td>
+              <td data-label="Godzina">{formatEventTime(event.event_timestamp)}</td>
               <td data-label="Zdarzenie"><span className={`event ${entering ? 'entry' : 'exit'}`}>{entering ? 'WEJŚCIE' : 'WYJŚCIE'}</span></td>
             </tr>
           })}</tbody>

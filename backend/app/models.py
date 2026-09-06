@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Index, Integer, String
+from sqlalchemy import CheckConstraint, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -32,6 +32,7 @@ class AwareDateTime(TypeDecorator):
 class WorkEvent(Base):
     __tablename__ = "work_events"
     __table_args__ = (
+        CheckConstraint("event_type IN ('entry', 'exit')", name="ck_work_events_event_type"),
         Index("ix_work_events_event_timestamp", "event_timestamp"),
         Index("ix_work_events_location", "location"),
         Index("ix_work_events_event_timestamp_utc", "event_timestamp_utc"),

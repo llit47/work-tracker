@@ -23,6 +23,7 @@ def upgrade() -> None:
         sa.Column("event_timestamp_utc", sa.String(length=40), nullable=False),
         sa.Column("received_at", sa.String(length=40), nullable=False),
         sa.Column("source", sa.String(length=100), nullable=False),
+        sa.CheckConstraint("event_type IN ('entry', 'exit')", name="ck_work_events_event_type"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_work_events_event_timestamp", "work_events", ["event_timestamp"])
