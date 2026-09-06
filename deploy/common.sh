@@ -25,6 +25,42 @@ require_supported_os() {
     esac
 }
 
+set_application_permissions() {
+    local app_dir="$1"
+    local app_owner="$2"
+    local reader_group="$3"
+    local private_group="$4"
+
+    if [[ ! -d "${app_dir}" || "${app_dir}" == "/" ]]; then
+        printf '[work-tracker] ERROR: Invalid application directory for permissions: %s.\n' "${app_dir}" >&2
+        return 1
+    fi
+    id "${app_owner}" >/dev/null 2>&1 || {
+        printf '[work-tracker] ERROR: Missing application owner: %s.\n' "${app_owner}" >&2
+        return 1
+    }
+    getent group "${reader_group}" >/dev/null 2>&1 || {
+        printf '[work-tracker] ERROR: Missing application reader group: %s.\n' "${reader_group}" >&2
+        return 1
+    }
+    getent group "${private_group}" >/dev/null 2>&1 || {
+        printf '[work-tracker] ERROR: Missing private application group: %s.\n' "${private_group}" >&2
+        return 1
+    }
+
+    chown -R -h "${app_owner}:${reader_group}" "${app_dir}" || return 1
+    find "${app_dir}" -type d -exec chmod 0750 {} + || return 1
+    find "${app_dir}" -type f -perm /111 -exec chmod 0750 {} + || return 1
+    find "${app_dir}" -type f ! -perm /111 -exec chmod 0640 {} + || return 1
+
+    # Git metadata is needed only by root-owned deployment scripts, not by the service process.
+    if [[ -d "${app_dir}/.git" ]]; then
+        chown -R -h "${app_owner}:${private_group}" "${app_dir}/.git" || return 1
+        find "${app_dir}/.git" -type d -exec chmod 0700 {} + || return 1
+        find "${app_dir}/.git" -type f -exec chmod 0600 {} + || return 1
+    fi
+}
+
 require_prompt_fd() {
     if ! { true <&3; } 2>/dev/null; then
         [[ -r /dev/tty ]] || fail "Interactive configuration requires a terminal."

@@ -84,6 +84,8 @@ Updater zapisuje backupy jako `/var/backups/work-tracker/work_tracker-<timestamp
 - Backupy: `/var/backups/work-tracker/`
 - Unit systemd: `/etc/systemd/system/work-tracker.service`
 
+Kod w `/opt/work-tracker` pozostaje własnością `root`, a grupa `work-tracker` ma dostęp tylko do odczytu i przechodzenia przez katalogi. Katalogi mają tryb `0750`, zwykłe pliki `0640`, a pliki wykonywalne `0750`. Metadata `.git` pozostają prywatne dla roota. Aplikacja zapisuje dane wyłącznie w `/var/lib/work-tracker`.
+
 ## Uninstall
 
 Poniższe polecenia usuwają usługę i kod, ale celowo zachowują konfigurację, bazę i backupy:
@@ -182,6 +184,8 @@ bash -n ../install.sh ../update.sh ../deploy/common.sh ../deploy/update_rollback
 ../deploy/tests/config_update_test.sh
 ../deploy/tests/update_rollback_test.sh
 ../deploy/tests/backend_package_install_test.sh
+../deploy/tests/application_permissions_test.sh
+sudo ../deploy/tests/service_user_runtime_test.sh
 ```
 
 Frontend można sprawdzić komendą:
