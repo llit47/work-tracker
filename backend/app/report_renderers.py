@@ -297,13 +297,19 @@ def _sessions_table(report: MonthlyReport) -> Table:
 
 
 def _anomalies_table(report: MonthlyReport) -> Table:
+    cell_style = ParagraphStyle(
+        "AnomalyTableCell",
+        fontName="Roboto",
+        fontSize=7.3,
+        leading=8.5,
+    )
     rows = [("Data", "Zdarzenia", "Problem", "Lokalizacja")]
     rows.extend(
         (
             anomaly.date.strftime("%d.%m.%Y"),
-            _format_anomaly_events(anomaly),
-            ANOMALY_LABELS[anomaly.status],
-            anomaly.location,
+            Paragraph(escape(_format_anomaly_events(anomaly)), cell_style),
+            Paragraph(escape(ANOMALY_LABELS[anomaly.status]), cell_style),
+            Paragraph(escape(anomaly.location), cell_style),
         )
         for anomaly in report.anomalies
     )

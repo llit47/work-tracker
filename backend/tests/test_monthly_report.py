@@ -1,17 +1,26 @@
 import re
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import StringIO
 from csv import reader
 
 from font_roboto import Roboto
+from reportlab.lib.units import mm
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph
 
 from app.corrections import CorrectionRecord, build_effective_event_stream
 from app.models import CorrectionType
-from app.monthly_report import build_monthly_report
+from app.monthly_report import allocate_session_pays, build_monthly_report
 from app.pay import PayRateRecord, calculate_monthly_pay
-from app.report_renderers import render_monthly_report_csv, render_monthly_report_pdf
+from app.report_renderers import (
+    _anomalies_table,
+    _register_fonts,
+    _sessions_table,
+    render_monthly_report_csv,
+    render_monthly_report_pdf,
+)
 from app.work_time import RawWorkEvent, SessionStatus, calculate_monthly_work_time
 
 
@@ -88,6 +97,65 @@ def test_report_totals_equal_authoritative_work_and_pay_summaries():
     assert monthly_report.anomaly_count == 0
     assert len(monthly_report.sessions) == 1
     assert monthly_report.sessions[0].pay == Decimal("425.00")
+    assert sum((session.pay for session in monthly_report.sessions), Decimal("0.00")) == (
+        monthly_report.total_pay
+    )
+
+
+def test_session_cent_allocation_reconciles_two_half_cent_sessions():
+    rate = PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN")
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-01T08:00:00+02:00"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00"),
+            event(4, "exit", "2026-09-01T09:00:01+02:00"),
+        ],
+        rates=[rate],
+    )
+
+    assert monthly_report.total_pay == Decimal("0.01")
+    assert [session.pay for session in monthly_report.sessions] == [
+        Decimal("0.01"),
+        Decimal("0.00"),
+    ]
+    assert sum((session.pay for session in monthly_report.sessions), Decimal("0.00")) == (
+        monthly_report.total_pay
+    )
+
+
+def test_session_cent_allocation_uses_largest_remainder_for_several_sessions():
+    rate = PayRateRecord(1, date(1970, 1, 1), Decimal("12.00"), "PLN")
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-01T08:00:00+02:00"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00"),
+            event(4, "exit", "2026-09-01T09:00:02+02:00"),
+            event(5, "entry", "2026-09-01T10:00:00+02:00"),
+            event(6, "exit", "2026-09-01T10:00:04+02:00"),
+        ],
+        rates=[rate],
+    )
+
+    assert monthly_report.total_pay == Decimal("0.02")
+    assert [session.pay for session in monthly_report.sessions] == [
+        Decimal("0.00"),
+        Decimal("0.01"),
+        Decimal("0.01"),
+    ]
+    assert sum((session.pay for session in monthly_report.sessions), Decimal("0.00")) == (
+        monthly_report.total_pay
+    )
+
+
+def test_session_cent_allocation_ties_use_stable_input_order():
+    exact_pays = (Decimal("0.005"), Decimal("0.005"), Decimal("0.005"))
+
+    first = allocate_session_pays(exact_pays, Decimal("0.02"))
+    second = allocate_session_pays(exact_pays, Decimal("0.02"))
+
+    assert first == second == (Decimal("0.01"), Decimal("0.01"), Decimal("0.00"))
 
 
 def test_report_keeps_multiple_sessions_and_uses_historical_rate_per_session():
@@ -112,6 +180,34 @@ def test_report_keeps_multiple_sessions_and_uses_historical_rate_per_session():
     ]
     assert monthly_report.total_duration_seconds == 16 * 3600
     assert monthly_report.total_pay == Decimal("880.00")
+    assert sum((session.pay for session in monthly_report.sessions), Decimal("0.00")) == (
+        monthly_report.total_pay
+    )
+
+
+def test_fractional_session_allocation_preserves_each_historical_rate():
+    rates = [
+        PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN"),
+        PayRateRecord(2, date(2026, 9, 15), Decimal("36.00"), "PLN"),
+    ]
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-10T08:00:00+02:00"),
+            event(2, "exit", "2026-09-10T08:00:01+02:00"),
+            event(3, "entry", "2026-09-20T08:00:00+02:00"),
+            event(4, "exit", "2026-09-20T08:00:01+02:00"),
+        ],
+        rates=rates,
+    )
+
+    assert [session.hourly_rate for session in monthly_report.sessions] == [
+        Decimal("18.00"),
+        Decimal("36.00"),
+    ]
+    assert monthly_report.total_pay == Decimal("0.02")
+    assert sum((session.pay for session in monthly_report.sessions), Decimal("0.00")) == (
+        monthly_report.total_pay
+    )
 
 
 def test_report_preserves_cross_midnight_and_dst_utc_duration_semantics():
@@ -238,6 +334,93 @@ def test_csv_quotes_delimiter_and_preserves_polish_utf8_text():
     assert rows[0][1:3] == ["wejście", "wyjście"]
     assert rows[1][5] == 'gabinet; "żółć"'
     assert '"gabinet; ""żółć"""' in content.decode("utf-8-sig")
+
+
+def test_csv_session_amounts_reconcile_to_monthly_total():
+    rate = PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN")
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-01T08:00:00+02:00"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00"),
+            event(4, "exit", "2026-09-01T09:00:01+02:00"),
+        ],
+        rates=[rate],
+    )
+    rows = list(
+        reader(
+            StringIO(render_monthly_report_csv(monthly_report).decode("utf-8-sig")),
+            delimiter=";",
+        )
+    )
+
+    assert sum((Decimal(row[9]) for row in rows[1:]), Decimal("0.00")) == (
+        monthly_report.total_pay
+    )
+
+
+def test_pdf_sessions_table_uses_reconciled_line_item_amounts():
+    rate = PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN")
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-01T08:00:00+02:00"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00"),
+            event(4, "exit", "2026-09-01T09:00:01+02:00"),
+        ],
+        rates=[rate],
+    )
+    table = _sessions_table(monthly_report)
+
+    assert [table._cellvalues[1][5], table._cellvalues[2][5]] == [
+        "0,01 zł",
+        "0,00 zł",
+    ]
+    assert table._cellvalues[-1][5] == "0,01 zł"
+
+
+def test_anomaly_table_wraps_and_escapes_dynamic_cells():
+    entries = [
+        event(
+            index,
+            "entry",
+            f"2026-09-06T{8 + index:02d}:00:00+02:00",
+            location="gabinet <test> & archiwum",
+        )
+        for index in range(1, 8)
+    ]
+    monthly_report = report(entries)
+    _register_fonts()
+    table = _anomalies_table(monthly_report)
+    events_cell, problem_cell, location_cell = table._cellvalues[1][1:]
+
+    assert all(
+        isinstance(cell, Paragraph)
+        for cell in (events_cell, problem_cell, location_cell)
+    )
+    assert location_cell.getPlainText() == "gabinet <test> & archiwum"
+    _, wrapped_height = events_cell.wrap(52 * mm - 12, 1_000)
+    assert wrapped_height > 8.5
+    table.wrap(177 * mm, 1_000)
+
+
+def test_long_wrapped_anomaly_report_paginates_without_layout_error():
+    monthly_report = report(
+        [
+            event(index, "entry", f"2026-09-06T{index:02d}:00:00+02:00")
+            for index in range(1, 16)
+        ]
+    )
+    long_report = replace(
+        monthly_report,
+        anomaly_count=40,
+        anomalies=monthly_report.anomalies * 40,
+    )
+
+    pdf = render_monthly_report_pdf(long_report)
+
+    assert pdf.startswith(b"%PDF-")
+    assert len(re.findall(rb"/Type\s*/Page\b", pdf)) > 1
 
 
 def test_embedded_pdf_font_covers_polish_characters():
