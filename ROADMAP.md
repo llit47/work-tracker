@@ -159,20 +159,24 @@ Raw events otrzymane z Home Assistant nie mogą być bezpowrotnie nadpisywane. K
 
 ### Phase 4B — frontend pay presentation and rate management
 
-**Status: NEXT**
+**Status: DONE**
 
-- [ ] Zarządzanie historią stawek w sekcji `Ustawienia`.
-- [ ] Prezentacja miesięcznego i dziennego wynagrodzenia.
-- [ ] Czytelne pokazanie stawek użytych w wybranym miesiącu.
-- [ ] Możliwość pokazania aktualnej stawki w zwykłym podsumowaniu.
+- [x] Zarządzanie historią stawek w sekcji `Ustawienia` przez dodawanie kolejnych, niedestrukcyjnych wpisów.
+- [x] Prezentacja miesięcznego i dziennego wynagrodzenia z backendowego `pay-summary`.
+- [x] Czytelne pokazanie stawek użytych w wybranym miesiącu.
+- [x] Kompaktowa informacja o stawce lub zakresie stawek w zwykłym podsumowaniu.
+- [x] Niezależne stany ładowania i błędu płac, które nie ukrywają danych czasu pracy.
+- [x] Odświeżanie wynagrodzenia po zmianie miesiąca, korekcie czasu i dodaniu historycznej stawki.
 
-Początkowa implementacja Phase 4 nie obejmuje nadgodzin, dodatków weekendowych, podatków ani premii. Phase 4A nie dodaje prezentacji wynagrodzenia ani zarządzania stawkami do frontendu.
+Phase 4 pozostaje oznaczona jako `IN PROGRESS` do zakończenia przeglądu i wdrożeniowej weryfikacji całego zakresu 4A+4B. Następnym celem implementacyjnym jest Phase 5.
+
+Początkowa implementacja Phase 4 nie obejmuje nadgodzin, dodatków weekendowych, podatków ani premii.
 
 Zakres nadal zakłada jedną lokalizację i jedną pracę.
 
 ## Phase 5 — Dashboard and live shift
 
-**Status: PLANNED**
+**Status: NEXT**
 
 - status `W PRACY` / `POZA PRACĄ`,
 - dzisiejsze wejście,

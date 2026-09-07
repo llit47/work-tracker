@@ -8,7 +8,8 @@
 - **Phase 3 — Manual corrections: DONE**
 - **Phase 4 — Pay calculation: IN PROGRESS**
   - **Phase 4A — backend pay-rate history and pay calculation: DONE**
-  - **Phase 4B — frontend pay presentation and rate management: NEXT**
+  - **Phase 4B — frontend pay presentation and rate management: DONE**
+- **Phase 5 — Dashboard and live shift: NEXT**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
@@ -29,6 +30,11 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Ignorowane eventy są domyślnie ukryte; opcja `Pokaż ignorowane wydarzenia` przywraca ich audytowy widok wraz z możliwością cofnięcia korekty i jest zapamiętywana w `localStorage`.
 - Backend przechowuje historyczne stawki godzinowe i wylicza dzienne oraz miesięczne wynagrodzenie wyłącznie z poprawnych sesji.
 - Domyślna stawka to `50,00 PLN/h` od `1970-01-01`; kolejne stawki nie zmieniają historycznych rozliczeń.
+- Frontend pobiera autorytatywne `pay-summary` i pokazuje miesięczne oraz dzienne wynagrodzenie bez przeliczania kwot w React.
+- W zwykłym podsumowaniu widoczna jest stawka lub zakres stawek użytych w wybranym miesiącu, a szczegóły pozostają w kompaktowej sekcji.
+- Sekcja `Ustawienia → Wynagrodzenie` pokazuje najnowszą stawkę, historię oraz formularz dodania nowej stawki z datą obowiązywania.
+- Zmiana miesiąca anuluje nieaktualne żądanie wynagrodzenia; korekty czasu i dodanie stawki odświeżają płace z backendu.
+- Błąd API płacowego jest prezentowany niezależnie i nie ukrywa poprawnie pobranego czasu pracy.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
@@ -90,16 +96,15 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 4B — frontend pay presentation and rate management**
+**Phase 5 — Dashboard and live shift**
 
-Najbliższy PR funkcjonalny powinien dodać prezentację wynagrodzenia oraz zarządzanie historią stawek w istniejącej sekcji `Ustawienia`. Szczegółowy zakres znajduje się w `ROADMAP.md`.
-
-Uzgodnione założenia Phase 4: domyślnie `50,00 PLN/h` i waluta `PLN`; stawki mają historię z datą obowiązywania, a historyczne miesiące używają stawki właściwej dla daty pracy. Wynagrodzenie będzie liczone wyłącznie z poprawnych sesji obecnego silnika. Czas anomalny nie będzie zgadywany ani opłacany automatycznie. Zarządzanie stawkami trafi później do sekcji `Ustawienia`; początkowy zakres nie obejmie nadgodzin, dodatków weekendowych, podatków ani premii.
+Następny etap powinien poprawić dashboard i dodać bieżący status zmiany zgodnie z zakresem w `ROADMAP.md`. Nie należy przy tym rozszerzać początkowego modelu płac o nadgodziny, dodatki weekendowe, podatki ani premie bez osobnego zakresu.
 
 ## Known intentional limitations
 
 - jedna praca i jedna aktywna lokalizacja,
-- brak frontendowej prezentacji wynagrodzenia i zarządzania stawkami,
+- brak edycji i usuwania historycznych stawek,
+- brak nadgodzin, dodatków, podatków i przeliczeń walut,
 - brak logowania użytkownika,
 - brak eksportów,
 - brak publicznego dostępu do aplikacji.
