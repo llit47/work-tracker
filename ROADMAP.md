@@ -135,13 +135,27 @@ Zakończony zakres:
 
 Raw events otrzymane z Home Assistant nie mogą być bezpowrotnie nadpisywane. Korekty powinny być osobną, możliwą do prześledzenia warstwą danych.
 
+### Post-Phase-3 UI cleanup
+
+- [x] Kompaktowa, domyślnie zwinięta sekcja `Ustawienia`.
+- [x] Ignorowane eventy ukryte domyślnie wyłącznie w warstwie prezentacji.
+- [x] Zapamiętywane lokalnie ustawienie widoku `Pokaż ignorowane wydarzenia`, pozwalające przywrócić pełny widok audytowy i cofnąć ignorowanie.
+
 ## Phase 4 — Pay calculation
 
 **Status: NEXT**
 
-- stawka godzinowa,
+- domyślna stawka godzinowa: `50,00 PLN/h`,
+- domyślna waluta: `PLN`,
 - miesięczne wynagrodzenie,
-- historia stawek albo równoważny mechanizm zapobiegający zmianie historycznych rozliczeń po zmianie stawki.
+- historia stawek z datą `effective from`, bez destrukcyjnego nadpisywania jednej globalnej wartości,
+- użycie stawki obowiązującej dla daty pracy przy obliczaniu historycznych miesięcy,
+- obliczenia oparte wyłącznie na poprawnych sesjach z istniejącego silnika parowania,
+- brak automatycznego naliczania wynagrodzenia za czas nieprawidłowy lub anomalny,
+- zarządzanie stawkami w sekcji `Ustawienia`,
+- możliwość późniejszego pokazania aktualnej stawki również w zwykłym podsumowaniu.
+
+Początkowa implementacja Phase 4 nie obejmie nadgodzin, dodatków weekendowych, podatków ani premii. Powyższe punkty są wyłącznie założeniami projektowymi; w tym etapie porządkowania UI nie zaimplementowano obliczeń wynagrodzenia.
 
 Zakres nadal zakłada jedną lokalizację i jedną pracę.
 

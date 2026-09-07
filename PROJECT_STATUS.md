@@ -23,6 +23,8 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Użytkownik może skorygować timestamp raw eventu, zignorować raw event oraz ręcznie dodać brakujące wejście lub wyjście.
 - Każdą korektę można cofnąć; frontend po mutacji pobiera nowe podsumowanie z backendu.
 - Frontend rozróżnia zdarzenia Home Assistant, zdarzenia skorygowane, zignorowane i dodane ręcznie.
+- Kompaktowa sekcja `Ustawienia` zawiera preferencje widoku i pozostaje domyślnie zwinięta.
+- Ignorowane eventy są domyślnie ukryte; opcja `Pokaż ignorowane wydarzenia` przywraca ich audytowy widok wraz z możliwością cofnięcia korekty i jest zapamiętywana w `localStorage`.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
@@ -78,6 +80,8 @@ Aktualne endpointy:
 **Phase 4 — Pay calculation**
 
 Najbliższy PR funkcjonalny powinien dotyczyć stawek i miesięcznego wynagrodzenia z mechanizmem zachowującym historyczne rozliczenia. Szczegółowy zakres znajduje się w `ROADMAP.md`.
+
+Uzgodnione założenia Phase 4: domyślnie `50,00 PLN/h` i waluta `PLN`; stawki mają historię z datą obowiązywania, a historyczne miesiące używają stawki właściwej dla daty pracy. Wynagrodzenie będzie liczone wyłącznie z poprawnych sesji obecnego silnika. Czas anomalny nie będzie zgadywany ani opłacany automatycznie. Zarządzanie stawkami trafi później do sekcji `Ustawienia`; początkowy zakres nie obejmie nadgodzin, dodatków weekendowych, podatków ani premii.
 
 ## Known intentional limitations
 
