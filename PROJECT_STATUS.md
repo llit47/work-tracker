@@ -95,7 +95,8 @@ Najbliższy PR funkcjonalny powinien dotyczyć stawek i miesięcznego wynagrodze
 - PR #4 — `fix: allow service user to run deployed application`
 - PR #5 — `docs: add project roadmap and update project status`
 - PR #6 — `feat: add work-time calculation`
-- PR #7 — `feat: add monthly navigation` (ten PR)
+- PR #7 — `feat: add monthly navigation`
+- PR #8 — `feat: add manual work-time corrections` (ten PR)
 
 ## Maintenance rule
 
