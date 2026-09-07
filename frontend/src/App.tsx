@@ -22,6 +22,21 @@ import {
   type MonthSelection,
 } from './monthNavigation'
 import {
+  PayRateRequestError,
+  PaySummaryRequestError,
+  createPayRate,
+  describeRatesUsed,
+  findDailyPay,
+  formatHourlyRate,
+  formatMoney,
+  loadPaySummary,
+  validatePayRateForm,
+  type MonthlyPaySummary,
+  type PayRate,
+  type PayRateFormErrors,
+  type PayRateFormValues,
+} from './pay'
+import {
   getVisibleDays,
   hasStandaloneUndoAction,
   isEventVisible,
@@ -114,6 +129,17 @@ const anomalyLabels: Record<Exclude<SessionStatus, 'valid'>, string> = {
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
 const defaultLocation = 'gabinet_zabki'
 
+function localDateInputValue(date = new Date()): string {
+  const year = String(date.getFullYear()).padStart(4, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function initialPayRateForm(): PayRateFormValues {
+  return { effectiveFrom: localDateInputValue(), hourlyRate: '', currency: 'PLN' }
+}
+
 function formatMonth(selection: MonthSelection) {
   const date = new Date(selection.year, selection.month - 1, 1)
   return new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric' }).format(date).toUpperCase()
@@ -121,6 +147,11 @@ function formatMonth(selection: MonthSelection) {
 
 function formatDay(date: string) {
   return new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'long' }).format(new Date(`${date}T00:00:00Z`))
+}
+
+function formatCalendarDate(date: string): string {
+  const [year, month, day] = date.split('-')
+  return `${day}.${month}.${year}`
 }
 
 function formatDuration(seconds: number | null) {
@@ -245,6 +276,17 @@ function App() {
   const [summary, setSummary] = useState<WorkSummary | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [retryRequest, setRetryRequest] = useState(0)
+  const [paySummary, setPaySummary] = useState<MonthlyPaySummary | null>(null)
+  const [payState, setPayState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [payError, setPayError] = useState('')
+  const [payRetryRequest, setPayRetryRequest] = useState(0)
+  const [payRates, setPayRates] = useState<PayRate[]>([])
+  const [payRatesState, setPayRatesState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [payRatesRetryRequest, setPayRatesRetryRequest] = useState(0)
+  const [payRateForm, setPayRateForm] = useState<PayRateFormValues>(() => initialPayRateForm())
+  const [payRateFormErrors, setPayRateFormErrors] = useState<PayRateFormErrors>({})
+  const [isSavingPayRate, setIsSavingPayRate] = useState(false)
+  const [payRateMessage, setPayRateMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [correctionForm, setCorrectionForm] = useState<CorrectionForm | null>(null)
   const [isSavingCorrection, setIsSavingCorrection] = useState(false)
   const [actionMessage, setActionMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
@@ -347,6 +389,71 @@ function App() {
   }, [selectedMonth.year, selectedMonth.month, retryRequest])
 
   useEffect(() => {
+    const controller = new AbortController()
+    let ignoreResponse = false
+
+    setPaySummary(null)
+    setPayState('loading')
+    setPayError('')
+
+    const load = async () => {
+      try {
+        const loadedSummary = await loadPaySummary(
+          fetch,
+          apiBase,
+          selectedMonth.year,
+          selectedMonth.month,
+          controller.signal,
+        )
+        if (!ignoreResponse) {
+          setPaySummary(loadedSummary)
+          setPayState('ready')
+        }
+      } catch (error) {
+        if (!ignoreResponse) {
+          setPayError(error instanceof PaySummaryRequestError && error.status === 409
+            ? 'Nie można obliczyć łącznego wynagrodzenia dla stawek w różnych walutach.'
+            : 'Nie udało się pobrać danych o wynagrodzeniu.')
+          setPayState('error')
+        }
+      }
+    }
+    void load()
+
+    return () => {
+      ignoreResponse = true
+      controller.abort()
+    }
+  }, [selectedMonth.year, selectedMonth.month, payRetryRequest])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let ignoreResponse = false
+
+    setPayRatesState('loading')
+
+    const load = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/pay-rates`, { signal: controller.signal })
+        if (!response.ok) throw new Error('Pay-rate request failed')
+        const loadedRates: PayRate[] = await response.json()
+        if (!ignoreResponse) {
+          setPayRates(loadedRates)
+          setPayRatesState('ready')
+        }
+      } catch {
+        if (!ignoreResponse) setPayRatesState('error')
+      }
+    }
+    void load()
+
+    return () => {
+      ignoreResponse = true
+      controller.abort()
+    }
+  }, [payRatesRetryRequest])
+
+  useEffect(() => {
     setCorrectionForm(null)
     setActionMessage(null)
   }, [selectedMonth.year, selectedMonth.month])
@@ -357,12 +464,47 @@ function App() {
     setSelectedMonth(selection)
   }
 
+  const refreshPaySummary = () => {
+    setPaySummary(null)
+    setPayState('loading')
+    setPayError('')
+    setPayRetryRequest((request) => request + 1)
+  }
+
   const refreshSummaryAfterCorrection = (message: string) => {
     setCorrectionForm(null)
     setActionMessage({ kind: 'success', text: message })
     setSummary(null)
     setState('loading')
     setRetryRequest((request) => request + 1)
+    refreshPaySummary()
+  }
+
+  const savePayRate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setPayRateMessage(null)
+    const validation = validatePayRateForm(payRateForm)
+    setPayRateFormErrors(validation.errors)
+    if (!validation.payload) return
+
+    setIsSavingPayRate(true)
+    try {
+      await createPayRate(fetch, apiBase, validation.payload, {
+        rates: () => setPayRatesRetryRequest((request) => request + 1),
+        paySummary: refreshPaySummary,
+      })
+      setPayRateForm((current) => ({ ...current, hourlyRate: '' }))
+      setPayRateMessage({ kind: 'success', text: 'Nowa stawka została zapisana.' })
+    } catch (error) {
+      const message = error instanceof PayRateRequestError && error.status === 409
+        ? 'Dla tej daty obowiązywania istnieje już stawka.'
+        : error instanceof PayRateRequestError && error.status === 422
+          ? 'Nie udało się zapisać stawki. Popraw dane formularza.'
+          : 'Nie udało się zapisać stawki. Spróbuj ponownie.'
+      setPayRateMessage({ kind: 'error', text: message })
+    } finally {
+      setIsSavingPayRate(false)
+    }
   }
 
   const sendCorrectionRequest = async (url: string, request: RequestInit, successMessage: string) => {
@@ -497,6 +639,10 @@ function App() {
     : null
   const correctionSelectedOffset = correctionForm?.selectedOffset ?? correctionPreservedOffset ?? ''
   const visibleDays = summary ? getVisibleDays(summary.days, showIgnoredEvents) : []
+  const latestPayRate = payRates.length > 0 ? payRates[payRates.length - 1] : null
+  const usedRateDescription = paySummary
+    ? describeRatesUsed(paySummary.rates_used, paySummary.currency)
+    : 'Stawka niedostępna'
 
   return (
     <main className="page">
@@ -554,15 +700,116 @@ function App() {
         <details className="settings-panel">
           <summary>Ustawienia</summary>
           <div className="settings-content">
-            <h3>Widok</h3>
-            <label className="setting-option">
-              <input
-                type="checkbox"
-                checked={showIgnoredEvents}
-                onChange={(event) => setShowIgnoredEvents(event.target.checked)}
-              />
-              <span>Pokaż ignorowane wydarzenia</span>
-            </label>
+            <section className="settings-section">
+              <h3>Widok</h3>
+              <label className="setting-option">
+                <input
+                  type="checkbox"
+                  checked={showIgnoredEvents}
+                  onChange={(event) => setShowIgnoredEvents(event.target.checked)}
+                />
+                <span>Pokaż ignorowane wydarzenia</span>
+              </label>
+            </section>
+            <section className="settings-section pay-settings" aria-labelledby="pay-settings-heading">
+              <h3 id="pay-settings-heading">Wynagrodzenie</h3>
+              {payRatesState === 'loading' && <p className="settings-note">Ładowanie stawek…</p>}
+              {payRatesState === 'error' && (
+                <div className="settings-error" role="alert">
+                  <span>Nie udało się pobrać historii stawek.</span>
+                  <button type="button" onClick={() => setPayRatesRetryRequest((request) => request + 1)}>
+                    Spróbuj ponownie
+                  </button>
+                </div>
+              )}
+              {payRatesState === 'ready' && latestPayRate && (
+                <p className="current-rate">
+                  <span>Najnowsza skonfigurowana stawka</span>
+                  <strong>{formatHourlyRate(latestPayRate.hourly_rate, latestPayRate.currency)}</strong>
+                </p>
+              )}
+
+              <form className="pay-rate-form" onSubmit={savePayRate} noValidate>
+                <h4>Dodaj nową stawkę</h4>
+                <p className="settings-note">
+                  Nowa stawka obowiązuje od wybranej daty. Wcześniejsze okresy zachowują dotychczasowe stawki.
+                </p>
+                <div className="pay-rate-fields">
+                  <label>
+                    <span>Stawka godzinowa</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      placeholder="np. 55,00"
+                      required
+                      aria-invalid={Boolean(payRateFormErrors.hourlyRate)}
+                      aria-describedby={payRateFormErrors.hourlyRate ? 'hourly-rate-error' : undefined}
+                      value={payRateForm.hourlyRate}
+                      onChange={(event) => {
+                        setPayRateForm({ ...payRateForm, hourlyRate: event.target.value })
+                        setPayRateFormErrors((errors) => ({ ...errors, hourlyRate: undefined }))
+                      }}
+                    />
+                    {payRateFormErrors.hourlyRate && <small id="hourly-rate-error" className="field-error">{payRateFormErrors.hourlyRate}</small>}
+                  </label>
+                  <label>
+                    <span>Data obowiązywania</span>
+                    <input
+                      type="date"
+                      required
+                      aria-invalid={Boolean(payRateFormErrors.effectiveFrom)}
+                      aria-describedby={payRateFormErrors.effectiveFrom ? 'effective-date-error' : undefined}
+                      value={payRateForm.effectiveFrom}
+                      onChange={(event) => {
+                        setPayRateForm({ ...payRateForm, effectiveFrom: event.target.value })
+                        setPayRateFormErrors((errors) => ({ ...errors, effectiveFrom: undefined }))
+                      }}
+                    />
+                    {payRateFormErrors.effectiveFrom && <small id="effective-date-error" className="field-error">{payRateFormErrors.effectiveFrom}</small>}
+                  </label>
+                  <label>
+                    <span>Waluta</span>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      maxLength={3}
+                      required
+                      aria-invalid={Boolean(payRateFormErrors.currency)}
+                      aria-describedby={payRateFormErrors.currency ? 'currency-error' : undefined}
+                      value={payRateForm.currency}
+                      onChange={(event) => {
+                        setPayRateForm({ ...payRateForm, currency: event.target.value.toUpperCase() })
+                        setPayRateFormErrors((errors) => ({ ...errors, currency: undefined }))
+                      }}
+                    />
+                    {payRateFormErrors.currency && <small id="currency-error" className="field-error">{payRateFormErrors.currency}</small>}
+                  </label>
+                </div>
+                <button type="submit" disabled={isSavingPayRate}>
+                  {isSavingPayRate ? 'Zapisywanie…' : 'Dodaj stawkę'}
+                </button>
+                {payRateMessage && (
+                  <p className={`inline-message ${payRateMessage.kind}`} role={payRateMessage.kind === 'error' ? 'alert' : 'status'}>
+                    {payRateMessage.text}
+                  </p>
+                )}
+              </form>
+
+              {payRatesState === 'ready' && payRates.length > 0 && (
+                <details className="rate-history">
+                  <summary>Historia stawek ({payRates.length})</summary>
+                  <ol>
+                    {payRates.map((rate) => (
+                      <li key={rate.id}>
+                        <span>od {formatCalendarDate(rate.effective_from)}</span>
+                        <strong>{formatHourlyRate(rate.hourly_rate, rate.currency)}</strong>
+                      </li>
+                    ))}
+                  </ol>
+                </details>
+              )}
+            </section>
           </div>
         </details>
         <section className="correction-toolbar" aria-label="Korekty ręczne">
@@ -647,9 +894,34 @@ function App() {
           <section className="summary" aria-label="Podsumowanie miesiąca">
             <div><span>Czas pracy</span><strong>{formatDuration(summary.total_duration_seconds)}</strong></div>
             <div><span>Dni pracy</span><strong>{summary.work_days}</strong></div>
+            <div className="pay-total">
+              <span>Wynagrodzenie</span>
+              <strong>{payState === 'ready' && paySummary ? formatMoney(paySummary.total_pay, paySummary.currency) : '—'}</strong>
+              <small>{payState === 'loading' ? 'Ładowanie…' : usedRateDescription}</small>
+            </div>
             <div><span>Średnio dziennie</span><strong>{formatDuration(averageDayDuration)}</strong></div>
             <div><span>Problemy</span><strong className={summary.anomaly_count > 0 ? 'problem-count' : ''}>{summary.anomaly_count}</strong></div>
           </section>
+
+          {payState === 'error' && (
+            <div className="pay-error" role="alert">
+              <span>{payError || 'Nie udało się pobrać danych o wynagrodzeniu.'}</span>
+              <button type="button" onClick={refreshPaySummary}>Spróbuj ponownie</button>
+            </div>
+          )}
+          {payState === 'ready' && paySummary && paySummary.rates_used.length > 0 && (
+            <details className="rates-used">
+              <summary>Stawki użyte w miesiącu ({paySummary.rates_used.length})</summary>
+              <ul>
+                {paySummary.rates_used.map((rate) => (
+                  <li key={rate.id}>
+                    <span>od {formatCalendarDate(rate.effective_from)}</span>
+                    <strong>{formatHourlyRate(rate.hourly_rate, rate.currency)}</strong>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           {visibleDays.length === 0 && <p className="message">Brak zdarzeń w tym miesiącu.</p>}
           <div className="days">
@@ -657,7 +929,17 @@ function App() {
               <section className="day" key={day.date}>
                 <div className="day-heading">
                   <h3>{formatDay(day.date)}</h3>
-                  <span>Razem: <strong>{formatDuration(day.total_duration_seconds)}</strong></span>
+                  <div className="day-totals">
+                    <span>Czas: <strong>{formatDuration(day.total_duration_seconds)}</strong></span>
+                    <span>
+                      Wynagrodzenie:{' '}
+                      <strong>
+                        {payState === 'ready' && paySummary
+                          ? formatMoney(findDailyPay(paySummary.days, day.date), paySummary.currency)
+                          : '—'}
+                      </strong>
+                    </span>
+                  </div>
                 </div>
                 <div className="sessions">
                   {day.items.map((item) => (
