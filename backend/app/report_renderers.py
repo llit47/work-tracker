@@ -18,7 +18,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .monthly_report import MonthlyReport, ReportAnomaly
+from .monthly_report import MonthlyReport, ReportAnomalyEvent
 from .work_time import SessionStatus
 
 CSV_HEADERS = (
@@ -56,6 +56,11 @@ ANOMALY_LABELS = {
     SessionStatus.UNUSUALLY_LONG_SESSION: "Podejrzanie długa sesja",
     SessionStatus.AMBIGUOUS_TIMESTAMP: "Sprzeczne zdarzenia o tej samej godzinie",
 }
+
+# A Table can split between rows but not inside one row. Each formatted event
+# has bounded text (HH:MM plus a fixed label), so this conservative chunk size
+# keeps every physical anomaly row well below the usable A4 frame height.
+MAX_ANOMALY_EVENTS_PER_ROW = 20
 
 
 def render_monthly_report_csv(report: MonthlyReport) -> bytes:
@@ -302,17 +307,10 @@ def _anomalies_table(report: MonthlyReport) -> Table:
         fontName="Roboto",
         fontSize=7.3,
         leading=8.5,
+        splitLongWords=1,
     )
     rows = [("Data", "Zdarzenia", "Problem", "Lokalizacja")]
-    rows.extend(
-        (
-            anomaly.date.strftime("%d.%m.%Y"),
-            Paragraph(escape(_format_anomaly_events(anomaly)), cell_style),
-            Paragraph(escape(ANOMALY_LABELS[anomaly.status]), cell_style),
-            Paragraph(escape(anomaly.location), cell_style),
-        )
-        for anomaly in report.anomalies
-    )
+    rows.extend(_anomaly_rows(report, cell_style))
     table = Table(
         rows,
         colWidths=(31 * mm, 52 * mm, 55 * mm, 39 * mm),
@@ -320,6 +318,36 @@ def _anomalies_table(report: MonthlyReport) -> Table:
     )
     table.setStyle(_table_style(len(rows)))
     return table
+
+
+def _anomaly_rows(
+    report: MonthlyReport, cell_style: ParagraphStyle
+) -> list[tuple[str, Paragraph, Paragraph | str, Paragraph | str]]:
+    rows: list[tuple[str, Paragraph, Paragraph | str, Paragraph | str]] = []
+    for anomaly in report.anomalies:
+        event_chunks = [
+            anomaly.events[index : index + MAX_ANOMALY_EVENTS_PER_ROW]
+            for index in range(0, len(anomaly.events), MAX_ANOMALY_EVENTS_PER_ROW)
+        ] or [()]
+        for chunk_index, event_chunk in enumerate(event_chunks):
+            first_row = chunk_index == 0
+            rows.append(
+                (
+                    anomaly.date.strftime("%d.%m.%Y") if first_row else "",
+                    Paragraph(escape(_format_anomaly_events(event_chunk)), cell_style),
+                    (
+                        Paragraph(escape(ANOMALY_LABELS[anomaly.status]), cell_style)
+                        if first_row
+                        else ""
+                    ),
+                    (
+                        Paragraph(escape(anomaly.location), cell_style)
+                        if first_row
+                        else ""
+                    ),
+                )
+            )
+    return rows
 
 
 def _table_style(row_count: int) -> TableStyle:
@@ -349,11 +377,11 @@ def _draw_page_number(canvas, document) -> None:
     canvas.restoreState()
 
 
-def _format_anomaly_events(anomaly: ReportAnomaly) -> str:
+def _format_anomaly_events(events: tuple[ReportAnomalyEvent, ...]) -> str:
     labels = {"entry": "wejście", "exit": "wyjście"}
     return ", ".join(
         f"{event.timestamp.strftime('%H:%M')} {labels[event.event_type]}"
-        for event in anomaly.events
+        for event in events
     )
 
 

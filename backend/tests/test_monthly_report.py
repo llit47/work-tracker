@@ -1,5 +1,4 @@
 import re
-from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import StringIO
@@ -15,6 +14,7 @@ from app.models import CorrectionType
 from app.monthly_report import allocate_session_pays, build_monthly_report
 from app.pay import PayRateRecord, calculate_monthly_pay
 from app.report_renderers import (
+    MAX_ANOMALY_EVENTS_PER_ROW,
     _anomalies_table,
     _register_fonts,
     _sessions_table,
@@ -79,6 +79,16 @@ def correction(
             event_timestamp.astimezone(timezone.utc) if event_timestamp else None
         ),
         location="gabinet_zabki" if correction_type is CorrectionType.MANUAL_EVENT else None,
+    )
+
+
+def duplicate_entry_report(event_count: int):
+    start = datetime(2026, 9, 6, tzinfo=timezone(timedelta(hours=2)))
+    return report(
+        [
+            event(index + 1, "entry", (start + timedelta(minutes=index)).isoformat())
+            for index in range(event_count)
+        ]
     )
 
 
@@ -394,6 +404,7 @@ def test_anomaly_table_wraps_and_escapes_dynamic_cells():
     table = _anomalies_table(monthly_report)
     events_cell, problem_cell, location_cell = table._cellvalues[1][1:]
 
+    assert len(table._cellvalues) == 2
     assert all(
         isinstance(cell, Paragraph)
         for cell in (events_cell, problem_cell, location_cell)
@@ -404,23 +415,50 @@ def test_anomaly_table_wraps_and_escapes_dynamic_cells():
     table.wrap(177 * mm, 1_000)
 
 
-def test_long_wrapped_anomaly_report_paginates_without_layout_error():
-    monthly_report = report(
-        [
-            event(index, "entry", f"2026-09-06T{index:02d}:00:00+02:00")
-            for index in range(1, 16)
-        ]
-    )
-    long_report = replace(
-        monthly_report,
-        anomaly_count=40,
-        anomalies=monthly_report.anomalies * 40,
-    )
+def test_large_single_anomaly_pdf_generation_succeeds():
+    monthly_report = duplicate_entry_report(250)
 
-    pdf = render_monthly_report_pdf(long_report)
+    pdf = render_monthly_report_pdf(monthly_report)
+
+    assert pdf.startswith(b"%PDF-")
+
+
+def test_very_large_single_anomaly_pdf_paginates():
+    pdf = render_monthly_report_pdf(duplicate_entry_report(500))
 
     assert pdf.startswith(b"%PDF-")
     assert len(re.findall(rb"/Type\s*/Page\b", pdf)) > 1
+
+
+def test_anomaly_chunks_preserve_every_event_once_and_logical_count():
+    monthly_report = duplicate_entry_report(500)
+    _register_fonts()
+    table = _anomalies_table(monthly_report)
+    physical_rows = table._cellvalues[1:]
+    rendered_events = [
+        value
+        for row in physical_rows
+        for value in row[1].getPlainText().split(", ")
+        if value
+    ]
+    expected_events = [
+        f"{event.timestamp.strftime('%H:%M')} wejście"
+        for event in monthly_report.anomalies[0].events
+    ]
+
+    assert monthly_report.anomaly_count == 1
+    assert len(monthly_report.anomalies) == 1
+    assert len(physical_rows) == 25
+    assert rendered_events == expected_events
+    assert all(
+        len(row[1].getPlainText().split(", ")) <= MAX_ANOMALY_EVENTS_PER_ROW
+        for row in physical_rows
+    )
+    assert isinstance(physical_rows[0][2], Paragraph)
+    assert isinstance(physical_rows[0][3], Paragraph)
+    assert all(row[0] == row[2] == row[3] == "" for row in physical_rows[1:])
+    table.wrap(177 * mm, 10_000)
+    assert max(table._rowHeights[1:]) < 30 * mm
 
 
 def test_embedded_pdf_font_covers_polish_characters():
