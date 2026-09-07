@@ -5,6 +5,7 @@ import {
   MIN_YEAR,
   currentMonth,
   isSameMonth,
+  millisecondsUntilNextLocalDay,
   monthInputValue,
   monthSearch,
   parseMonthInput,
@@ -132,7 +133,7 @@ function writeMonthToUrl(selection: MonthSelection, mode: 'push' | 'replace') {
 }
 
 function App() {
-  const [today] = useState(() => currentMonth())
+  const [today, setToday] = useState(() => currentMonth())
   const [initialUrlMonth] = useState(() => readMonthFromSearch(window.location.search, today))
   const [selectedMonth, setSelectedMonth] = useState(initialUrlMonth.selection)
   const [summary, setSummary] = useState<WorkSummary | null>(null)
@@ -140,19 +141,55 @@ function App() {
   const [retryRequest, setRetryRequest] = useState(0)
 
   useEffect(() => {
+    let refreshTimer: number
+
+    const refreshCurrentMonth = () => {
+      const freshCurrentMonth = currentMonth()
+      setToday((previousMonth) => (
+        isSameMonth(previousMonth, freshCurrentMonth) ? previousMonth : freshCurrentMonth
+      ))
+    }
+
+    const scheduleMidnightRefresh = () => {
+      refreshTimer = window.setTimeout(() => {
+        refreshCurrentMonth()
+        scheduleMidnightRefresh()
+      }, millisecondsUntilNextLocalDay())
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshCurrentMonth()
+    }
+
+    scheduleMidnightRefresh()
+    window.addEventListener('focus', refreshCurrentMonth)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearTimeout(refreshTimer)
+      window.removeEventListener('focus', refreshCurrentMonth)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
+
+  useEffect(() => {
     if (initialUrlMonth.shouldNormalize) writeMonthToUrl(initialUrlMonth.selection, 'replace')
   }, [initialUrlMonth])
 
   useEffect(() => {
     const handlePopState = () => {
-      const urlMonth = readMonthFromSearch(window.location.search, today)
+      const freshCurrentMonth = currentMonth()
+      setToday((previousMonth) => (
+        isSameMonth(previousMonth, freshCurrentMonth) ? previousMonth : freshCurrentMonth
+      ))
+      const urlMonth = readMonthFromSearch(window.location.search, freshCurrentMonth)
       if (urlMonth.shouldNormalize) writeMonthToUrl(urlMonth.selection, 'replace')
       setSelectedMonth(urlMonth.selection)
     }
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [today])
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -239,7 +276,17 @@ function App() {
               }}
             />
           </label>
-          <button type="button" disabled={isCurrentMonth} onClick={() => selectMonth(today)}>Dzisiaj</button>
+          <button
+            type="button"
+            disabled={isCurrentMonth}
+            onClick={() => {
+              const freshCurrentMonth = currentMonth()
+              setToday(freshCurrentMonth)
+              selectMonth(freshCurrentMonth)
+            }}
+          >
+            Dzisiaj
+          </button>
         </div>
         {state === 'loading' && <p className="message">Ładowanie czasu pracy…</p>}
         {state === 'error' && (

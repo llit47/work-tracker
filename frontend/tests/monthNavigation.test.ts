@@ -3,6 +3,7 @@ import {
   MIN_YEAR,
   currentMonth,
   isSameMonth,
+  millisecondsUntilNextLocalDay,
   monthInputValue,
   monthSearch,
   parseMonthInput,
@@ -20,6 +21,16 @@ function assertEqual<T>(actual: T, expected: T, message: string) {
 const fallback: MonthSelection = { year: 2026, month: 9 }
 
 assertEqual(currentMonth(new Date(2026, 8, 6)), fallback, 'uses the local current month')
+assertEqual(
+  currentMonth(new Date(2026, 9, 1, 0, 0)),
+  { year: 2026, month: 10 },
+  'reads the new local month after midnight',
+)
+assertEqual(
+  millisecondsUntilNextLocalDay(new Date(2026, 8, 30, 23, 59, 59, 500)),
+  500,
+  'schedules refresh at the next local midnight',
+)
 assertEqual(readMonthFromSearch('', fallback), { selection: fallback, shouldNormalize: false }, 'defaults to current month')
 assertEqual(
   readMonthFromSearch('?year=2025&month=12', fallback),

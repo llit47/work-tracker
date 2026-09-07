@@ -15,6 +15,11 @@ export function currentMonth(date = new Date()): MonthSelection {
   return { year: date.getFullYear(), month: date.getMonth() + 1 }
 }
 
+export function millisecondsUntilNextLocalDay(now = new Date()): number {
+  const nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+  return Math.max(0, nextDay.getTime() - now.getTime())
+}
+
 export function isValidMonth(selection: MonthSelection): boolean {
   return (
     Number.isInteger(selection.year)
