@@ -1,7 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 
 import {
+  extractOffsetFromIso,
+  getPossibleOffsetsForLocalDateTime,
   localDateTimeToOffsetIso,
+  resolveCorrectionTimestamp,
   timestampToLocalInput,
   type ManualEventType,
 } from './corrections'
@@ -70,8 +73,21 @@ type WorkSummary = {
 }
 
 type CorrectionForm =
-  | { kind: 'timestamp'; event: WorkEvent; value: string }
-  | { kind: 'manual'; eventType: ManualEventType; location: string; value: string }
+  | {
+      kind: 'timestamp'
+      event: WorkEvent
+      value: string
+      initialValue: string
+      existingTimestamp: string
+      selectedOffset: string | null
+    }
+  | {
+      kind: 'manual'
+      eventType: ManualEventType
+      location: string
+      value: string
+      selectedOffset: string | null
+    }
 
 type EventActions = {
   onEdit: (event: WorkEvent) => void
@@ -344,7 +360,24 @@ function App() {
   const saveCorrection = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!correctionForm) return
-    const timestamp = localDateTimeToOffsetIso(correctionForm.value)
+    const possibleOffsets = getPossibleOffsetsForLocalDateTime(correctionForm.value)
+    const preservedOffset = correctionForm.kind === 'timestamp'
+      && correctionForm.value === correctionForm.initialValue
+      ? extractOffsetFromIso(correctionForm.existingTimestamp)
+      : null
+    const selectedOffset = correctionForm.selectedOffset ?? preservedOffset
+    if (possibleOffsets.length > 1 && !selectedOffset) {
+      setActionMessage({ kind: 'error', text: 'Wybierz właściwe wystąpienie godziny po zmianie czasu.' })
+      return
+    }
+    const timestamp = correctionForm.kind === 'timestamp'
+      ? resolveCorrectionTimestamp(
+          correctionForm.value,
+          correctionForm.existingTimestamp,
+          correctionForm.initialValue,
+          correctionForm.selectedOffset,
+        )
+      : localDateTimeToOffsetIso(correctionForm.value, selectedOffset ?? undefined)
     if (!timestamp) {
       setActionMessage({ kind: 'error', text: 'Podaj prawidłową lokalną datę i godzinę.' })
       return
@@ -399,10 +432,14 @@ function App() {
 
   const editEvent = (event: WorkEvent) => {
     setActionMessage(null)
+    const value = timestampToLocalInput(event.event_timestamp)
     setCorrectionForm({
       kind: 'timestamp',
       event,
-      value: timestampToLocalInput(event.event_timestamp),
+      value,
+      initialValue: value,
+      existingTimestamp: event.event_timestamp,
+      selectedOffset: null,
     })
   }
 
@@ -413,6 +450,7 @@ function App() {
       eventType,
       location: findSummaryLocation(summary),
       value: '',
+      selectedOffset: null,
     })
   }
 
@@ -428,6 +466,14 @@ function App() {
     onUndo: undoCorrection,
     disabled: isSavingCorrection,
   }
+  const correctionPossibleOffsets = correctionForm
+    ? getPossibleOffsetsForLocalDateTime(correctionForm.value)
+    : []
+  const correctionPreservedOffset = correctionForm?.kind === 'timestamp'
+    && correctionForm.value === correctionForm.initialValue
+    ? extractOffsetFromIso(correctionForm.existingTimestamp)
+    : null
+  const correctionSelectedOffset = correctionForm?.selectedOffset ?? correctionPreservedOffset ?? ''
 
   return (
     <main className="page">
@@ -511,9 +557,36 @@ function App() {
                 step="1"
                 required
                 value={correctionForm.value}
-                onChange={(event) => setCorrectionForm({ ...correctionForm, value: event.target.value })}
+                onChange={(event) => setCorrectionForm({
+                  ...correctionForm,
+                  value: event.target.value,
+                  selectedOffset: null,
+                })}
               />
             </label>
+            {correctionPossibleOffsets.length > 1 && (
+              <div className="dst-choice">
+                <p>Ta godzina występuje dwa razy z powodu zmiany czasu. Wybierz właściwe wystąpienie.</p>
+                <label>
+                  <span>Wystąpienie godziny</span>
+                  <select
+                    required
+                    value={correctionSelectedOffset}
+                    onChange={(event) => setCorrectionForm({
+                      ...correctionForm,
+                      selectedOffset: event.target.value || null,
+                    })}
+                  >
+                    <option value="">Wybierz wystąpienie</option>
+                    {correctionPossibleOffsets.map((offset, index) => (
+                      <option key={offset} value={offset}>
+                        {index === 0 ? 'Pierwsze' : 'Drugie'} wystąpienie ({offset})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
             <p className="timezone-note">Zostanie zapisana korekta ręczna z lokalnym offsetem strefy czasowej tego urządzenia.</p>
             <div className="form-actions">
               <button type="submit" disabled={isSavingCorrection}>{isSavingCorrection ? 'Zapisywanie…' : 'Zapisz'}</button>

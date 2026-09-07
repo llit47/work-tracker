@@ -21,8 +21,10 @@ button:disabled { cursor: default; opacity: .45; }
 .correction-form { display: grid; gap: 12px; margin-bottom: 20px; padding: 16px; border: 1px solid #ccd7dd; border-radius: 10px; background: #f8fafb; }
 .correction-form h3, .correction-form p { margin: 0; }
 .correction-form label { display: grid; gap: 5px; color: #52616b; font-size: .82rem; }
-.correction-form input { width: min(100%, 300px); min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; padding: 6px 9px; color: #26343c; background: #fff; }
+.correction-form input, .correction-form select { width: min(100%, 300px); min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; padding: 6px 9px; color: #26343c; background: #fff; }
 .correction-context { display: grid; gap: 4px; color: #52616b; font-size: .9rem; }
+.dst-choice { display: grid; gap: 8px; padding: 12px; border-left: 4px solid #d58b16; background: #fff8e8; }
+.dst-choice p { color: #67470f; }
 .timezone-note { color: #687780; font-size: .8rem; }
 .action-message { margin: 0 0 20px; padding: 10px 12px; border-radius: 8px; font-size: .9rem; }
 .action-message.success { color: #21683b; background: #eaf6ee; }

@@ -1,12 +1,20 @@
 export type ManualEventType = 'entry' | 'exit'
 
 const LOCAL_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
+const EXPLICIT_OFFSET_PATTERN = /(Z|[+-]\d{2}:\d{2})$/
+const OFFSET_SAMPLE_RANGE_HOURS = 48
 
-export function localDateTimeToOffsetIso(value: string): string | null {
+export function extractOffsetFromIso(timestamp: string): string | null {
+  const match = timestamp.match(EXPLICIT_OFFSET_PATTERN)
+  if (!match) return null
+  return match[1] === 'Z' ? '+00:00' : match[1]
+}
+
+export function getPossibleOffsetsForLocalDateTime(value: string): string[] {
   const parts = parseLocalDateTime(value)
-  if (!parts) return null
+  if (!parts) return []
 
-  const localDate = new Date(
+  const wallClockMilliseconds = Date.UTC(
     parts.year,
     parts.month - 1,
     parts.day,
@@ -14,29 +22,67 @@ export function localDateTimeToOffsetIso(value: string): string | null {
     parts.minute,
     parts.second,
   )
-  if (
-    localDate.getFullYear() !== parts.year
-    || localDate.getMonth() !== parts.month - 1
-    || localDate.getDate() !== parts.day
-    || localDate.getHours() !== parts.hour
-    || localDate.getMinutes() !== parts.minute
-    || localDate.getSeconds() !== parts.second
-  ) {
-    return null
+  const candidateOffsets = new Set<number>()
+  for (let hour = -OFFSET_SAMPLE_RANGE_HOURS; hour <= OFFSET_SAMPLE_RANGE_HOURS; hour += 1) {
+    candidateOffsets.add(new Date(wallClockMilliseconds + hour * 60 * 60 * 1000).getTimezoneOffset())
   }
 
-  return formatLocalDateTimeWithOffset(value, localDate.getTimezoneOffset())
+  return [...candidateOffsets]
+    .filter((offsetMinutes) => {
+      const candidate = new Date(wallClockMilliseconds + offsetMinutes * 60 * 1000)
+      return candidate.getTimezoneOffset() === offsetMinutes
+        && candidate.getFullYear() === parts.year
+        && candidate.getMonth() === parts.month - 1
+        && candidate.getDate() === parts.day
+        && candidate.getHours() === parts.hour
+        && candidate.getMinutes() === parts.minute
+        && candidate.getSeconds() === parts.second
+    })
+    // UTC = local wall-clock + Date#getTimezoneOffset; ascending offsets are occurrence order.
+    .sort((left, right) => left - right)
+    .map(formatOffset)
+}
+
+export function localDateTimeToOffsetIso(value: string, preferredOffset?: string): string | null {
+  const possibleOffsets = getPossibleOffsetsForLocalDateTime(value)
+  const offset = preferredOffset
+    ? possibleOffsets.find((candidate) => candidate === preferredOffset)
+    : possibleOffsets.length === 1 ? possibleOffsets[0] : undefined
+  return offset ? formatLocalDateTimeWithExplicitOffset(value, offset) : null
+}
+
+export function resolveCorrectionTimestamp(
+  value: string,
+  existingTimestamp?: string,
+  initialLocalValue?: string,
+  selectedOffset?: string | null,
+): string | null {
+  if (existingTimestamp && initialLocalValue === value) {
+    const existingOffset = extractOffsetFromIso(existingTimestamp)
+    if (!selectedOffset || selectedOffset === existingOffset) return existingTimestamp
+  }
+  return localDateTimeToOffsetIso(value, selectedOffset ?? undefined)
 }
 
 export function formatLocalDateTimeWithOffset(value: string, offsetMinutes: number): string | null {
   const parts = parseLocalDateTime(value)
   if (!parts || !Number.isInteger(offsetMinutes)) return null
+  return formatLocalDateTimeWithExplicitOffset(value, formatOffset(offsetMinutes))
+}
+
+function formatLocalDateTimeWithExplicitOffset(value: string, offset: string): string | null {
+  const parts = parseLocalDateTime(value)
+  if (!parts) return null
+  const seconds = parts.second.toString().padStart(2, '0')
+  return `${value.slice(0, 16)}:${seconds}${offset}`
+}
+
+function formatOffset(offsetMinutes: number): string {
   const sign = offsetMinutes <= 0 ? '+' : '-'
   const absoluteOffset = Math.abs(offsetMinutes)
   const offsetHours = Math.floor(absoluteOffset / 60).toString().padStart(2, '0')
   const offsetRemainder = (absoluteOffset % 60).toString().padStart(2, '0')
-  const seconds = parts.second.toString().padStart(2, '0')
-  return `${value.slice(0, 16)}:${seconds}${sign}${offsetHours}:${offsetRemainder}`
+  return `${sign}${offsetHours}:${offsetRemainder}`
 }
 
 export function timestampToLocalInput(timestamp: string): string {
