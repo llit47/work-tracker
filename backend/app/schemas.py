@@ -5,6 +5,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .dashboard import DashboardStatus
 from .models import CorrectionType
 from .work_time import SessionStatus
 
@@ -212,6 +213,40 @@ class MonthlyPaySummaryResponse(BaseModel):
     total_pay: Decimal
     days: list[DailyPaySummaryResponse]
     rates_used: list[PayRateUsedResponse]
+
+
+class CurrentSessionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    entry_timestamp: datetime
+    entry_timestamp_utc: datetime
+    elapsed_seconds: int
+
+
+class TodayDashboardResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    date: date
+    completed_duration_seconds: int
+    running_duration_seconds: int | None
+    effective_duration_seconds: int
+
+
+class MonthDashboardResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    year: int
+    month: int
+    completed_duration_seconds: int
+    work_days: int
+    pay: Decimal
+    currency: str
+
+
+class DashboardResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    status: DashboardStatus
+    generated_at: datetime
+    current_session: CurrentSessionResponse | None
+    today: TodayDashboardResponse
+    month: MonthDashboardResponse
 
 
 def validate_aware_timestamp(value: datetime) -> datetime:

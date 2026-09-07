@@ -6,10 +6,11 @@
 - **Phase 1 — Work-time calculation: DONE**
 - **Phase 2 — Monthly navigation and summaries: DONE**
 - **Phase 3 — Manual corrections: DONE**
-- **Phase 4 — Pay calculation: IN PROGRESS**
+- **Phase 4 — Pay calculation: DONE**
   - **Phase 4A — backend pay-rate history and pay calculation: DONE**
   - **Phase 4B — frontend pay presentation and rate management: DONE**
-- **Phase 5 — Dashboard and live shift: NEXT**
+- **Phase 5 — Dashboard and live shift: DONE**
+- **Phase 6 — Export: NEXT**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
@@ -35,6 +36,11 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Sekcja `Ustawienia → Wynagrodzenie` pokazuje najnowszą stawkę, historię oraz formularz dodania nowej stawki z datą obowiązywania.
 - Zmiana miesiąca anuluje nieaktualne żądanie wynagrodzenia; korekty czasu i dodanie stawki odświeżają płace z backendu.
 - Błąd API płacowego jest prezentowany niezależnie i nie ukrywa poprawnie pobranego czasu pracy.
+- Kompaktowy dashboard pokazuje bieżący status, start i czas otwartej zmiany, dzisiejszy czas oraz zakończony czas i wynagrodzenie bieżącego miesiąca.
+- `GET /api/dashboard` wyprowadza live state z effective events i tych samych reguł parowania, które zasilają miesięczne podsumowania.
+- Frontend odświeża dashboard co 30 sekund, a działający licznik aktualizuje lokalnie co sekundę bez ciągłego odpytywania API.
+- Stan niejednoznaczny jest pokazywany jawnie dla duplikatów, sprzecznych eventów, wielu otwartych zmian oraz wejścia starszego niż 16 godzin.
+- Otwarta zmiana nie tworzy syntetycznego eventu, nie modyfikuje raw events i nie zwiększa wynagrodzenia przed poprawnym zakończeniem.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
@@ -51,6 +57,7 @@ Aktualne endpointy:
 - `GET /api/pay-rates`
 - `POST /api/pay-rates`
 - `GET /api/pay-summary?year=YYYY&month=MM`
+- `GET /api/dashboard?timezone=IANA_TIMEZONE`
 - `GET /api/health`
 
 ## Production/deployment state
@@ -93,18 +100,23 @@ Aktualne endpointy:
 - Płaca powstaje wyłącznie z sesji `valid`; czas anomalii nie jest zgadywany ani opłacany.
 - Kwoty są liczone z sekund za pomocą `Decimal`, zaokrąglane do dwóch miejsc przez `ROUND_HALF_UP` dopiero dla wyniku dnia i miesiąca oraz zwracane przez API jako stringi.
 - Backend nie sumuje sesji rozliczanych w różnych walutach; taki miesiąc zwraca jednoznaczny błąd.
+- Dashboard otrzymuje nazwę strefy IANA przeglądarki, aby poprawnie określić lokalne „dzisiaj” i bieżący miesiąc; wszystkie czasy trwania nadal wynikają z chwil UTC.
+- Status `working` wymaga dokładnie jednego terminalnego `missing_exit` nie starszego niż 16 godzin. Terminalny `duplicate_entry`, `ambiguous_timestamp`, wiele otwartych wejść, czas przyszły lub wejście starsze niż 16 godzin daje status `ambiguous`.
+- Dzisiejszy efektywny czas dodaje otwartą zmianę wyłącznie do lokalnej daty jej wejścia. Miesięczna płaca obejmuje tylko zakończone sesje `valid`.
 
 ## Next implementation target
 
-**Phase 5 — Dashboard and live shift**
+**Phase 6 — Export**
 
-Następny etap powinien poprawić dashboard i dodać bieżący status zmiany zgodnie z zakresem w `ROADMAP.md`. Nie należy przy tym rozszerzać początkowego modelu płac o nadgodziny, dodatki weekendowe, podatki ani premie bez osobnego zakresu.
+Następny etap powinien dodać eksport CSV/PDF i raport miesięczny zgodnie z zakresem w `ROADMAP.md`. Phase 6 nie została jeszcze rozpoczęta.
 
 ## Known intentional limitations
 
 - jedna praca i jedna aktywna lokalizacja,
 - brak edycji i usuwania historycznych stawek,
 - brak nadgodzin, dodatków, podatków i przeliczeń walut,
+- brak live estymacji wynagrodzenia dla niezakończonej zmiany,
+- brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
 - brak logowania użytkownika,
 - brak eksportów,
 - brak publicznego dostępu do aplikacji.
@@ -121,6 +133,8 @@ Następny etap powinien poprawić dashboard i dodać bieżący status zmiany zgo
 - PR #8 — `feat: add manual work-time corrections`
 - PR #9 — `fix: prevent stale entries from contaminating later sessions`
 - PR #10 — `feat: add settings panel and hide ignored events`
+- PR #11 — `feat: add pay-rate history and backend pay calculation`
+- PR #12 — `feat: add pay presentation and rate management`
 
 ## Maintenance rule
 
