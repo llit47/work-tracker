@@ -143,7 +143,7 @@ Raw events otrzymane z Home Assistant nie mogą być bezpowrotnie nadpisywane. K
 
 ## Phase 4 — Pay calculation
 
-**Status: IN PROGRESS**
+**Status: DONE**
 
 ### Phase 4A — backend pay-rate history and pay calculation
 
@@ -168,7 +168,7 @@ Raw events otrzymane z Home Assistant nie mogą być bezpowrotnie nadpisywane. K
 - [x] Niezależne stany ładowania i błędu płac, które nie ukrywają danych czasu pracy.
 - [x] Odświeżanie wynagrodzenia po zmianie miesiąca, korekcie czasu i dodaniu historycznej stawki.
 
-Phase 4 pozostaje oznaczona jako `IN PROGRESS` do zakończenia przeglądu i wdrożeniowej weryfikacji całego zakresu 4A+4B. Następnym celem implementacyjnym jest Phase 5.
+Zakres Phase 4A i 4B został zmergowany, wdrożony i ręcznie zweryfikowany na produkcyjnym LXC.
 
 Początkowa implementacja Phase 4 nie obejmuje nadgodzin, dodatków weekendowych, podatków ani premii.
 
@@ -176,18 +176,21 @@ Zakres nadal zakłada jedną lokalizację i jedną pracę.
 
 ## Phase 5 — Dashboard and live shift
 
-**Status: NEXT**
+**Status: DONE**
 
-- status `W PRACY` / `POZA PRACĄ`,
-- dzisiejsze wejście,
-- dzisiejsze wyjście,
-- bieżący czas pracy dla otwartej sesji,
-- podsumowanie miesiąca,
-- czytelniejszy dashboard.
+- [x] Autorytatywny status `W PRACY`, `POZA PRACĄ` lub stan niejednoznaczny wyprowadzany przez backend z effective event stream.
+- [x] Godzina rozpoczęcia i lokalnie aktualizowany czas jednoznacznej otwartej zmiany.
+- [x] Dzisiejszy zakończony czas oraz efektywny czas z uwzględnieniem poprawnej otwartej zmiany.
+- [x] Bieżący miesięczny czas, liczba dni pracy i wynagrodzenie za zakończone sesje.
+- [x] `GET /api/dashboard` korzystający z istniejącego parowania i kalkulatora płac.
+- [x] Polling backendu co 30 sekund oraz sekundowy timer frontendowy bez zapisywania syntetycznego `exit`.
+- [x] Jawne traktowanie duplikatów, sprzecznych timestampów i otwartych zmian ponad 16 godzin jako stanu niejednoznacznego.
+- [x] Niezależny błąd dashboardu, który nie ukrywa historii czasu, korekt ani danych płacowych.
+- [x] Odświeżanie dashboardu po korektach, ignorowaniu/cofaniu, manualnych eventach i zmianie stawki.
 
 ## Phase 6 — Export
 
-**Status: PLANNED**
+**Status: NEXT**
 
 - CSV,
 - PDF,

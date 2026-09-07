@@ -1,6 +1,8 @@
 from datetime import date, datetime, timezone
 import hmac
 from pathlib import Path
+from typing import Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
 from .database import build_session_factory, get_session
+from .dashboard import DashboardSummary, calculate_dashboard
 from .corrections import (
     CorrectionRecord,
     EffectiveEventMetadata,
@@ -27,6 +30,7 @@ from .pay import (
 )
 from .schemas import (
     CorrectionResponse,
+    DashboardResponse,
     EffectiveWorkEventResponse,
     HomeAssistantWebhook,
     ManualEventRequest,
@@ -93,8 +97,13 @@ def _load_effective_event_stream(session: Session) -> EffectiveEventStream:
     return build_effective_event_stream(raw_events, corrections)
 
 
-def create_app(settings: Settings | None = None, frontend_dist: Path | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    frontend_dist: Path | None = None,
+    now_provider: Callable[[], datetime] | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
+    dashboard_now_provider = now_provider or (lambda: datetime.now(timezone.utc))
     app = FastAPI(title="Work Tracker API", version="0.1.0")
     app.state.session_factory = build_session_factory(settings.database_url)
     app.add_middleware(
@@ -368,6 +377,42 @@ def create_app(settings: Settings | None = None, frontend_dist: Path | None = No
         ]
         try:
             return calculate_monthly_pay(work_summary, rates)
+        except (MissingPayRateError, MixedCurrenciesError) as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+    @app.get("/api/dashboard", response_model=DashboardResponse)
+    def get_dashboard(
+        timezone_name: str = Query(
+            default="UTC",
+            alias="timezone",
+            min_length=1,
+            max_length=100,
+            pattern=r"^[A-Za-z0-9_+./-]+$",
+        ),
+        session: Session = Depends(get_session),
+    ) -> DashboardSummary:
+        try:
+            local_timezone = ZoneInfo(timezone_name)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unknown timezone",
+            ) from error
+
+        effective_stream = _load_effective_event_stream(session)
+        rates = [
+            _to_pay_rate_record(rate)
+            for rate in session.scalars(
+                select(PayRate).order_by(PayRate.effective_from.asc(), PayRate.id.asc())
+            )
+        ]
+        try:
+            return calculate_dashboard(
+                effective_stream.events,
+                rates,
+                now=dashboard_now_provider(),
+                local_timezone=local_timezone,
+            )
         except (MissingPayRateError, MixedCurrenciesError) as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 

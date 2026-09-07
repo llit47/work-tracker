@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 
+import DashboardPanel from './DashboardPanel'
 import {
   extractOffsetFromIso,
   getPossibleOffsetsForLocalDateTime,
@@ -276,6 +277,7 @@ function App() {
   const [summary, setSummary] = useState<WorkSummary | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [retryRequest, setRetryRequest] = useState(0)
+  const [dashboardRefreshRequest, setDashboardRefreshRequest] = useState(0)
   const [paySummary, setPaySummary] = useState<MonthlyPaySummary | null>(null)
   const [payState, setPayState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [payError, setPayError] = useState('')
@@ -478,6 +480,7 @@ function App() {
     setState('loading')
     setRetryRequest((request) => request + 1)
     refreshPaySummary()
+    setDashboardRefreshRequest((request) => request + 1)
   }
 
   const savePayRate = async (event: FormEvent<HTMLFormElement>) => {
@@ -493,6 +496,7 @@ function App() {
         rates: () => setPayRatesRetryRequest((request) => request + 1),
         paySummary: refreshPaySummary,
       })
+      setDashboardRefreshRequest((request) => request + 1)
       setPayRateForm((current) => ({ ...current, hourlyRate: '' }))
       setPayRateMessage({ kind: 'success', text: 'Nowa stawka została zapisana.' })
     } catch (error) {
@@ -648,6 +652,7 @@ function App() {
     <main className="page">
       <section className="card" aria-live="polite">
         <h1>Work Tracker</h1>
+        <DashboardPanel apiBase={apiBase} refreshRequest={dashboardRefreshRequest} />
         <nav className="month-navigation" aria-label="Nawigacja miesiąca">
           <button
             className="month-arrow"

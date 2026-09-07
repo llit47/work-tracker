@@ -59,19 +59,18 @@ def calculate_monthly_work_time(
     events: Iterable[RawWorkEvent], year: int, month: int
 ) -> MonthlyWorkSummary:
     """Derive sessions from immutable raw events without changing the input."""
-    events_by_location: dict[str, list[RawWorkEvent]] = defaultdict(list)
-    for event in events:
-        _validate_event(event)
-        events_by_location[event.location].append(event)
+    all_items = derive_work_time_items(events)
+    return summarize_work_time_items(all_items, year, month)
 
-    all_items: list[WorkTimeItem] = []
-    for location_events in events_by_location.values():
-        all_items.extend(_pair_location_events(location_events))
+
+def summarize_work_time_items(
+    items: Iterable[WorkTimeItem], year: int, month: int
+) -> MonthlyWorkSummary:
+    """Build a monthly summary from items produced by the canonical pairing rules."""
 
     month_items = [
-        item for item in all_items if item.local_date.year == year and item.local_date.month == month
+        item for item in items if item.local_date.year == year and item.local_date.month == month
     ]
-    month_items.sort(key=_item_sort_key)
 
     items_by_day: dict[date, list[WorkTimeItem]] = defaultdict(list)
     for item in month_items:
@@ -101,6 +100,19 @@ def calculate_monthly_work_time(
         work_days=sum(day.total_duration_seconds > 0 for day in days),
         anomaly_count=sum(day.anomaly_count for day in days),
     )
+
+
+def derive_work_time_items(events: Iterable[RawWorkEvent]) -> tuple[WorkTimeItem, ...]:
+    """Apply the canonical pairing rules and return deterministic, unfiltered items."""
+    events_by_location: dict[str, list[RawWorkEvent]] = defaultdict(list)
+    for event in events:
+        _validate_event(event)
+        events_by_location[event.location].append(event)
+
+    all_items: list[WorkTimeItem] = []
+    for location_events in events_by_location.values():
+        all_items.extend(_pair_location_events(location_events))
+    return tuple(sorted(all_items, key=_item_sort_key))
 
 
 def _pair_location_events(events: list[RawWorkEvent]) -> list[WorkTimeItem]:

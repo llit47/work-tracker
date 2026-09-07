@@ -10,6 +10,23 @@ button { min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; paddin
 button:hover:not(:disabled) { border-color: #6c7d87; background: #f8fafb; }
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #8ab9dc; outline-offset: 2px; }
 button:disabled { cursor: default; opacity: .45; }
+.live-dashboard { margin: 18px 0 28px; overflow: hidden; border: 1px solid #dce2e6; border-radius: 12px; background: #fafbfc; }
+.live-dashboard.loading, .live-dashboard.dashboard-error { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px; }
+.live-dashboard.loading p, .live-dashboard.dashboard-error p { margin: 0; }
+.live-dashboard.dashboard-error { color: #8d2222; background: #fcecec; }
+.live-status-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 16px 18px; border-left: 6px solid #7a8790; background: #f1f3f4; }
+.live-dashboard.working .live-status-heading { border-color: #2d8a4e; background: #eaf6ee; }
+.live-dashboard.ambiguous .live-status-heading { border-color: #d98b19; background: #fff8ec; }
+.live-status-heading > div { display: grid; gap: 2px; }
+.live-status-heading strong { font-size: 1.35rem; letter-spacing: .03em; }
+.live-status-label { color: #52616b; font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+.live-status-heading p { max-width: 360px; margin: 0; color: #52616b; font-size: .84rem; text-align: right; }
+.dashboard-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: #dce2e6; }
+.dashboard-metrics > div { display: grid; align-content: start; gap: 5px; min-height: 108px; padding: 14px 16px; background: #fff; }
+.dashboard-metrics span { color: #52616b; font-size: .76rem; font-weight: 700; text-transform: uppercase; }
+.dashboard-metrics strong { font-size: 1.2rem; }
+.dashboard-metrics small { color: #687780; line-height: 1.35; }
+.live-dashboard.working .live-shift-metric strong { color: #21683b; font-variant-numeric: tabular-nums; }
 .month-navigation { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 12px; margin: 14px 0 12px; }
 .month-arrow { padding: 0; font-size: 1.8rem; line-height: 1; }
 .month-actions { display: flex; justify-content: center; align-items: end; gap: 10px; margin-bottom: 24px; }
@@ -97,6 +114,10 @@ button:disabled { cursor: default; opacity: .45; }
 .error-message p { margin: 0 0 12px; color: #a22828; }
 @media (max-width: 560px) {
   .card { padding: 18px; }
+  .live-dashboard.loading, .live-dashboard.dashboard-error, .live-status-heading { align-items: stretch; flex-direction: column; }
+  .live-status-heading p { text-align: left; }
+  .dashboard-metrics { grid-template-columns: 1fr; }
+  .dashboard-metrics > div { min-height: 0; }
   .month-navigation { gap: 8px; }
   .month-actions { align-items: stretch; }
   .month-actions label { flex: 1; }
