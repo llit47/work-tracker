@@ -32,8 +32,19 @@ def event(event_id: int, event_type: str, timestamp: str) -> RawWorkEvent:
     )
 
 
-def dashboard(events: list[RawWorkEvent], *, now: datetime = NOW):
-    return calculate_dashboard(events, [RATE], now=now, local_timezone=WARSAW)
+def dashboard(
+    events: list[RawWorkEvent],
+    *,
+    now: datetime = NOW,
+    local_timezone=WARSAW,
+    rates: list[PayRateRecord] | None = None,
+):
+    return calculate_dashboard(
+        events,
+        rates or [RATE],
+        now=now,
+        local_timezone=local_timezone,
+    )
 
 
 def correction(
@@ -252,3 +263,80 @@ def test_cross_midnight_running_shift_stays_owned_by_entry_day():
     assert result.today.effective_duration_seconds == 0
     assert result.month.completed_duration_seconds == 0
     assert result.month.pay == Decimal("0.00")
+
+
+def test_dashboard_uses_requested_timezone_for_completed_day_month_and_pay():
+    los_angeles = ZoneInfo("America/Los_Angeles")
+    result = dashboard(
+        [
+            event(1, "entry", "2026-09-01T00:30:00+02:00"),
+            event(2, "exit", "2026-09-01T01:30:00+02:00"),
+        ],
+        now=datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+        local_timezone=los_angeles,
+        rates=[
+            RATE,
+            PayRateRecord(2, date(2026, 9, 1), Decimal("100.00"), "PLN"),
+        ],
+    )
+
+    assert result.today.date == date(2026, 8, 31)
+    assert result.today.completed_duration_seconds == 3600
+    assert result.today.effective_duration_seconds == 3600
+    assert result.month.year == 2026
+    assert result.month.month == 8
+    assert result.month.completed_duration_seconds == 3600
+    assert result.month.work_days == 1
+    assert result.month.pay == Decimal("50.00")
+
+
+def test_running_shift_uses_requested_timezone_to_decide_if_it_belongs_to_today():
+    result = dashboard(
+        [event(1, "entry", "2026-09-01T00:30:00+02:00")],
+        now=datetime.fromisoformat("2026-09-01T05:00:00+00:00"),
+        local_timezone=ZoneInfo("America/Los_Angeles"),
+    )
+
+    assert result.status is DashboardStatus.WORKING
+    assert result.current_session is not None
+    assert result.current_session.elapsed_seconds == 6 * 3600 + 30 * 60
+    assert result.today.date == date(2026, 8, 31)
+    assert result.today.running_duration_seconds == 6 * 3600 + 30 * 60
+    assert result.today.effective_duration_seconds == 6 * 3600 + 30 * 60
+
+
+def test_completed_cross_midnight_session_stays_owned_by_requested_timezone_entry_date():
+    result = dashboard(
+        [
+            event(1, "entry", "2026-09-07T06:00:00+00:00"),
+            event(2, "exit", "2026-09-07T09:00:00+00:00"),
+        ],
+        now=datetime.fromisoformat("2026-09-07T10:00:00+00:00"),
+        local_timezone=ZoneInfo("America/Los_Angeles"),
+    )
+
+    assert result.today.date == date(2026, 9, 7)
+    assert result.today.completed_duration_seconds == 0
+    assert result.month.completed_duration_seconds == 3 * 3600
+    assert result.month.work_days == 1
+    assert result.month.pay == Decimal("150.00")
+
+
+def test_completed_dst_session_uses_utc_duration_and_requested_timezone_date():
+    result = dashboard(
+        [
+            event(1, "entry", "2026-10-25T02:30:00+02:00"),
+            event(2, "exit", "2026-10-25T02:30:00+01:00"),
+        ],
+        now=datetime.fromisoformat("2026-10-25T03:00:00+00:00"),
+        local_timezone=WARSAW,
+        rates=[
+            RATE,
+            PayRateRecord(2, date(2026, 10, 25), Decimal("60.00"), "PLN"),
+        ],
+    )
+
+    assert result.today.date == date(2026, 10, 25)
+    assert result.today.completed_duration_seconds == 3600
+    assert result.month.completed_duration_seconds == 3600
+    assert result.month.pay == Decimal("60.00")

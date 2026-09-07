@@ -5,15 +5,20 @@ from decimal import Decimal
 from enum import Enum
 from typing import Iterable
 
-from .pay import MonthlyPaySummary, PayRateRecord, calculate_monthly_pay
+from .pay import (
+    SECONDS_PER_HOUR,
+    MixedCurrenciesError,
+    PayCalculationError,
+    PayRateRecord,
+    round_money,
+    select_rate,
+)
 from .work_time import (
     MAX_SESSION_DURATION,
-    MonthlyWorkSummary,
     RawWorkEvent,
     SessionStatus,
     WorkTimeItem,
     derive_work_time_items,
-    summarize_work_time_items,
 )
 
 
@@ -75,23 +80,17 @@ def calculate_dashboard(
     completed_items = tuple(
         item for item in items if _item_has_no_future_events(item, now_utc)
     )
-    month_summary = summarize_work_time_items(
-        completed_items, local_now.year, local_now.month
-    )
-    pay_summary = calculate_monthly_pay(month_summary, rates)
-
-    completed_today = next(
-        (
-            day.total_duration_seconds
-            for day in month_summary.days
-            if day.date == local_now.date()
-        ),
-        0,
+    completed_today, month_summary = _aggregate_dashboard_items(
+        completed_items,
+        rates,
+        local_now=local_now,
+        local_timezone=local_timezone,
     )
     running_today: int | None = None
     if (
         current_session is not None
-        and current_session.entry_timestamp.date() == local_now.date()
+        and current_session.entry_timestamp_utc.astimezone(local_timezone).date()
+        == local_now.date()
     ):
         running_today = current_session.elapsed_seconds
 
@@ -105,7 +104,7 @@ def calculate_dashboard(
             running_duration_seconds=running_today,
             effective_duration_seconds=completed_today + (running_today or 0),
         ),
-        month=_month_dashboard(month_summary, pay_summary),
+        month=month_summary,
     )
 
 
@@ -168,14 +167,58 @@ def _terminal_item_key(item: WorkTimeItem) -> tuple[datetime, int]:
     return terminal_event.event_timestamp_utc, terminal_event.id
 
 
-def _month_dashboard(
-    work_summary: MonthlyWorkSummary, pay_summary: MonthlyPaySummary
-) -> MonthDashboard:
-    return MonthDashboard(
-        year=work_summary.year,
-        month=work_summary.month,
-        completed_duration_seconds=work_summary.total_duration_seconds,
-        work_days=work_summary.work_days,
-        pay=pay_summary.total_pay,
-        currency=pay_summary.currency,
+def _aggregate_dashboard_items(
+    items: tuple[WorkTimeItem, ...],
+    rates: Iterable[PayRateRecord],
+    *,
+    local_now: datetime,
+    local_timezone: tzinfo,
+) -> tuple[int, MonthDashboard]:
+    ordered_rates = sorted(rates, key=lambda rate: (rate.effective_from, rate.id))
+    total_duration_seconds = 0
+    completed_today = 0
+    work_dates: set[date] = set()
+    exact_pay = Decimal(0)
+    currencies: set[str] = set()
+
+    for item in items:
+        if item.status is not SessionStatus.VALID:
+            continue
+        if item.duration_seconds is None:
+            raise PayCalculationError("Valid work session has no duration")
+
+        entry = next(event for event in item.events if event.event_type == "entry")
+        entry_date = entry.event_timestamp_utc.astimezone(local_timezone).date()
+        if entry_date.year != local_now.year or entry_date.month != local_now.month:
+            continue
+
+        total_duration_seconds += item.duration_seconds
+        if item.duration_seconds > 0:
+            work_dates.add(entry_date)
+        if entry_date == local_now.date():
+            completed_today += item.duration_seconds
+
+        rate = select_rate(ordered_rates, entry_date)
+        exact_pay += Decimal(item.duration_seconds) * rate.hourly_rate / SECONDS_PER_HOUR
+        currencies.add(rate.currency)
+
+    if len(currencies) > 1:
+        raise MixedCurrenciesError(
+            "Cannot total work sessions using different currencies"
+        )
+    currency = (
+        next(iter(currencies))
+        if currencies
+        else select_rate(
+            ordered_rates, date(local_now.year, local_now.month, 1)
+        ).currency
+    )
+
+    return completed_today, MonthDashboard(
+        year=local_now.year,
+        month=local_now.month,
+        completed_duration_seconds=total_duration_seconds,
+        work_days=len(work_dates),
+        pay=round_money(exact_pay),
+        currency=currency,
     )
