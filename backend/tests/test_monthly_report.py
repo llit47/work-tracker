@@ -8,14 +8,18 @@ from font_roboto import Roboto
 from reportlab.lib.units import mm
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph
+import pytest
 
 from app.corrections import CorrectionRecord, build_effective_event_stream
 from app.models import CorrectionType
 from app.monthly_report import allocate_session_pays, build_monthly_report
 from app.pay import PayRateRecord, calculate_monthly_pay
 from app.report_renderers import (
+    MAX_ANOMALY_EVENT_CELL_HEIGHT,
     MAX_ANOMALY_EVENTS_PER_ROW,
     _anomalies_table,
+    _format_anomaly_event,
+    _format_utc_offset,
     _register_fonts,
     _sessions_table,
     render_monthly_report_csv,
@@ -82,11 +86,18 @@ def correction(
     )
 
 
-def duplicate_entry_report(event_count: int):
+def duplicate_entry_report(
+    event_count: int, *, location: str = "gabinet_zabki"
+):
     start = datetime(2026, 9, 6, tzinfo=timezone(timedelta(hours=2)))
     return report(
         [
-            event(index + 1, "entry", (start + timedelta(minutes=index)).isoformat())
+            event(
+                index + 1,
+                "entry",
+                (start + timedelta(minutes=index)).isoformat(),
+                location=location,
+            )
             for index in range(event_count)
         ]
     )
@@ -346,6 +357,28 @@ def test_csv_quotes_delimiter_and_preserves_polish_utf8_text():
     assert '"gabinet; ""żółć"""' in content.decode("utf-8-sig")
 
 
+def test_csv_anomaly_timestamps_keep_dates_offsets_and_deterministic_columns():
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-01T08:00:00+02:00"),
+            event(2, "exit", "2026-09-02T16:00:00+02:00"),
+        ]
+    )
+    rows = list(
+        reader(
+            StringIO(render_monthly_report_csv(monthly_report).decode("utf-8-sig")),
+            delimiter=";",
+        )
+    )
+
+    assert rows[1][0:3] == [
+        "2026-09-01",
+        "2026-09-01T08:00:00+02:00",
+        "2026-09-02T16:00:00+02:00",
+    ]
+    assert rows[1][6] == SessionStatus.UNUSUALLY_LONG_SESSION.value
+
+
 def test_csv_session_amounts_reconcile_to_monthly_total():
     rate = PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN")
     monthly_report = report(
@@ -415,8 +448,127 @@ def test_anomaly_table_wraps_and_escapes_dynamic_cells():
     table.wrap(177 * mm, 1_000)
 
 
+def test_pdf_anomaly_events_show_local_dates_times_and_offsets():
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-01T08:00:00+02:00"),
+            event(2, "exit", "2026-09-02T16:00:00+02:00"),
+        ]
+    )
+    table = _anomalies_table(monthly_report)
+
+    assert table._cellvalues[1][1].getPlainText() == (
+        "01.09 08:00 +02:00 wejście, 02.09 16:00 +02:00 wyjście"
+    )
+
+
+def test_pdf_anomaly_events_distinguish_dst_fallback_offsets():
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-10-25T02:30:00+02:00"),
+            event(2, "entry", "2026-10-25T02:30:00+01:00"),
+        ],
+        year=2026,
+        month=10,
+    )
+    table = _anomalies_table(monthly_report)
+
+    assert table._cellvalues[1][1].getPlainText() == (
+        "25.10 02:30 +02:00 wejście, 25.10 02:30 +01:00 wejście"
+    )
+
+
+def test_pdf_ordinary_anomaly_stays_in_one_compact_row():
+    monthly_report = report(
+        [event(1, "entry", "2026-09-06T08:00:00+02:00")]
+    )
+    table = _anomalies_table(monthly_report)
+
+    assert len(table._cellvalues) == 2
+    assert table._cellvalues[1][1].getPlainText() == (
+        "06.09 08:00 +02:00 wejście"
+    )
+
+
+def test_pdf_valid_session_times_are_compact_but_unambiguous():
+    ordinary = report(
+        [
+            event(1, "entry", "2026-09-01T08:00:00+02:00"),
+            event(2, "exit", "2026-09-01T16:00:00+02:00"),
+        ]
+    )
+    cross_midnight = report(
+        [
+            event(3, "entry", "2026-09-01T22:00:00+02:00"),
+            event(4, "exit", "2026-09-02T06:00:00+02:00"),
+        ]
+    )
+    dst_fallback = report(
+        [
+            event(5, "entry", "2026-10-25T02:30:00+02:00"),
+            event(6, "exit", "2026-10-25T02:30:00+01:00"),
+        ],
+        year=2026,
+        month=10,
+    )
+    dst_spring = report(
+        [
+            event(7, "entry", "2026-03-29T01:30:00+01:00"),
+            event(8, "exit", "2026-03-29T03:30:00+02:00"),
+        ],
+        year=2026,
+        month=3,
+    )
+
+    ordinary_row = _sessions_table(ordinary)._cellvalues[1]
+    cross_midnight_row = _sessions_table(cross_midnight)._cellvalues[1]
+    dst_row = _sessions_table(dst_fallback)._cellvalues[1]
+    spring_row = _sessions_table(dst_spring)._cellvalues[1]
+
+    assert [ordinary_row[1].getPlainText(), ordinary_row[2].getPlainText()] == [
+        "08:00",
+        "16:00",
+    ]
+    assert [
+        cross_midnight_row[1].getPlainText(),
+        cross_midnight_row[2].getPlainText(),
+    ] == ["22:00", "02.09 06:00"]
+    assert [dst_row[1].getPlainText(), dst_row[2].getPlainText()] == [
+        "02:30 +02:00",
+        "02:30 +01:00",
+    ]
+    assert [spring_row[1].getPlainText(), spring_row[2].getPlainText()] == [
+        "01:30 +01:00",
+        "03:30 +02:00",
+    ]
+
+
+def test_pdf_short_session_keeps_significant_seconds_visible():
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-06T16:42:00+02:00"),
+            event(2, "exit", "2026-09-06T16:42:03+02:00"),
+        ]
+    )
+    row = _sessions_table(monthly_report)._cellvalues[1]
+
+    assert [row[1].getPlainText(), row[2].getPlainText(), row[3]] == [
+        "16:42:00",
+        "16:42:03",
+        "0 godz. 00 min 03 s",
+    ]
+
+
+def test_pdf_offset_formatter_uses_colon_and_rejects_naive_timestamps():
+    assert _format_utc_offset(datetime.fromisoformat("2026-09-01T08:00:00+02:00")) == "+02:00"
+    assert _format_utc_offset(datetime.fromisoformat("2026-10-25T02:30:00+01:00")) == "+01:00"
+    assert _format_utc_offset(datetime.fromisoformat("2026-09-01T08:00:00-07:30")) == "-07:30"
+    with pytest.raises(ValueError, match="must include a UTC offset"):
+        _format_utc_offset(datetime(2026, 9, 1, 8))
+
+
 def test_large_single_anomaly_pdf_generation_succeeds():
-    monthly_report = duplicate_entry_report(250)
+    monthly_report = duplicate_entry_report(250, location="x" * 100)
 
     pdf = render_monthly_report_pdf(monthly_report)
 
@@ -424,7 +576,7 @@ def test_large_single_anomaly_pdf_generation_succeeds():
 
 
 def test_very_large_single_anomaly_pdf_paginates():
-    pdf = render_monthly_report_pdf(duplicate_entry_report(500))
+    pdf = render_monthly_report_pdf(duplicate_entry_report(1_000))
 
     assert pdf.startswith(b"%PDF-")
     assert len(re.findall(rb"/Type\s*/Page\b", pdf)) > 1
@@ -442,23 +594,37 @@ def test_anomaly_chunks_preserve_every_event_once_and_logical_count():
         if value
     ]
     expected_events = [
-        f"{event.timestamp.strftime('%H:%M')} wejście"
-        for event in monthly_report.anomalies[0].events
+        _format_anomaly_event(event) for event in monthly_report.anomalies[0].events
     ]
 
     assert monthly_report.anomaly_count == 1
     assert len(monthly_report.anomalies) == 1
-    assert len(physical_rows) == 25
     assert rendered_events == expected_events
     assert all(
         len(row[1].getPlainText().split(", ")) <= MAX_ANOMALY_EVENTS_PER_ROW
+        for row in physical_rows
+    )
+    assert all(
+        row[1].wrap(52 * mm - 12, 10_000)[1] <= MAX_ANOMALY_EVENT_CELL_HEIGHT
         for row in physical_rows
     )
     assert isinstance(physical_rows[0][2], Paragraph)
     assert isinstance(physical_rows[0][3], Paragraph)
     assert all(row[0] == row[2] == row[3] == "" for row in physical_rows[1:])
     table.wrap(177 * mm, 10_000)
-    assert max(table._rowHeights[1:]) < 30 * mm
+    assert max(table._rowHeights[1:]) < 50 * mm
+
+
+def test_anomaly_only_month_generates_valid_pdf():
+    monthly_report = report(
+        [event(1, "exit", "2026-09-06T16:00:00+02:00")]
+    )
+
+    pdf = render_monthly_report_pdf(monthly_report)
+
+    assert monthly_report.sessions == ()
+    assert monthly_report.anomaly_count == 1
+    assert pdf.startswith(b"%PDF-")
 
 
 def test_embedded_pdf_font_covers_polish_characters():

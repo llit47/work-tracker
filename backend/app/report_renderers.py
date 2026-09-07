@@ -1,4 +1,5 @@
 from csv import writer
+from datetime import datetime
 from html import escape
 from io import BytesIO, StringIO
 
@@ -58,9 +59,12 @@ ANOMALY_LABELS = {
 }
 
 # A Table can split between rows but not inside one row. Each formatted event
-# has bounded text (HH:MM plus a fixed label), so this conservative chunk size
-# keeps every physical anomaly row well below the usable A4 frame height.
-MAX_ANOMALY_EVENTS_PER_ROW = 20
+# has bounded text (date, time, offset, and a fixed label). The count cap and
+# measured Paragraph height keep every physical row well below the A4 frame.
+MAX_ANOMALY_EVENTS_PER_ROW = 12
+MAX_ANOMALY_EVENT_CELL_HEIGHT = 45 * mm
+ANOMALY_EVENT_COLUMN_WIDTH = 52 * mm
+TABLE_HORIZONTAL_PADDING = 12
 
 
 def render_monthly_report_csv(report: MonthlyReport) -> bytes:
@@ -262,18 +266,29 @@ def _summary_table(report: MonthlyReport) -> Table:
 
 
 def _sessions_table(report: MonthlyReport) -> Table:
-    rows = [("Data", "Wejście", "Wyjście", "Czas", "Stawka", "Kwota")]
-    rows.extend(
-        (
-            session.date.strftime("%d.%m.%Y"),
-            session.entry_timestamp.strftime("%H:%M"),
-            session.exit_timestamp.strftime("%H:%M"),
-            _format_duration(session.duration_seconds),
-            _format_hourly_rate(session.hourly_rate, session.currency),
-            _format_money(session.pay, session.currency),
-        )
-        for session in report.sessions
+    time_style = ParagraphStyle(
+        "SessionTimeCell",
+        fontName="Roboto",
+        fontSize=7.3,
+        leading=8.5,
+        alignment=TA_RIGHT,
+        splitLongWords=1,
     )
+    rows = [("Data", "Wejście", "Wyjście", "Czas", "Stawka", "Kwota")]
+    for session in report.sessions:
+        entry_text, exit_text = _format_session_times(
+            session.entry_timestamp, session.exit_timestamp
+        )
+        rows.append(
+            (
+                session.date.strftime("%d.%m.%Y"),
+                Paragraph(escape(entry_text), time_style),
+                Paragraph(escape(exit_text), time_style),
+                _format_duration(session.duration_seconds),
+                _format_hourly_rate(session.hourly_rate, session.currency),
+                _format_money(session.pay, session.currency),
+            )
+        )
     rows.append(
         (
             "RAZEM",
@@ -325,10 +340,7 @@ def _anomaly_rows(
 ) -> list[tuple[str, Paragraph, Paragraph | str, Paragraph | str]]:
     rows: list[tuple[str, Paragraph, Paragraph | str, Paragraph | str]] = []
     for anomaly in report.anomalies:
-        event_chunks = [
-            anomaly.events[index : index + MAX_ANOMALY_EVENTS_PER_ROW]
-            for index in range(0, len(anomaly.events), MAX_ANOMALY_EVENTS_PER_ROW)
-        ] or [()]
+        event_chunks = _chunk_anomaly_events(anomaly.events, cell_style)
         for chunk_index, event_chunk in enumerate(event_chunks):
             first_row = chunk_index == 0
             rows.append(
@@ -348,6 +360,35 @@ def _anomaly_rows(
                 )
             )
     return rows
+
+
+def _chunk_anomaly_events(
+    events: tuple[ReportAnomalyEvent, ...], cell_style: ParagraphStyle
+) -> list[tuple[ReportAnomalyEvent, ...]]:
+    if not events:
+        return [()]
+
+    chunks: list[tuple[ReportAnomalyEvent, ...]] = []
+    current: list[ReportAnomalyEvent] = []
+    available_width = ANOMALY_EVENT_COLUMN_WIDTH - TABLE_HORIZONTAL_PADDING
+    for event in events:
+        candidate = (*current, event)
+        candidate_paragraph = Paragraph(
+            escape(_format_anomaly_events(candidate)), cell_style
+        )
+        _, candidate_height = candidate_paragraph.wrap(
+            available_width, MAX_ANOMALY_EVENT_CELL_HEIGHT
+        )
+        if current and (
+            len(candidate) > MAX_ANOMALY_EVENTS_PER_ROW
+            or candidate_height > MAX_ANOMALY_EVENT_CELL_HEIGHT
+        ):
+            chunks.append(tuple(current))
+            current = [event]
+        else:
+            current.append(event)
+    chunks.append(tuple(current))
+    return chunks
 
 
 def _table_style(row_count: int) -> TableStyle:
@@ -378,11 +419,64 @@ def _draw_page_number(canvas, document) -> None:
 
 
 def _format_anomaly_events(events: tuple[ReportAnomalyEvent, ...]) -> str:
+    return ", ".join(_format_anomaly_event(event) for event in events)
+
+
+def _format_anomaly_event(event: ReportAnomalyEvent) -> str:
     labels = {"entry": "wejście", "exit": "wyjście"}
-    return ", ".join(
-        f"{event.timestamp.strftime('%H:%M')} {labels[event.event_type]}"
-        for event in events
+    return (
+        f"{event.timestamp.strftime('%d.%m %H:%M')} "
+        f"{_format_utc_offset(event.timestamp)} {labels[event.event_type]}"
     )
+
+
+def _format_session_times(
+    entry_timestamp: datetime, exit_timestamp: datetime
+) -> tuple[str, str]:
+    entry_offset = _format_utc_offset(entry_timestamp)
+    exit_offset = _format_utc_offset(exit_timestamp)
+    crosses_date = entry_timestamp.date() != exit_timestamp.date()
+    changes_offset = entry_offset != exit_offset
+    show_seconds = any(
+        timestamp.second or timestamp.microsecond
+        for timestamp in (entry_timestamp, exit_timestamp)
+    )
+    clock_format = "%H:%M:%S" if show_seconds else "%H:%M"
+
+    entry_text = entry_timestamp.strftime(clock_format)
+    exit_text = exit_timestamp.strftime(clock_format)
+    if crosses_date:
+        exit_format = (
+            f"%d.%m.%Y {clock_format}"
+            if entry_timestamp.year != exit_timestamp.year
+            else f"%d.%m {clock_format}"
+        )
+        exit_text = exit_timestamp.strftime(exit_format)
+    if changes_offset:
+        entry_text = f"{entry_text} {entry_offset}"
+        exit_text = f"{exit_text} {exit_offset}"
+    return entry_text, exit_text
+
+
+def _format_utc_offset(timestamp: datetime) -> str:
+    offset = timestamp.utcoffset()
+    if offset is None:
+        raise ValueError("PDF timestamps must include a UTC offset")
+
+    total_microseconds = (
+        (offset.days * 86_400 + offset.seconds) * 1_000_000 + offset.microseconds
+    )
+    sign = "+" if total_microseconds >= 0 else "-"
+    absolute_microseconds = abs(total_microseconds)
+    total_seconds, microseconds = divmod(absolute_microseconds, 1_000_000)
+    hours, remainder = divmod(total_seconds, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    formatted = f"{sign}{hours:02d}:{minutes:02d}"
+    if seconds or microseconds:
+        formatted += f":{seconds:02d}"
+        if microseconds:
+            formatted += f".{microseconds:06d}".rstrip("0")
+    return formatted
 
 
 def _format_rates(report: MonthlyReport) -> str:
@@ -407,8 +501,11 @@ def _format_locations(report: MonthlyReport) -> str:
 
 def _format_duration(seconds: int) -> str:
     hours, remainder = divmod(seconds, 3600)
-    minutes = remainder // 60
-    return f"{hours} godz. {minutes:02d} min"
+    minutes, remaining_seconds = divmod(remainder, 60)
+    formatted = f"{hours} godz. {minutes:02d} min"
+    if remaining_seconds:
+        formatted += f" {remaining_seconds:02d} s"
+    return formatted
 
 
 def _format_clock_duration(seconds: int) -> str:
