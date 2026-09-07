@@ -78,6 +78,50 @@ def test_dashboard_is_outside_when_no_open_entry_exists():
     assert result.month.pay == Decimal("200.00")
 
 
+def test_future_entry_and_exit_are_ambiguous_and_excluded_from_dashboard_totals():
+    result = dashboard(
+        [
+            event(1, "entry", "2026-09-07T14:00:00+00:00"),
+            event(2, "exit", "2026-09-07T16:00:00+00:00"),
+        ]
+    )
+
+    assert result.status is DashboardStatus.AMBIGUOUS
+    assert result.current_session is None
+    assert result.today.completed_duration_seconds == 0
+    assert result.today.running_duration_seconds is None
+    assert result.today.effective_duration_seconds == 0
+    assert result.month.completed_duration_seconds == 0
+    assert result.month.work_days == 0
+    assert result.month.pay == Decimal("0.00")
+
+
+def test_past_entry_with_future_exit_is_not_finalized_or_paid_by_dashboard():
+    result = dashboard(
+        [
+            event(1, "entry", "2026-09-07T10:00:00+00:00"),
+            event(2, "exit", "2026-09-07T14:00:00+00:00"),
+        ]
+    )
+
+    assert result.status is DashboardStatus.AMBIGUOUS
+    assert result.current_session is None
+    assert result.today.completed_duration_seconds == 0
+    assert result.today.effective_duration_seconds == 0
+    assert result.month.completed_duration_seconds == 0
+    assert result.month.pay == Decimal("0.00")
+
+
+def test_future_open_entry_remains_ambiguous():
+    result = dashboard([event(1, "entry", "2026-09-07T14:00:00+00:00")])
+
+    assert result.status is DashboardStatus.AMBIGUOUS
+    assert result.current_session is None
+    assert result.today.effective_duration_seconds == 0
+    assert result.month.completed_duration_seconds == 0
+    assert result.month.pay == Decimal("0.00")
+
+
 def test_dashboard_combines_completed_today_with_one_running_shift_without_paying_it():
     result = dashboard(
         [

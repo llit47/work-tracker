@@ -72,7 +72,12 @@ def calculate_dashboard(
     local_now = now_utc.astimezone(local_timezone)
     items = derive_work_time_items(events)
     status, current_session = _derive_live_state(items, now_utc)
-    month_summary = summarize_work_time_items(items, local_now.year, local_now.month)
+    completed_items = tuple(
+        item for item in items if _item_has_no_future_events(item, now_utc)
+    )
+    month_summary = summarize_work_time_items(
+        completed_items, local_now.year, local_now.month
+    )
     pay_summary = calculate_monthly_pay(month_summary, rates)
 
     completed_today = next(
@@ -107,6 +112,9 @@ def calculate_dashboard(
 def _derive_live_state(
     items: tuple[WorkTimeItem, ...], now_utc: datetime
 ) -> tuple[DashboardStatus, CurrentSession | None]:
+    if any(not _item_has_no_future_events(item, now_utc) for item in items):
+        return DashboardStatus.AMBIGUOUS, None
+
     terminal_items_by_location: dict[str, WorkTimeItem] = {}
     items_by_location: dict[str, list[WorkTimeItem]] = defaultdict(list)
     for item in items:
@@ -146,6 +154,10 @@ def _derive_live_state(
         entry_timestamp_utc=entry.event_timestamp_utc,
         elapsed_seconds=elapsed_seconds,
     )
+
+
+def _item_has_no_future_events(item: WorkTimeItem, now_utc: datetime) -> bool:
+    return all(event.event_timestamp_utc <= now_utc for event in item.events)
 
 
 def _terminal_item_key(item: WorkTimeItem) -> tuple[datetime, int]:
