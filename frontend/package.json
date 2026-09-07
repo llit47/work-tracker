@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "tsc -p tsconfig.test.json && node .test-dist/tests/monthNavigation.test.js && TZ=Europe/Warsaw node .test-dist/tests/corrections.test.js && node .test-dist/tests/viewSettings.test.js && node .test-dist/tests/pay.test.js && node .test-dist/tests/dashboard.test.js",
+    "test": "tsc -p tsconfig.test.json && node .test-dist/tests/monthNavigation.test.js && TZ=Europe/Warsaw node .test-dist/tests/corrections.test.js && node .test-dist/tests/viewSettings.test.js && node .test-dist/tests/pay.test.js && node .test-dist/tests/dashboard.test.js && node .test-dist/tests/export.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

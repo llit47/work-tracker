@@ -10,7 +10,8 @@
   - **Phase 4A — backend pay-rate history and pay calculation: DONE**
   - **Phase 4B — frontend pay presentation and rate management: DONE**
 - **Phase 5 — Dashboard and live shift: DONE**
-- **Phase 6 — Export: NEXT**
+- **Phase 6 — Export: DONE**
+- **Phase 7 — Authentication and hardening: NEXT**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
@@ -41,6 +42,11 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Frontend odświeża dashboard co 30 sekund, a działający licznik aktualizuje lokalnie co sekundę bez ciągłego odpytywania API.
 - Stan niejednoznaczny jest pokazywany jawnie dla duplikatów, sprzecznych eventów, wielu otwartych zmian oraz wejścia starszego niż 16 godzin.
 - Otwarta zmiana nie tworzy syntetycznego eventu, nie modyfikuje raw events i nie zwiększa wynagrodzenia przed poprawnym zakończeniem.
+- Wybrany miesiąc można pobrać jako CSV lub raport PDF bez ponownego wybierania daty.
+- CSV jest kodowany jako UTF-8 z BOM i używa separatora `;` dla zgodności z polskim Excelem.
+- PDF zawiera kompaktowe podsumowanie, wszystkie poprawne sesje, użyte stawki, kwoty oraz problemy; zwykły miesiąc mieści się na jednej stronie A4, a dłuższe raporty są paginowane.
+- PDF jest generowany przez ReportLab z osadzonym fontem Roboto obsługującym polskie znaki; wdrożenie nie wymaga przeglądarki ani ręcznej instalacji fontu.
+- Oba formaty powstają z jednego modelu raportu zasilanego przez effective events, kanoniczny kalkulator czasu i historyczny kalkulator płac.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
@@ -58,6 +64,8 @@ Aktualne endpointy:
 - `POST /api/pay-rates`
 - `GET /api/pay-summary?year=YYYY&month=MM`
 - `GET /api/dashboard?timezone=IANA_TIMEZONE`
+- `GET /api/export/monthly.csv?year=YYYY&month=MM`
+- `GET /api/export/monthly.pdf?year=YYYY&month=MM`
 - `GET /api/health`
 
 ## Production/deployment state
@@ -103,12 +111,15 @@ Aktualne endpointy:
 - Dashboard otrzymuje nazwę strefy IANA przeglądarki, aby poprawnie określić lokalne „dzisiaj” i bieżący miesiąc; wszystkie czasy trwania nadal wynikają z chwil UTC.
 - Status `working` wymaga dokładnie jednego terminalnego `missing_exit` nie starszego niż 16 godzin. Terminalny `duplicate_entry`, `ambiguous_timestamp`, wiele otwartych wejść, czas przyszły lub wejście starsze niż 16 godzin daje status `ambiguous`.
 - Dzisiejszy efektywny czas dodaje otwartą zmianę wyłącznie do lokalnej daty jej wejścia. Miesięczna płaca obejmuje tylko zakończone sesje `valid`.
+- Eksporty historyczne zachowują własność dnia/miesiąca z `WorkTimeItem.local_date`; nie używają odmiennych reguł strefowych live dashboardu.
+- Raport obejmuje wyłącznie effective events, dlatego ignorowanie, korekta timestampu i manualne eventy automatycznie wpływają na eksport bez zmiany raw events.
+- Anomalie trafiają do raportu informacyjnie i mają puste pola finansowe w CSV; nie są opłacane ani zamieniane na zgadywane sesje.
 
 ## Next implementation target
 
-**Phase 6 — Export**
+**Phase 7 — Authentication and hardening**
 
-Następny etap powinien dodać eksport CSV/PDF i raport miesięczny zgodnie z zakresem w `ROADMAP.md`. Phase 6 nie została jeszcze rozpoczęta.
+Następny etap powinien dodać prosty login bez publicznej rejestracji, zgodnie z zakresem w `ROADMAP.md`. Nie oznacza to decyzji o wystawieniu aplikacji do publicznego Internetu.
 
 ## Known intentional limitations
 
@@ -118,7 +129,7 @@ Następny etap powinien dodać eksport CSV/PDF i raport miesięczny zgodnie z za
 - brak live estymacji wynagrodzenia dla niezakończonej zmiany,
 - brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
 - brak logowania użytkownika,
-- brak eksportów,
+- brak eksportu XLSX/Excel,
 - brak publicznego dostępu do aplikacji.
 
 ## Recent milestones
@@ -135,6 +146,7 @@ Następny etap powinien dodać eksport CSV/PDF i raport miesięczny zgodnie z za
 - PR #10 — `feat: add settings panel and hide ignored events`
 - PR #11 — `feat: add pay-rate history and backend pay calculation`
 - PR #12 — `feat: add pay presentation and rate management`
+- PR #13 — `feat: add dashboard and live shift status`
 
 ## Maintenance rule
 

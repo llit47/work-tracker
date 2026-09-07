@@ -190,16 +190,22 @@ Zakres nadal zakłada jedną lokalizację i jedną pracę.
 
 ## Phase 6 — Export
 
-**Status: NEXT**
+**Status: DONE**
 
-- CSV,
-- PDF,
-- raport miesięczny,
-- Excel — opcjonalnie w przyszłości.
+- [x] Jeden backendowy model raportu zasilany przez effective events, kanoniczne parowanie oraz historyczne stawki.
+- [x] Eksport CSV UTF-8 z BOM i separatorem `;`, zgodny z wybranym miesiącem historycznym.
+- [x] Raport PDF A4 z podsumowaniem, sesjami, stawkami, kwotami i kompaktową sekcją problemów.
+- [x] Wiele sesji jednego dnia pozostaje osobnymi pozycjami raportu.
+- [x] Anomalie są widoczne, ale nie zwiększają czasu pracy ani wynagrodzenia.
+- [x] Pusty miesiąc zwraca prawidłowy CSV i PDF z zerowym podsumowaniem.
+- [x] Przyciski `Pobierz CSV` i `Pobierz PDF` korzystają z miesiąca wybranego w istniejącej nawigacji.
+- [x] Standardowy miesiąc mieści się na jednej stronie A4, a większe raporty są automatycznie paginowane z powtarzanym nagłówkiem tabeli.
+
+Eksport zachowuje historyczne reguły `work-summary` i `pay-summary`: sesja należy do daty wejścia zapisanej z oryginalnym/efektywnym offsetem, a czas trwania wynika z chwil UTC. Excel/XLSX pozostaje opcjonalnym, odłożonym rozszerzeniem.
 
 ## Phase 7 — Authentication and hardening
 
-**Status: PLANNED**
+**Status: NEXT**
 
 - prosty login,
 - brak publicznej rejestracji,
