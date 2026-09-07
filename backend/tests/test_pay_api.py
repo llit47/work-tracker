@@ -77,12 +77,26 @@ async def test_pay_rate_api_rejects_duplicate_and_invalid_values(tmp_path: Path)
             "/api/pay-rates",
             json={"effective_from": "1970-01-01", "hourly_rate": "55.00", "currency": "PLN"},
         )
+        valid_boundary = await client.post(
+            "/api/pay-rates",
+            json={
+                "effective_from": "2027-01-02",
+                "hourly_rate": "1000000.00",
+                "currency": "PLN",
+            },
+        )
         invalid_payloads = [
             {"effective_from": "2027-01-01", "hourly_rate": "0", "currency": "PLN"},
             {"effective_from": "2027-01-01", "hourly_rate": "-1", "currency": "PLN"},
             {"effective_from": "2027-01-01", "hourly_rate": "50.001", "currency": "PLN"},
             {"effective_from": "2027-01-01", "hourly_rate": 50.0, "currency": "PLN"},
             {"effective_from": "2027-01-01", "hourly_rate": "1000000.01", "currency": "PLN"},
+            {"effective_from": "2027-01-01", "hourly_rate": "1e100", "currency": "PLN"},
+            {
+                "effective_from": "2027-01-01",
+                "hourly_rate": "999999999999999999999999999999999999999999.99",
+                "currency": "PLN",
+            },
             {"effective_from": "2027-01-01", "hourly_rate": "50.00", "currency": "PL"},
             {"effective_from": "not-a-date", "hourly_rate": "50.00", "currency": "PLN"},
         ]
@@ -91,6 +105,8 @@ async def test_pay_rate_api_rejects_duplicate_and_invalid_values(tmp_path: Path)
         ]
 
     assert duplicate.status_code == 409
+    assert valid_boundary.status_code == 201
+    assert valid_boundary.json()["hourly_rate"] == "1000000.00"
     assert all(response.status_code == 422 for response in invalid_responses)
 
 

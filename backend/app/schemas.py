@@ -159,9 +159,16 @@ class PayRateRequest(BaseModel):
             raise ValueError("hourly_rate must be a valid decimal") from error
         if not decimal_value.is_finite():
             raise ValueError("hourly_rate must be finite")
+        if decimal_value <= 0:
+            raise ValueError("hourly_rate must be positive")
+        if decimal_value > MAX_HOURLY_RATE:
+            raise ValueError(f"hourly_rate must not exceed {MAX_HOURLY_RATE}")
         if decimal_value.as_tuple().exponent < -2:
             raise ValueError("hourly_rate must have at most two decimal places")
-        return decimal_value.quantize(Decimal("0.01"))
+        try:
+            return decimal_value.quantize(Decimal("0.01"))
+        except InvalidOperation as error:
+            raise ValueError("hourly_rate cannot be represented with two decimal places") from error
 
     @field_validator("currency")
     @classmethod
