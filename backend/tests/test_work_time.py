@@ -117,18 +117,36 @@ def test_stale_duplicate_entries_do_not_contaminate_a_later_session():
     assert summary.total_duration_seconds == 2 * 3600
 
 
-def test_pending_entry_is_not_expired_by_an_entry_at_exactly_16_hours():
+def test_pending_state_is_retained_while_its_newest_entry_is_still_viable():
     summary, items = items_for(
         [
             event(1, "entry", "2026-09-06T08:00:00+02:00"),
-            event(2, "entry", "2026-09-07T00:00:00+02:00"),
-            event(3, "exit", "2026-09-07T01:00:00+02:00"),
+            event(2, "entry", "2026-09-06T08:01:00+02:00"),
+            event(3, "entry", "2026-09-07T00:00:30+02:00"),
+            event(4, "exit", "2026-09-07T00:00:45+02:00"),
         ]
     )
 
     assert len(items) == 1
     assert items[0].status is SessionStatus.DUPLICATE_ENTRY
-    assert [raw.id for raw in items[0].events] == [1, 2, 3]
+    assert [raw.id for raw in items[0].events] == [1, 2, 3, 4]
+    assert all(item.status is not SessionStatus.VALID for item in items)
+    assert summary.total_duration_seconds == 0
+
+
+def test_pending_state_is_not_expired_when_newest_entry_is_exactly_16_hours_old():
+    summary, items = items_for(
+        [
+            event(1, "entry", "2026-09-06T08:00:00+02:00"),
+            event(2, "entry", "2026-09-06T08:01:00+02:00"),
+            event(3, "entry", "2026-09-07T00:01:00+02:00"),
+            event(4, "exit", "2026-09-07T00:02:00+02:00"),
+        ]
+    )
+
+    assert len(items) == 1
+    assert items[0].status is SessionStatus.DUPLICATE_ENTRY
+    assert [raw.id for raw in items[0].events] == [1, 2, 3, 4]
     assert summary.total_duration_seconds == 0
 
 

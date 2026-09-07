@@ -112,13 +112,13 @@ def _pair_location_events(events: list[RawWorkEvent]) -> list[WorkTimeItem]:
         timestamp_events = list(grouped_events)
         event_types = {event.event_type for event in timestamp_events}
 
-        # A new entry cannot belong to pending state that already exceeds the
-        # maximum valid session. Exits still close pending entries so a direct
-        # pair over the limit retains unusually_long_session semantics.
+        # Finalize the whole pending state only when even its newest entry can
+        # no longer form a valid session. Exits still close pending entries so
+        # a direct pair over the limit retains unusually_long_session semantics.
         if (
             "entry" in event_types
             and pending_entries
-            and timestamp - pending_entries[0].event_timestamp_utc > MAX_SESSION_DURATION
+            and timestamp - pending_entries[-1].event_timestamp_utc > MAX_SESSION_DURATION
         ):
             items.append(_pending_entries_anomaly(pending_entries))
             pending_entries = []
