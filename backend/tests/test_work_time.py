@@ -15,6 +15,7 @@ def event(
     *,
     received_at: str = "2026-09-06T18:00:00+00:00",
     location: str = "gabinet_zabki",
+    source: str = "home_assistant",
 ) -> RawWorkEvent:
     local_timestamp = datetime.fromisoformat(timestamp)
     return RawWorkEvent(
@@ -24,7 +25,7 @@ def event(
         event_timestamp=local_timestamp,
         event_timestamp_utc=local_timestamp.astimezone(timezone.utc),
         received_at=datetime.fromisoformat(received_at),
-        source="home_assistant",
+        source=source,
     )
 
 
@@ -74,6 +75,54 @@ def test_marks_duplicate_entry_and_does_not_choose_one():
             event(1, "entry", "2026-09-06T08:00:00+02:00"),
             event(2, "entry", "2026-09-06T08:04:00+02:00"),
             event(3, "exit", "2026-09-06T16:00:00+02:00"),
+        ]
+    )
+
+    assert len(items) == 1
+    assert items[0].status is SessionStatus.DUPLICATE_ENTRY
+    assert [raw.id for raw in items[0].events] == [1, 2, 3]
+    assert summary.total_duration_seconds == 0
+
+
+def test_stale_entry_does_not_contaminate_a_later_session():
+    summary, items = items_for(
+        [
+            event(1, "entry", "2026-09-02T10:00:00+02:00", source="manual"),
+            event(2, "entry", "2026-09-06T16:42:00+02:00"),
+            event(3, "exit", "2026-09-06T16:42:03+02:00"),
+        ]
+    )
+
+    assert [day.date.isoformat() for day in summary.days] == ["2026-09-02", "2026-09-06"]
+    assert [item.status for item in items] == [SessionStatus.MISSING_EXIT, SessionStatus.VALID]
+    assert [[raw.id for raw in item.events] for item in items] == [[1], [2, 3]]
+    assert items[1].duration_seconds == 3
+    assert summary.total_duration_seconds == 3
+    assert summary.days[0].anomaly_count == 1
+    assert summary.days[1].total_duration_seconds == 3
+
+
+def test_stale_duplicate_entries_do_not_contaminate_a_later_session():
+    summary, items = items_for(
+        [
+            event(1, "entry", "2026-09-02T08:00:00+02:00"),
+            event(2, "entry", "2026-09-02T08:01:00+02:00"),
+            event(3, "entry", "2026-09-06T16:00:00+02:00"),
+            event(4, "exit", "2026-09-06T18:00:00+02:00"),
+        ]
+    )
+
+    assert [item.status for item in items] == [SessionStatus.DUPLICATE_ENTRY, SessionStatus.VALID]
+    assert [[raw.id for raw in item.events] for item in items] == [[1, 2], [3, 4]]
+    assert summary.total_duration_seconds == 2 * 3600
+
+
+def test_pending_entry_is_not_expired_by_an_entry_at_exactly_16_hours():
+    summary, items = items_for(
+        [
+            event(1, "entry", "2026-09-06T08:00:00+02:00"),
+            event(2, "entry", "2026-09-07T00:00:00+02:00"),
+            event(3, "exit", "2026-09-07T01:00:00+02:00"),
         ]
     )
 
@@ -138,12 +187,12 @@ def test_conflicting_events_at_identical_utc_time_are_ambiguous():
 
 def test_session_crossing_midnight_belongs_to_entry_day():
     summary, items = items_for(
-        [event(1, "entry", "2026-09-06T23:00:00+02:00"), event(2, "exit", "2026-09-07T02:00:00+02:00")]
+        [event(1, "entry", "2026-09-07T23:00:00+02:00"), event(2, "exit", "2026-09-08T07:00:00+02:00")]
     )
 
     assert items[0].status is SessionStatus.VALID
-    assert items[0].duration_seconds == 3 * 3600
-    assert summary.days[0].date.isoformat() == "2026-09-06"
+    assert items[0].duration_seconds == 8 * 3600
+    assert summary.days[0].date.isoformat() == "2026-09-07"
 
 
 def test_session_crossing_month_boundary_belongs_to_entry_month():
@@ -164,7 +213,7 @@ def test_session_crossing_month_boundary_belongs_to_entry_month():
 
 def test_session_longer_than_16_hours_is_not_counted():
     summary, items = items_for(
-        [event(1, "entry", "2026-09-06T00:00:00+02:00"), event(2, "exit", "2026-09-06T16:00:01+02:00")]
+        [event(1, "entry", "2026-09-06T08:00:00+02:00"), event(2, "exit", "2026-09-07T00:00:01+02:00")]
     )
 
     assert MAX_SESSION_DURATION == timedelta(hours=16)
@@ -175,7 +224,7 @@ def test_session_longer_than_16_hours_is_not_counted():
 
 def test_session_of_exactly_16_hours_is_valid():
     summary, items = items_for(
-        [event(1, "entry", "2026-09-06T00:00:00+02:00"), event(2, "exit", "2026-09-06T16:00:00+02:00")]
+        [event(1, "entry", "2026-09-06T08:00:00+02:00"), event(2, "exit", "2026-09-07T00:00:00+02:00")]
     )
 
     assert items[0].status is SessionStatus.VALID

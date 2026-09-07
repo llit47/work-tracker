@@ -108,9 +108,20 @@ def _pair_location_events(events: list[RawWorkEvent]) -> list[WorkTimeItem]:
     items: list[WorkTimeItem] = []
     pending_entries: list[RawWorkEvent] = []
 
-    for _, grouped_events in groupby(ordered, key=lambda event: event.event_timestamp_utc):
+    for timestamp, grouped_events in groupby(ordered, key=lambda event: event.event_timestamp_utc):
         timestamp_events = list(grouped_events)
         event_types = {event.event_type for event in timestamp_events}
+
+        # A new entry cannot belong to pending state that already exceeds the
+        # maximum valid session. Exits still close pending entries so a direct
+        # pair over the limit retains unusually_long_session semantics.
+        if (
+            "entry" in event_types
+            and pending_entries
+            and timestamp - pending_entries[0].event_timestamp_utc > MAX_SESSION_DURATION
+        ):
+            items.append(_pending_entries_anomaly(pending_entries))
+            pending_entries = []
 
         if len(event_types) > 1:
             related_events = tuple(pending_entries + timestamp_events)
@@ -155,12 +166,19 @@ def _pair_location_events(events: list[RawWorkEvent]) -> list[WorkTimeItem]:
                     )
                 )
 
-    if len(pending_entries) == 1:
-        items.append(_anomaly(SessionStatus.MISSING_EXIT, tuple(pending_entries)))
-    elif pending_entries:
-        items.append(_anomaly(SessionStatus.DUPLICATE_ENTRY, tuple(pending_entries)))
+    if pending_entries:
+        items.append(_pending_entries_anomaly(pending_entries))
 
     return items
+
+
+def _pending_entries_anomaly(pending_entries: list[RawWorkEvent]) -> WorkTimeItem:
+    status = (
+        SessionStatus.MISSING_EXIT
+        if len(pending_entries) == 1
+        else SessionStatus.DUPLICATE_ENTRY
+    )
+    return _anomaly(status, tuple(pending_entries))
 
 
 def _anomaly(status: SessionStatus, events: tuple[RawWorkEvent, ...]) -> WorkTimeItem:
