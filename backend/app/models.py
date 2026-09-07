@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -28,6 +29,26 @@ class AwareDateTime(TypeDecorator):
 
     def process_result_value(self, value: str | None, dialect):
         return datetime.fromisoformat(value) if value is not None else None
+
+
+class ExactDecimal(TypeDecorator):
+    """Store fixed-point decimals as canonical text because SQLite NUMERIC uses REAL."""
+
+    impl = String(20)
+    cache_ok = True
+
+    def process_bind_param(self, value: Decimal | int | str | None, dialect):
+        if value is None:
+            return None
+        if isinstance(value, (bool, float)):
+            raise ValueError("Exact decimal values cannot use binary floating point")
+        decimal_value = Decimal(value)
+        if not decimal_value.is_finite() or decimal_value.as_tuple().exponent < -2:
+            raise ValueError("Exact decimal values require at most two decimal places")
+        return format(decimal_value.quantize(Decimal("0.01")), "f")
+
+    def process_result_value(self, value: str | None, dialect):
+        return Decimal(value) if value is not None else None
 
 
 class WorkEvent(Base):
@@ -93,3 +114,28 @@ class WorkEventCorrection(Base):
     event_timestamp: Mapped[datetime | None] = mapped_column(AwareDateTime(), nullable=True)
     event_timestamp_utc: Mapped[datetime | None] = mapped_column(AwareDateTime(), nullable=True)
     location: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class PayRate(Base):
+    __tablename__ = "pay_rates"
+    __table_args__ = (
+        CheckConstraint(
+            "hourly_rate GLOB '[0-9]*.[0-9][0-9]' "
+            "AND hourly_rate NOT GLOB '*[^0-9.]*' "
+            "AND length(hourly_rate) - length(replace(hourly_rate, '.', '')) = 1 "
+            "AND CAST(hourly_rate AS NUMERIC) > 0 "
+            "AND CAST(hourly_rate AS NUMERIC) <= 1000000.00",
+            name="ck_pay_rates_hourly_rate",
+        ),
+        CheckConstraint(
+            "length(currency) = 3 AND currency GLOB '[A-Z][A-Z][A-Z]'",
+            name="ck_pay_rates_currency",
+        ),
+        UniqueConstraint("effective_from", name="uq_pay_rates_effective_from"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    hourly_rate: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PLN")
+    created_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)

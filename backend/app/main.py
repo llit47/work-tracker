@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, st
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import Settings, get_settings
@@ -13,15 +14,26 @@ from .database import build_session_factory, get_session
 from .corrections import (
     CorrectionRecord,
     EffectiveEventMetadata,
+    EffectiveEventStream,
     build_effective_event_stream,
 )
-from .models import CorrectionType, WorkEvent, WorkEventCorrection
+from .models import CorrectionType, PayRate, WorkEvent, WorkEventCorrection
+from .pay import (
+    MixedCurrenciesError,
+    MissingPayRateError,
+    MonthlyPaySummary,
+    PayRateRecord,
+    calculate_monthly_pay,
+)
 from .schemas import (
     CorrectionResponse,
     EffectiveWorkEventResponse,
     HomeAssistantWebhook,
     ManualEventRequest,
+    MonthlyPaySummaryResponse,
     MonthlyWorkSummaryResponse,
+    PayRateRequest,
+    PayRateResponse,
     TimestampCorrectionRequest,
     WebhookAccepted,
     WorkDayResponse,
@@ -59,6 +71,26 @@ def _to_correction_record(correction: WorkEventCorrection) -> CorrectionRecord:
 
 def _to_effective_event_response(event: EffectiveEventMetadata) -> EffectiveWorkEventResponse:
     return EffectiveWorkEventResponse.model_validate(event)
+
+
+def _to_pay_rate_record(rate: PayRate) -> PayRateRecord:
+    return PayRateRecord(
+        id=rate.id,
+        effective_from=rate.effective_from,
+        hourly_rate=rate.hourly_rate,
+        currency=rate.currency,
+    )
+
+
+def _load_effective_event_stream(session: Session) -> EffectiveEventStream:
+    raw_statement = select(WorkEvent).order_by(WorkEvent.event_timestamp_utc.asc(), WorkEvent.id.asc())
+    correction_statement = select(WorkEventCorrection).order_by(WorkEventCorrection.id.asc())
+    raw_events = [_to_raw_event(event) for event in session.scalars(raw_statement)]
+    corrections = [
+        _to_correction_record(correction)
+        for correction in session.scalars(correction_statement)
+    ]
+    return build_effective_event_stream(raw_events, corrections)
 
 
 def create_app(settings: Settings | None = None, frontend_dist: Path | None = None) -> FastAPI:
@@ -232,14 +264,7 @@ def create_app(settings: Settings | None = None, frontend_dist: Path | None = No
         month: int = Query(ge=1, le=12),
         session: Session = Depends(get_session),
     ) -> MonthlyWorkSummaryResponse:
-        raw_statement = select(WorkEvent).order_by(WorkEvent.event_timestamp_utc.asc(), WorkEvent.id.asc())
-        correction_statement = select(WorkEventCorrection).order_by(WorkEventCorrection.id.asc())
-        raw_events = [_to_raw_event(event) for event in session.scalars(raw_statement)]
-        corrections = [
-            _to_correction_record(correction)
-            for correction in session.scalars(correction_statement)
-        ]
-        effective_stream = build_effective_event_stream(raw_events, corrections)
+        effective_stream = _load_effective_event_stream(session)
         summary = calculate_monthly_work_time(effective_stream.events, year, month)
         calculated_days = {day.date: day for day in summary.days}
         ignored_by_day: dict[date, list[EffectiveEventMetadata]] = {}
@@ -294,6 +319,57 @@ def create_app(settings: Settings | None = None, frontend_dist: Path | None = No
                 for local_date in sorted(set(calculated_days) | set(ignored_by_day))
             ],
         )
+
+    @app.get("/api/pay-rates", response_model=list[PayRateResponse])
+    def list_pay_rates(session: Session = Depends(get_session)) -> list[PayRate]:
+        statement = select(PayRate).order_by(PayRate.effective_from.asc(), PayRate.id.asc())
+        return list(session.scalars(statement))
+
+    @app.post(
+        "/api/pay-rates",
+        response_model=PayRateResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_pay_rate(
+        payload: PayRateRequest,
+        session: Session = Depends(get_session),
+    ) -> PayRate:
+        rate = PayRate(
+            effective_from=payload.effective_from,
+            hourly_rate=payload.hourly_rate,
+            currency=payload.currency,
+            created_at=datetime.now(timezone.utc),
+        )
+        session.add(rate)
+        try:
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A pay rate already exists for this effective date",
+            ) from error
+        session.refresh(rate)
+        return rate
+
+    @app.get("/api/pay-summary", response_model=MonthlyPaySummaryResponse)
+    def get_pay_summary(
+        year: int = Query(ge=2000, le=2100),
+        month: int = Query(ge=1, le=12),
+        session: Session = Depends(get_session),
+    ) -> MonthlyPaySummary:
+        effective_stream = _load_effective_event_stream(session)
+        work_summary = calculate_monthly_work_time(effective_stream.events, year, month)
+        rates = [
+            _to_pay_rate_record(rate)
+            for rate in session.scalars(
+                select(PayRate).order_by(PayRate.effective_from.asc(), PayRate.id.asc())
+            )
+        ]
+        try:
+            return calculate_monthly_pay(work_summary, rates)
+        except (MissingPayRateError, MixedCurrenciesError) as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

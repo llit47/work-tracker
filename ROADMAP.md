@@ -6,7 +6,7 @@ Każdy PR implementujący element roadmapy powinien:
 2. aktualizować status odpowiedniego etapu w `ROADMAP.md`,
 3. nie implementować kolejnych etapów bez wyraźnego zakresu PR.
 
-Statusy używane w dokumencie: `DONE`, `NEXT`, `PLANNED`, `DEFERRED`.
+Statusy używane w dokumencie: `DONE`, `IN PROGRESS`, `NEXT`, `PLANNED`, `DEFERRED`.
 
 ## Phase 0 — Deployment and Home Assistant ingestion
 
@@ -143,19 +143,30 @@ Raw events otrzymane z Home Assistant nie mogą być bezpowrotnie nadpisywane. K
 
 ## Phase 4 — Pay calculation
 
+**Status: IN PROGRESS**
+
+### Phase 4A — backend pay-rate history and pay calculation
+
+**Status: DONE**
+
+- [x] Trwała historia stawek z unikalną datą obowiązywania i bez destrukcyjnego nadpisywania wcześniejszych rekordów.
+- [x] Domyślna stawka `50,00 PLN/h`, obowiązująca od `1970-01-01`.
+- [x] Wybór stawki według lokalnej daty wejścia do poprawnej sesji.
+- [x] Dzienne i miesięczne wynagrodzenie liczone z dokładnych sekund i typów `Decimal`.
+- [x] Zaokrąglanie wynikowych kwot do dwóch miejsc metodą `ROUND_HALF_UP`.
+- [x] API historii stawek oraz backendowego podsumowania wynagrodzenia.
+- [x] Brak wynagrodzenia za anomalie i odrzucanie sum obejmujących różne waluty.
+
+### Phase 4B — frontend pay presentation and rate management
+
 **Status: NEXT**
 
-- domyślna stawka godzinowa: `50,00 PLN/h`,
-- domyślna waluta: `PLN`,
-- miesięczne wynagrodzenie,
-- historia stawek z datą `effective from`, bez destrukcyjnego nadpisywania jednej globalnej wartości,
-- użycie stawki obowiązującej dla daty pracy przy obliczaniu historycznych miesięcy,
-- obliczenia oparte wyłącznie na poprawnych sesjach z istniejącego silnika parowania,
-- brak automatycznego naliczania wynagrodzenia za czas nieprawidłowy lub anomalny,
-- zarządzanie stawkami w sekcji `Ustawienia`,
-- możliwość późniejszego pokazania aktualnej stawki również w zwykłym podsumowaniu.
+- [ ] Zarządzanie historią stawek w sekcji `Ustawienia`.
+- [ ] Prezentacja miesięcznego i dziennego wynagrodzenia.
+- [ ] Czytelne pokazanie stawek użytych w wybranym miesiącu.
+- [ ] Możliwość pokazania aktualnej stawki w zwykłym podsumowaniu.
 
-Początkowa implementacja Phase 4 nie obejmie nadgodzin, dodatków weekendowych, podatków ani premii. Powyższe punkty są wyłącznie założeniami projektowymi; w tym etapie porządkowania UI nie zaimplementowano obliczeń wynagrodzenia.
+Początkowa implementacja Phase 4 nie obejmuje nadgodzin, dodatków weekendowych, podatków ani premii. Phase 4A nie dodaje prezentacji wynagrodzenia ani zarządzania stawkami do frontendu.
 
 Zakres nadal zakłada jedną lokalizację i jedną pracę.
 
