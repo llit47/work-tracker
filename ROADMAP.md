@@ -78,18 +78,35 @@ Poza zakresem Phase 1:
 
 ## Phase 2 — Monthly navigation and summaries
 
-**Status: NEXT**
+**Status: DONE**
 
-- poprzedni i następny miesiąc,
-- wybór miesiąca,
-- miesięczne podsumowanie,
-- liczba godzin,
-- liczba dni,
-- średni czas pracy dziennie.
+Zakończony zakres:
+
+- [x] Nawigacja do poprzedniego i następnego miesiąca z poprawną obsługą granic roku.
+- [x] Bezpośredni wybór miesiąca i roku bez dodatkowej biblioteki date-picker.
+- [x] Szybki powrót do bieżącego miesiąca.
+- [x] Adres URL `/?year=YYYY&month=MM` zachowujący wybrany miesiąc po odświeżeniu i umożliwiający udostępnienie widoku.
+- [x] Obsługa Back/Forward oraz bezpieczny fallback dla nieprawidłowych parametrów URL.
+- [x] Miesięczne podsumowanie czasu, dni pracy, średniego czasu dziennie i liczby problemów.
+- [x] Zachowanie widoku dni, sesji i anomalii z Phase 1.
+- [x] Stany ładowania, pustego miesiąca, błędu i ponowienia żądania bez prezentowania nieaktualnych danych.
+- [x] Ochrona przed nadpisaniem wybranego miesiąca przez spóźnioną odpowiedź API.
+
+### Acceptance criteria
+
+- [x] Widok bez parametrów URL pokazuje bieżący lokalny miesiąc użytkownika.
+- [x] Przyciski poprzedniego i następnego miesiąca działają na granicach miesiąca i roku w zakresie API 2000–2100.
+- [x] Użytkownik może wybrać konkretny miesiąc oraz wrócić do miesiąca bieżącego.
+- [x] Wybrany miesiąc jest synchronizowany z query parameters i odtwarzany po odświeżeniu lub nawigacji Back/Forward.
+- [x] Nieprawidłowe parametry są zastępowane bieżącym miesiącem i nie są wysyłane do API.
+- [x] Dane pochodzą z `GET /api/work-summary`; frontend nie rekonstruuje sesji z raw events.
+- [x] Zmiana miesiąca czyści poprzednie podsumowanie, a nieaktualne requesty są anulowane i ignorowane.
+- [x] Widoki loading, error z retry oraz pustego miesiąca są czytelne na desktopie i telefonie.
+- [x] Logika obliczeń Phase 1 oraz immutable raw events pozostają bez zmian.
 
 ## Phase 3 — Manual corrections
 
-**Status: PLANNED**
+**Status: NEXT**
 
 - dodawanie brakującego `entry` lub `exit`,
 - korekta godziny,
