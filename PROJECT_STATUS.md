@@ -147,6 +147,7 @@ Następny etap powinien dodać prosty login bez publicznej rejestracji, zgodnie 
 - PR #11 — `feat: add pay-rate history and backend pay calculation`
 - PR #12 — `feat: add pay presentation and rate management`
 - PR #13 — `feat: add dashboard and live shift status`
+- PR #14 — `feat: add monthly CSV and PDF export`
 
 ## Maintenance rule
 
