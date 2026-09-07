@@ -21,6 +21,13 @@ import {
   shiftMonth,
   type MonthSelection,
 } from './monthNavigation'
+import {
+  getVisibleDays,
+  hasStandaloneUndoAction,
+  isEventVisible,
+  readShowIgnoredEventsPreference,
+  writeShowIgnoredEventsPreference,
+} from './viewSettings'
 
 type WorkEvent = {
   id: number
@@ -171,7 +178,7 @@ function EventRow({ event, actions }: { event: WorkEvent; actions: EventActions 
             <button type="button" disabled={actions.disabled} onClick={() => actions.onUndo(event)}>Cofnij korektę</button>
           </>
         )}
-        {(event.is_manual || event.is_ignored) && (
+        {hasStandaloneUndoAction(event) && (
           <button type="button" disabled={actions.disabled} onClick={() => actions.onUndo(event)}>Cofnij korektę</button>
         )}
       </div>
@@ -241,6 +248,21 @@ function App() {
   const [correctionForm, setCorrectionForm] = useState<CorrectionForm | null>(null)
   const [isSavingCorrection, setIsSavingCorrection] = useState(false)
   const [actionMessage, setActionMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [showIgnoredEvents, setShowIgnoredEvents] = useState(() => {
+    try {
+      return readShowIgnoredEventsPreference(window.localStorage)
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    try {
+      writeShowIgnoredEventsPreference(window.localStorage, showIgnoredEvents)
+    } catch {
+      // The setting still works until this page is closed when storage is unavailable.
+    }
+  }, [showIgnoredEvents])
 
   useEffect(() => {
     let refreshTimer: number
@@ -474,6 +496,7 @@ function App() {
     ? extractOffsetFromIso(correctionForm.existingTimestamp)
     : null
   const correctionSelectedOffset = correctionForm?.selectedOffset ?? correctionPreservedOffset ?? ''
+  const visibleDays = summary ? getVisibleDays(summary.days, showIgnoredEvents) : []
 
   return (
     <main className="page">
@@ -528,6 +551,20 @@ function App() {
             Dzisiaj
           </button>
         </div>
+        <details className="settings-panel">
+          <summary>Ustawienia</summary>
+          <div className="settings-content">
+            <h3>Widok</h3>
+            <label className="setting-option">
+              <input
+                type="checkbox"
+                checked={showIgnoredEvents}
+                onChange={(event) => setShowIgnoredEvents(event.target.checked)}
+              />
+              <span>Pokaż ignorowane wydarzenia</span>
+            </label>
+          </div>
+        </details>
         <section className="correction-toolbar" aria-label="Korekty ręczne">
           <strong>Korekty ręczne</strong>
           <div>
@@ -614,9 +651,9 @@ function App() {
             <div><span>Problemy</span><strong className={summary.anomaly_count > 0 ? 'problem-count' : ''}>{summary.anomaly_count}</strong></div>
           </section>
 
-          {summary.days.length === 0 && <p className="message">Brak zdarzeń w tym miesiącu.</p>}
+          {visibleDays.length === 0 && <p className="message">Brak zdarzeń w tym miesiącu.</p>}
           <div className="days">
-            {summary.days.map((day) => (
+            {visibleDays.map((day) => (
               <section className="day" key={day.date}>
                 <div className="day-heading">
                   <h3>{formatDay(day.date)}</h3>
@@ -630,14 +667,16 @@ function App() {
                       actions={eventActions}
                     />
                   ))}
-                  {day.ignored_events.map((event) => (
-                    <article className="session ignored-session" key={`ignored-${event.id}`}>
-                      <div className="session-details">
-                        <EventRow event={event} actions={eventActions} />
-                        <span className="location">{event.location}</span>
-                      </div>
-                    </article>
-                  ))}
+                  {day.ignored_events
+                    .filter((event) => isEventVisible(event, showIgnoredEvents))
+                    .map((event) => (
+                      <article className="session ignored-session" key={`ignored-${event.id}`}>
+                        <div className="session-details">
+                          <EventRow event={event} actions={eventActions} />
+                          <span className="location">{event.location}</span>
+                        </div>
+                      </article>
+                    ))}
                 </div>
               </section>
             ))}
