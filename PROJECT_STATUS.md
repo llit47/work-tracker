@@ -6,7 +6,9 @@
 - **Phase 1 — Work-time calculation: DONE**
 - **Phase 2 — Monthly navigation and summaries: DONE**
 - **Phase 3 — Manual corrections: DONE**
-- **Phase 4 — Pay calculation: NEXT**
+- **Phase 4 — Pay calculation: IN PROGRESS**
+  - **Phase 4A — backend pay-rate history and pay calculation: DONE**
+  - **Phase 4B — frontend pay presentation and rate management: NEXT**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
@@ -25,6 +27,8 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Frontend rozróżnia zdarzenia Home Assistant, zdarzenia skorygowane, zignorowane i dodane ręcznie.
 - Kompaktowa sekcja `Ustawienia` zawiera preferencje widoku i pozostaje domyślnie zwinięta.
 - Ignorowane eventy są domyślnie ukryte; opcja `Pokaż ignorowane wydarzenia` przywraca ich audytowy widok wraz z możliwością cofnięcia korekty i jest zapamiętywana w `localStorage`.
+- Backend przechowuje historyczne stawki godzinowe i wylicza dzienne oraz miesięczne wynagrodzenie wyłącznie z poprawnych sesji.
+- Domyślna stawka to `50,00 PLN/h` od `1970-01-01`; kolejne stawki nie zmieniają historycznych rozliczeń.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
@@ -38,6 +42,9 @@ Aktualne endpointy:
 - `POST /api/manual-events`
 - `GET /api/corrections`
 - `DELETE /api/corrections/{correction_id}`
+- `GET /api/pay-rates`
+- `POST /api/pay-rates`
+- `GET /api/pay-summary?year=YYYY&month=MM`
 - `GET /api/health`
 
 ## Production/deployment state
@@ -74,19 +81,25 @@ Aktualne endpointy:
 - Manualne i skorygowane timestampy zachowują offset, a ich chwile UTC są przechowywane osobno.
 - Undo usuwa rekord `work_event_corrections`; nigdy nie usuwa ani nie modyfikuje raw eventu.
 - Migracja Alembic `20260907_02` dodaje wyłącznie strukturę korekt i zachowuje dane `work_events`.
+- Migracja Alembic `20260907_03` dodaje `pay_rates` i seeduje jedną stawkę `50,00 PLN/h` od `1970-01-01`, bez modyfikacji eventów ani korekt.
+- `pay_rates` zawiera `id`, unikalne `effective_from`, dokładne `hourly_rate`, `currency` oraz `created_at`; stawka jest przechowywana jako kanoniczny zapis dziesiętny, ponieważ SQLite `NUMERIC` używa dla takich wartości binarnego `REAL`.
+- Stawka sesji jest wybierana jako najnowsza z `effective_from <=` lokalna data efektywnego wejścia.
+- Płaca powstaje wyłącznie z sesji `valid`; czas anomalii nie jest zgadywany ani opłacany.
+- Kwoty są liczone z sekund za pomocą `Decimal`, zaokrąglane do dwóch miejsc przez `ROUND_HALF_UP` dopiero dla wyniku dnia i miesiąca oraz zwracane przez API jako stringi.
+- Backend nie sumuje sesji rozliczanych w różnych walutach; taki miesiąc zwraca jednoznaczny błąd.
 
 ## Next implementation target
 
-**Phase 4 — Pay calculation**
+**Phase 4B — frontend pay presentation and rate management**
 
-Najbliższy PR funkcjonalny powinien dotyczyć stawek i miesięcznego wynagrodzenia z mechanizmem zachowującym historyczne rozliczenia. Szczegółowy zakres znajduje się w `ROADMAP.md`.
+Najbliższy PR funkcjonalny powinien dodać prezentację wynagrodzenia oraz zarządzanie historią stawek w istniejącej sekcji `Ustawienia`. Szczegółowy zakres znajduje się w `ROADMAP.md`.
 
 Uzgodnione założenia Phase 4: domyślnie `50,00 PLN/h` i waluta `PLN`; stawki mają historię z datą obowiązywania, a historyczne miesiące używają stawki właściwej dla daty pracy. Wynagrodzenie będzie liczone wyłącznie z poprawnych sesji obecnego silnika. Czas anomalny nie będzie zgadywany ani opłacany automatycznie. Zarządzanie stawkami trafi później do sekcji `Ustawienia`; początkowy zakres nie obejmie nadgodzin, dodatków weekendowych, podatków ani premii.
 
 ## Known intentional limitations
 
 - jedna praca i jedna aktywna lokalizacja,
-- brak wyliczania wynagrodzenia,
+- brak frontendowej prezentacji wynagrodzenia i zarządzania stawkami,
 - brak logowania użytkownika,
 - brak eksportów,
 - brak publicznego dostępu do aplikacji.
@@ -100,7 +113,9 @@ Uzgodnione założenia Phase 4: domyślnie `50,00 PLN/h` i waluta `PLN`; stawki 
 - PR #5 — `docs: add project roadmap and update project status`
 - PR #6 — `feat: add work-time calculation`
 - PR #7 — `feat: add monthly navigation`
-- PR #8 — `feat: add manual work-time corrections` (ten PR)
+- PR #8 — `feat: add manual work-time corrections`
+- PR #9 — `fix: prevent stale entries from contaminating later sessions`
+- PR #10 — `feat: add settings panel and hide ignored events`
 
 ## Maintenance rule
 
