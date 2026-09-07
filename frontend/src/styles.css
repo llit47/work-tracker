@@ -15,6 +15,20 @@ button:disabled { cursor: default; opacity: .45; }
 .month-actions { display: flex; justify-content: center; align-items: end; gap: 10px; margin-bottom: 24px; }
 .month-actions label { display: grid; gap: 4px; color: #52616b; font-size: .76rem; text-transform: uppercase; }
 .month-actions input { min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; padding: 6px 9px; color: #26343c; background: #fff; }
+.correction-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 0 20px; padding: 12px 14px; border-radius: 10px; background: #eef3f6; }
+.correction-toolbar > div, .form-actions, .event-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.correction-toolbar button, .event-actions button { min-height: 34px; padding: 5px 10px; font-size: .82rem; }
+.correction-form { display: grid; gap: 12px; margin-bottom: 20px; padding: 16px; border: 1px solid #ccd7dd; border-radius: 10px; background: #f8fafb; }
+.correction-form h3, .correction-form p { margin: 0; }
+.correction-form label { display: grid; gap: 5px; color: #52616b; font-size: .82rem; }
+.correction-form input, .correction-form select { width: min(100%, 300px); min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; padding: 6px 9px; color: #26343c; background: #fff; }
+.correction-context { display: grid; gap: 4px; color: #52616b; font-size: .9rem; }
+.dst-choice { display: grid; gap: 8px; padding: 12px; border-left: 4px solid #d58b16; background: #fff8e8; }
+.dst-choice p { color: #67470f; }
+.timezone-note { color: #687780; font-size: .8rem; }
+.action-message { margin: 0 0 20px; padding: 10px 12px; border-radius: 8px; font-size: .9rem; }
+.action-message.success { color: #21683b; background: #eaf6ee; }
+.action-message.error { color: #8d2222; background: #fcecec; }
 .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 28px; }
 .summary div { padding: 14px; border-radius: 10px; background: #f3f5f7; }
 .summary span { display: block; margin-bottom: 5px; color: #52616b; font-size: .78rem; text-transform: uppercase; }
@@ -29,12 +43,21 @@ button:disabled { cursor: default; opacity: .45; }
 .session { display: flex; justify-content: space-between; gap: 20px; padding: 12px 14px; border-left: 4px solid; border-radius: 8px; background: #f8fafb; }
 .session.valid { border-color: #2d8a4e; }
 .session.warning { border-color: #d98b19; background: #fff8ec; }
+.session.ignored-session { border-color: #7a8790; background: #f1f3f4; }
 .session strong { display: block; }
+.session-details { flex: 1; min-width: 0; }
+.session-range { margin-bottom: 5px; }
 .location { display: block; margin-top: 4px; color: #687780; font-size: .78rem; }
 .session-result { text-align: right; }
 .anomaly { display: block; align-self: center; color: #8a4d00; font-size: .86rem; font-weight: 700; text-align: right; }
-.raw-events { display: grid; gap: 3px; }
-.raw-events > span:not(.location) { font-size: .9rem; font-weight: 600; }
+.event-list { display: grid; gap: 8px; margin-top: 10px; }
+.event-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 8px; border-top: 1px solid #dce2e6; }
+.event-row.ignored { width: 100%; border-top: 0; padding-top: 0; }
+.event-audit { display: grid; gap: 2px; font-size: .82rem; }
+.event-audit > span { color: #687780; }
+.audit-status { font-weight: 700; }
+.audit-status.source { color: #687780; }
+.audit-status.corrected, .audit-status.manual, .audit-status.ignored { color: #8a4d00; }
 .message { margin: 24px 0; color: #52616b; }
 .error { color: #a22828; }
 .error-message p { margin: 0 0 12px; color: #a22828; }
@@ -43,9 +66,11 @@ button:disabled { cursor: default; opacity: .45; }
   .month-navigation { gap: 8px; }
   .month-actions { align-items: stretch; }
   .month-actions label { flex: 1; }
+  .correction-toolbar { align-items: stretch; flex-direction: column; }
   .summary { grid-template-columns: 1fr; }
   .summary div { display: flex; justify-content: space-between; align-items: center; }
   .summary span { margin: 0; }
   .session { flex-direction: column; gap: 8px; }
   .session-result, .anomaly { text-align: left; }
+  .event-row { align-items: stretch; flex-direction: column; }
 }

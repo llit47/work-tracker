@@ -106,19 +106,38 @@ Zakończony zakres:
 
 ## Phase 3 — Manual corrections
 
-**Status: NEXT**
+**Status: DONE**
 
-- dodawanie brakującego `entry` lub `exit`,
-- korekta godziny,
-- usunięcie logiczne lub oznaczenie błędnego zdarzenia,
-- jasne rozróżnienie danych automatycznych i ręcznych,
-- audytowalna historia zmian.
+Zakończony zakres:
+
+- [x] Ręczne dodawanie brakującego `entry` lub `exit`.
+- [x] Korekta efektywnego timestampu istniejącego raw eventu.
+- [x] Ignorowanie błędnego raw eventu bez jego usuwania lub aktualizacji.
+- [x] Cofanie korekty przez usunięcie wyłącznie rekordu korekty.
+- [x] Oddzielna tabela `work_event_corrections` z jawnymi typami i ograniczeniami integralności.
+- [x] Warstwa effective events: raw events + korekty → istniejący kalkulator czasu pracy.
+- [x] Widoczne rozróżnienie eventów Home Assistant, skorygowanych, zignorowanych i dodanych ręcznie.
+- [x] Korekty uwzględniają offset strefy czasowej oraz mogą przenosić sesje między dniami i miesiącami.
+- [x] Korekty od razu wpływają na sesje, anomalie oraz dzienne i miesięczne sumy.
+
+### Acceptance criteria
+
+- [x] Raw events Home Assistant nie są aktualizowane ani usuwane przez żaden endpoint korekt.
+- [x] Timestamp correction zachowuje oryginalny timestamp do audytu i używa efektywnego timestampu w obliczeniach.
+- [x] Ignored raw event pozostaje widoczny, lecz nie trafia do effective event stream.
+- [x] Manual event nie udaje eventu Home Assistant i przechodzi przez zwykłe reguły Phase 1.
+- [x] Usunięcie korekty przywraca wynik pozostałych raw events i korekt.
+- [x] Nieistniejące raw eventy, błędne typy, naiwne timestampy i sprzeczne korekty są odrzucane.
+- [x] Jednoznaczność aktywnej korekty raw eventu jest chroniona w API i bazie danych.
+- [x] Przeliczenia po korektach zachowują reguły UTC, próg 16 godzin i przypisanie do efektywnej daty wejścia.
+- [x] Migracja zachowuje istniejącą tabelę `work_events` i wszystkie jej dane.
+- [x] Frontend oferuje polskie formularze i komunikaty oraz pobiera autorytatywny summary po każdej mutacji.
 
 Raw events otrzymane z Home Assistant nie mogą być bezpowrotnie nadpisywane. Korekty powinny być osobną, możliwą do prześledzenia warstwą danych.
 
 ## Phase 4 — Pay calculation
 
-**Status: PLANNED**
+**Status: NEXT**
 
 - stawka godzinowa,
 - miesięczne wynagrodzenie,

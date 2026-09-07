@@ -8,5 +8,5 @@
     "outDir": ".test-dist",
     "rootDir": "."
   },
-  "include": ["src/monthNavigation.ts", "tests/monthNavigation.test.ts"]
+  "include": ["src/*.ts", "tests/*.test.ts"]
 }

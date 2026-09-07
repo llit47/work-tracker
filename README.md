@@ -192,6 +192,7 @@ Frontend można sprawdzić komendą:
 
 ```bash
 cd frontend
+npm test
 npm run build
 ```
 
@@ -199,7 +200,12 @@ npm run build
 
 - `POST /api/webhook/home-assistant` — przyjmuje JSON webhooka; wymaga nagłówka `X-Webhook-Token`.
 - `GET /api/work-events?year=2026&month=9` — zwraca chronologicznie zdarzenia dla wskazanego miesiąca kalendarzowego w offsetcie przekazanym przez Home Assistanta.
-- `GET /api/work-summary?year=2026&month=9` — wylicza sesje, dni, miesięczny czas pracy i anomalie na podstawie niezmienionych raw events.
+- `GET /api/work-summary?year=2026&month=9` — wylicza sesje, dni, miesięczny czas pracy i anomalie na podstawie effective events oraz zwraca metadane audytowe korekt.
+- `PUT /api/work-events/{raw_event_id}/timestamp-correction` — tworzy lub aktualizuje korektę timestampu raw eventu.
+- `PUT /api/work-events/{raw_event_id}/ignore` — wyłącza raw event z effective event stream bez modyfikowania źródłowego rekordu.
+- `POST /api/manual-events` — dodaje ręczne `entry` albo `exit` jako rekord korekty.
+- `GET /api/corrections` — zwraca aktualne korekty.
+- `DELETE /api/corrections/{correction_id}` — cofa korektę bez zmiany raw eventu.
 - `GET /api/health` — prosty status API.
 
 Przykładowy webhook:
