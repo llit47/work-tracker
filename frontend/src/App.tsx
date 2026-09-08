@@ -53,6 +53,7 @@ import {
   type PayRateFormValues,
 } from './pay'
 import {
+  dayOverviewPresentation,
   formatDuration,
   formatEventDateTime,
   formatEventTime,
@@ -312,17 +313,17 @@ function DayOverview({
         {day.items.map((item) => {
           const entry = item.events.find((event) => event.event_type === 'entry')
           const exit = item.events.find((event) => event.event_type === 'exit')
+          const presentation = dayOverviewPresentation(item.status)
           return (
             <span
               className={`day-overview-item${item.status === 'valid' ? '' : ' warning'}`}
               key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
             >
-              {item.status === 'valid' ? (
-                <>
-                  <strong>{formatSessionRange(entry?.event_timestamp ?? null, exit?.event_timestamp ?? null)}</strong>
-                  <span>{formatDuration(item.duration_seconds)}</span>
-                </>
-              ) : (
+              {presentation.showRange && (
+                <strong>{formatSessionRange(entry?.event_timestamp ?? null, exit?.event_timestamp ?? null)}</strong>
+              )}
+              {presentation.showDuration && <span>{formatDuration(item.duration_seconds)}</span>}
+              {presentation.showWarning && item.status !== 'valid' && (
                 <strong>⚠ {anomalyLabels[item.status]}</strong>
               )}
             </span>

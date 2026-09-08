@@ -109,6 +109,19 @@ async def test_settings_validation_and_alias_removal(tmp_path: Path):
                 "locations": [{"location": "Bad Location", "display_name": "Gabinet"}],
             },
         )
+        duplicate_location = await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Work Tracker",
+                "locations": [
+                    {"location": "gabinet_zabki", "display_name": "Gabinet"},
+                    {
+                        "location": "gabinet_zabki",
+                        "display_name": "Gabinet drugi",
+                    },
+                ],
+            },
+        )
         await client.put(
             "/api/application-settings",
             json={
@@ -128,6 +141,7 @@ async def test_settings_validation_and_alias_removal(tmp_path: Path):
 
     assert empty_title.status_code == 422
     assert invalid_location.status_code == 422
+    assert duplicate_location.status_code == 422
     assert removed.json()["locations"] == [
         {"location": "gabinet_zabki", "display_name": None}
     ]

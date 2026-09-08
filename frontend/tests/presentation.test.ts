@@ -1,8 +1,11 @@
 import {
+  compactTimestampOffset,
+  dayOverviewPresentation,
   formatDuration,
   formatEventDateTime,
   formatEventTime,
   formatSessionRange,
+  timestampOffset,
 } from '../src/presentation.js'
 
 function assertEqual<T>(actual: T, expected: T, message: string) {
@@ -15,6 +18,28 @@ assertEqual(formatDuration(8 * 3600 + 12 * 60 + 59), '8h 12m', 'history duration
 assertEqual(formatDuration(59), '0m', 'subminute history duration does not round up')
 assertEqual(formatDuration(119), '1m', 'history duration shows completed minutes only')
 assertEqual(formatDuration(null), '—', 'missing duration remains distinguishable')
+assertEqual(timestampOffset('2026-09-01T19:22:25+02:00'), '+02:00', 'ordinary offset is extracted')
+assertEqual(timestampOffset('2026-09-01T17:22:25Z'), '+00:00', 'UTC designator is normalized')
+assertEqual(
+  timestampOffset('2026-09-01T19:22:25+05:30:45'),
+  '+05:30:45',
+  'positive offset seconds remain available for comparison',
+)
+assertEqual(
+  timestampOffset('2026-09-01T19:22:25-03:12:30'),
+  '-03:12:30',
+  'negative offset seconds remain available for comparison',
+)
+assertEqual(
+  timestampOffset('2026-09-01T19:22:25+05:30:45.125'),
+  '+05:30:45.125',
+  'fractional offset seconds remain available for comparison',
+)
+assertEqual(
+  compactTimestampOffset('2026-09-01T19:22:25+05:30:45.125'),
+  '+05:30',
+  'display offset remains minute-precision',
+)
 assertEqual(
   formatEventTime('2026-09-01T19:22:25+02:00'),
   '19:22',
@@ -54,5 +79,61 @@ assertEqual(
   '08:00 → 20:44',
   'ordinary session remains compact',
 )
+assertEqual(
+  formatSessionRange(
+    '2026-09-01T08:00:32+05:30:45',
+    '2026-09-01T20:44:51+05:30:45',
+  ),
+  '08:00 → 20:44',
+  'identical source offsets remain hidden',
+)
+assertEqual(
+  formatSessionRange(
+    '2026-09-01T08:00:32+02:00',
+    '2026-09-01T20:44:51+01:00',
+  ),
+  '08:00 +02:00 → 20:44 +01:00',
+  'different ordinary offsets remain visible and compact',
+)
+assertEqual(
+  formatSessionRange(
+    '2026-09-01T08:00:32+05:30:15',
+    '2026-09-01T20:44:51+05:30:45',
+  ),
+  '08:00 +05:30 → 20:44 +05:30',
+  'offsets differing only in seconds still trigger offset-changing presentation',
+)
+
+assertEqual(
+  dayOverviewPresentation('valid'),
+  { showRange: true, showDuration: true, showWarning: false },
+  'valid overview presents its complete interval without a warning',
+)
+assertEqual(
+  dayOverviewPresentation('unusually_long_session'),
+  { showRange: true, showDuration: true, showWarning: true },
+  'long-session overview keeps its interval, duration, and warning',
+)
+assertEqual(
+  formatSessionRange(
+    '2026-09-01T08:00:00+02:00',
+    '2026-09-02T01:30:00+02:00',
+  ),
+  '08:00 → 02.09 01:30',
+  'long-session overview can show its complete cross-day range',
+)
+assertEqual(formatDuration(17 * 3600 + 30 * 60), '17h 30m', 'long-session overview shows duration')
+for (const status of [
+  'missing_exit',
+  'duplicate_entry',
+  'orphan_exit',
+  'ambiguous_timestamp',
+] as const) {
+  assertEqual(
+    dayOverviewPresentation(status),
+    { showRange: false, showDuration: false, showWarning: true },
+    `${status} overview does not invent a complete interval`,
+  )
+}
 
 console.log('Presentation helper tests passed.')

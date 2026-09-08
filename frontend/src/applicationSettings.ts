@@ -23,7 +23,7 @@ export function getLocationDisplayName(
   settings: ApplicationSettings,
   location: string,
 ): string {
-  return settings.locations.find((item) => item.location === location)?.display_name || location
+  return settings.locations.find((item) => item.location === location)?.display_name ?? location
 }
 
 export function validateApplicationTitle(title: string): {

@@ -9,13 +9,19 @@ export function formatDuration(totalSeconds: number | null): string {
   return parts.length > 0 ? parts.join(' ') : '0m'
 }
 
+const TIMESTAMP_OFFSET_PATTERN = /(Z|[+-]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/
+
 export function timestampOffset(timestamp: string): string {
-  const match = timestamp.match(/(Z|[+-]\d{2}:\d{2})$/)
+  const match = timestamp.match(TIMESTAMP_OFFSET_PATTERN)
   return match?.[1] === 'Z' ? '+00:00' : match?.[1] ?? ''
 }
 
+export function compactTimestampOffset(timestamp: string): string {
+  return timestampOffset(timestamp).slice(0, 6)
+}
+
 export function formatEventTime(timestamp: string, showOffset = false): string {
-  const offset = timestampOffset(timestamp)
+  const offset = compactTimestampOffset(timestamp)
   return `${timestamp.slice(11, 16)}${showOffset && offset ? ` ${offset}` : ''}`
 }
 
@@ -43,4 +49,25 @@ export function formatSessionRange(
     exit = `${exitTimestamp.slice(8, 10)}.${exitTimestamp.slice(5, 7)} ${exit}`
   }
   return `${entry} → ${exit}`
+}
+
+export type WorkItemPresentationStatus =
+  | 'valid'
+  | 'missing_exit'
+  | 'duplicate_entry'
+  | 'orphan_exit'
+  | 'unusually_long_session'
+  | 'ambiguous_timestamp'
+
+export function dayOverviewPresentation(status: WorkItemPresentationStatus): {
+  showRange: boolean
+  showDuration: boolean
+  showWarning: boolean
+} {
+  const hasCompleteInterval = status === 'valid' || status === 'unusually_long_session'
+  return {
+    showRange: hasCompleteInterval,
+    showDuration: hasCompleteInterval,
+    showWarning: status !== 'valid',
+  }
 }
