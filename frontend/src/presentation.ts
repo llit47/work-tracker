@@ -59,15 +59,96 @@ export type WorkItemPresentationStatus =
   | 'unusually_long_session'
   | 'ambiguous_timestamp'
 
-export function dayOverviewPresentation(status: WorkItemPresentationStatus): {
+export type WorkItemPresentation = {
+  status: WorkItemPresentationStatus
+  events: readonly {
+    event_type: 'entry' | 'exit'
+    event_timestamp_utc: string
+  }[]
+}
+
+export type ActiveSessionContext = {
+  dashboardStatus: 'working' | 'outside' | 'ambiguous' | null
+  currentEntryTimestampUtc: string | null
+  runningToday: boolean
+}
+
+export const workItemStatusLabels: Record<Exclude<WorkItemPresentationStatus, 'valid'>, string> = {
+  missing_exit: 'Brak wyjścia',
+  duplicate_entry: 'Niejednoznaczne wejście',
+  orphan_exit: 'Wyjście bez wejścia',
+  unusually_long_session: 'Podejrzanie długa sesja',
+  ambiguous_timestamp: 'Sprzeczne zdarzenia o tej samej godzinie',
+}
+
+function timestampsRepresentSameInstant(left: string, right: string): boolean {
+  const leftMilliseconds = Date.parse(left)
+  const rightMilliseconds = Date.parse(right)
+  return (
+    Number.isFinite(leftMilliseconds)
+    && Number.isFinite(rightMilliseconds)
+    && leftMilliseconds === rightMilliseconds
+  )
+}
+
+export function isPendingCurrentSession(
+  item: WorkItemPresentation,
+  context: ActiveSessionContext,
+): boolean {
+  if (
+    item.status !== 'missing_exit'
+    || context.dashboardStatus !== 'working'
+    || context.currentEntryTimestampUtc === null
+    || !context.runningToday
+  ) {
+    return false
+  }
+
+  const entries = item.events.filter((event) => event.event_type === 'entry')
+  const hasExit = item.events.some((event) => event.event_type === 'exit')
+  return (
+    entries.length === 1
+    && !hasExit
+    && timestampsRepresentSameInstant(
+      entries[0].event_timestamp_utc,
+      context.currentEntryTimestampUtc,
+    )
+  )
+}
+
+export function isActionableProblem(
+  item: WorkItemPresentation,
+  context: ActiveSessionContext,
+): boolean {
+  return item.status !== 'valid' && !isPendingCurrentSession(item, context)
+}
+
+export function countActionableProblems(
+  items: readonly WorkItemPresentation[],
+  context: ActiveSessionContext,
+): number {
+  return items.filter((item) => isActionableProblem(item, context)).length
+}
+
+export function dayOverviewPresentation(
+  item: WorkItemPresentation,
+  context: ActiveSessionContext,
+): {
   showRange: boolean
   showDuration: boolean
   showWarning: boolean
+  statusLabel: string | null
 } {
-  const hasCompleteInterval = status === 'valid' || status === 'unusually_long_session'
+  const pending = isPendingCurrentSession(item, context)
+  const hasCompleteInterval = item.status === 'valid' || item.status === 'unusually_long_session'
   return {
-    showRange: hasCompleteInterval,
+    showRange: hasCompleteInterval || pending,
     showDuration: hasCompleteInterval,
-    showWarning: status !== 'valid',
+    showWarning: isActionableProblem(item, context),
+    statusLabel: pending
+      ? 'Trwająca zmiana'
+      : item.status === 'valid'
+        ? null
+        : workItemStatusLabels[item.status],
   }
 }

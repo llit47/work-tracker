@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import {
   DEFAULT_APPLICATION_SETTINGS,
@@ -10,6 +10,10 @@ import {
   type ApplicationSettingsFormErrors,
 } from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
+import {
+  shouldRefreshMonthlyData,
+  type DashboardSummary,
+} from './dashboard'
 import {
   downloadMonthlyExport,
   exportLabels,
@@ -53,12 +57,16 @@ import {
   type PayRateFormValues,
 } from './pay'
 import {
+  countActionableProblems,
   dayOverviewPresentation,
   formatDuration,
   formatEventDateTime,
   formatEventTime,
   formatSessionRange,
+  isPendingCurrentSession,
   timestampOffset,
+  workItemStatusLabels,
+  type ActiveSessionContext,
 } from './presentation'
 import {
   readThemePreference,
@@ -146,14 +154,6 @@ type EventActions = {
   onIgnore: (event: WorkEvent) => void
   onUndo: (event: WorkEvent) => void
   disabled: boolean
-}
-
-const anomalyLabels: Record<Exclude<SessionStatus, 'valid'>, string> = {
-  missing_exit: 'Brak wyjścia',
-  duplicate_entry: 'Niejednoznaczne wejście',
-  orphan_exit: 'Wyjście bez wejścia',
-  unusually_long_session: 'Podejrzanie długa sesja',
-  ambiguous_timestamp: 'Sprzeczne zdarzenia o tej samej godzinie',
 }
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -249,10 +249,12 @@ function SessionItem({
   item,
   actions,
   locationName,
+  activeSessionContext,
 }: {
   item: WorkTimeItem
   actions: EventActions
   locationName: string
+  activeSessionContext: ActiveSessionContext
 }) {
   const entry = item.events.find((event) => event.event_type === 'entry')
   const exit = item.events.find((event) => event.event_type === 'exit')
@@ -272,8 +274,25 @@ function SessionItem({
         </div>
         <div className="session-result">
           <strong>{formatDuration(item.duration_seconds)}</strong>
-          {item.status !== 'valid' && <span className="anomaly">⚠ {anomalyLabels[item.status]}</span>}
+          {item.status !== 'valid' && <span className="anomaly">⚠ {workItemStatusLabels[item.status]}</span>}
         </div>
+      </article>
+    )
+  }
+
+  if (isPendingCurrentSession(item, activeSessionContext)) {
+    return (
+      <article className="session pending">
+        <div className="session-details">
+          <strong className="session-range">{formatSessionRange(entry?.event_timestamp ?? null, null)}</strong>
+          <span className="location">{locationName}</span>
+          <div className="event-list">
+            {item.events.map((event) => (
+              <EventRow key={event.id} event={event} actions={actions} showOffset={showEventOffsets} />
+            ))}
+          </div>
+        </div>
+        <span className="pending-status">Trwająca zmiana</span>
       </article>
     )
   }
@@ -288,7 +307,7 @@ function SessionItem({
         </div>
         <span className="location">{locationName}</span>
       </div>
-      <span className="anomaly">⚠ {anomalyLabels[item.status]}</span>
+      <span className="anomaly">⚠ {workItemStatusLabels[item.status]}</span>
     </article>
   )
 }
@@ -297,10 +316,12 @@ function DayOverview({
   day,
   settings,
   showIgnoredEvents,
+  activeSessionContext,
 }: {
   day: WorkDay
   settings: ApplicationSettings
   showIgnoredEvents: boolean
+  activeSessionContext: ActiveSessionContext
 }) {
   const locations = [...new Set([
     ...day.items.map((item) => item.location),
@@ -313,18 +334,18 @@ function DayOverview({
         {day.items.map((item) => {
           const entry = item.events.find((event) => event.event_type === 'entry')
           const exit = item.events.find((event) => event.event_type === 'exit')
-          const presentation = dayOverviewPresentation(item.status)
+          const presentation = dayOverviewPresentation(item, activeSessionContext)
           return (
             <span
-              className={`day-overview-item${item.status === 'valid' ? '' : ' warning'}`}
+              className={`day-overview-item${presentation.showWarning ? ' warning' : presentation.statusLabel ? ' pending' : ''}`}
               key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
             >
               {presentation.showRange && (
                 <strong>{formatSessionRange(entry?.event_timestamp ?? null, exit?.event_timestamp ?? null)}</strong>
               )}
               {presentation.showDuration && <span>{formatDuration(item.duration_seconds)}</span>}
-              {presentation.showWarning && item.status !== 'valid' && (
-                <strong>⚠ {anomalyLabels[item.status]}</strong>
+              {presentation.statusLabel && (
+                <strong>{presentation.showWarning ? '⚠ ' : ''}{presentation.statusLabel}</strong>
               )}
             </span>
           )
@@ -359,6 +380,8 @@ function findSummaryLocation(summary: WorkSummary | null): string {
 
 function App() {
   const [today, setToday] = useState(() => currentMonth())
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+  const previousDashboardSummary = useRef<DashboardSummary | null>(null)
   const [initialUrlMonth] = useState(() => readMonthFromSearch(window.location.search, today))
   const [selectedMonth, setSelectedMonth] = useState(initialUrlMonth.selection)
   const [summary, setSummary] = useState<WorkSummary | null>(null)
@@ -492,6 +515,17 @@ function App() {
   useEffect(() => {
     if (initialUrlMonth.shouldNormalize) writeMonthToUrl(initialUrlMonth.selection, 'replace')
   }, [initialUrlMonth])
+
+  useEffect(() => {
+    if (dashboardSummary === null) return
+
+    const previousDashboard = previousDashboardSummary.current
+    previousDashboardSummary.current = dashboardSummary
+    if (!shouldRefreshMonthlyData(previousDashboard, dashboardSummary)) return
+
+    setRetryRequest((request) => request + 1)
+    setPayRetryRequest((request) => request + 1)
+  }, [dashboardSummary])
 
   useEffect(() => {
     const handlePopState = () => {
@@ -853,6 +887,17 @@ function App() {
       || timestampHasAmbiguousLocalTime(correctionForm.event.event_timestamp)
     )
   const visibleDays = summary ? getVisibleDays(summary.days, showIgnoredEvents) : []
+  const activeSessionContext: ActiveSessionContext = {
+    dashboardStatus: dashboardSummary?.status ?? null,
+    currentEntryTimestampUtc: dashboardSummary?.current_session?.entry_timestamp_utc ?? null,
+    runningToday: dashboardSummary !== null && dashboardSummary.today.running_duration_seconds !== null,
+  }
+  const visibleProblemCount = summary
+    ? summary.days.reduce(
+        (total, day) => total + countActionableProblems(day.items, activeSessionContext),
+        0,
+      )
+    : 0
   const latestPayRate = payRates.length > 0 ? payRates[payRates.length - 1] : null
   const usedRateDescription = paySummary
     ? describeRatesUsed(paySummary.rates_used, paySummary.currency)
@@ -862,7 +907,11 @@ function App() {
     <main className="page">
       <section className="card" aria-live="polite">
         <h1>{applicationSettings.application_title}</h1>
-        <DashboardPanel apiBase={apiBase} refreshRequest={dashboardRefreshRequest} />
+        <DashboardPanel
+          apiBase={apiBase}
+          refreshRequest={dashboardRefreshRequest}
+          onSummaryChange={setDashboardSummary}
+        />
         <nav className="month-navigation" aria-label="Nawigacja miesiąca">
           <button
             className="month-arrow"
@@ -1218,7 +1267,7 @@ function App() {
               <small>{payState === 'loading' ? 'Ładowanie…' : usedRateDescription}</small>
             </div>
             <div><span>Średnio dziennie</span><strong>{formatDuration(averageDayDuration)}</strong></div>
-            <div><span>Problemy</span><strong className={summary.anomaly_count > 0 ? 'problem-count' : ''}>{summary.anomaly_count}</strong></div>
+            <div><span>Problemy</span><strong className={visibleProblemCount > 0 ? 'problem-count' : ''}>{visibleProblemCount}</strong></div>
           </section>
 
           {payState === 'error' && (
@@ -1243,57 +1292,62 @@ function App() {
 
           {visibleDays.length === 0 && <p className="message">Brak zdarzeń w tym miesiącu.</p>}
           <div className="days">
-            {visibleDays.map((day) => (
-              <details className={`day${day.anomaly_count > 0 ? ' has-warning' : ''}`} key={day.date}>
-                <summary className="day-heading">
-                  <div className="day-title">
-                    <h3>{formatDay(day.date)}</h3>
-                    {day.anomaly_count > 0 && (
-                      <span className="day-warning">⚠ Wymaga uwagi ({day.anomaly_count})</span>
-                    )}
-                    <DayOverview
-                      day={day}
-                      settings={applicationSettings}
-                      showIgnoredEvents={showIgnoredEvents}
-                    />
-                  </div>
-                  <div className="day-totals">
-                    <span>Czas: <strong>{formatDuration(day.total_duration_seconds)}</strong></span>
-                    <span>
-                      Wynagrodzenie:{' '}
-                      <strong>
-                        {payState === 'ready' && paySummary
-                          ? formatMoney(findDailyPay(paySummary.days, day.date), paySummary.currency)
-                          : '—'}
-                      </strong>
-                    </span>
-                    <small className="disclosure-label">Szczegóły</small>
-                  </div>
-                </summary>
-                <div className="day-details">
-                  <div className="sessions">
-                    {day.items.map((item) => (
-                      <SessionItem
-                        key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
-                        item={item}
-                        actions={eventActions}
-                        locationName={getLocationDisplayName(applicationSettings, item.location)}
+            {visibleDays.map((day) => {
+              const dayProblemCount = countActionableProblems(day.items, activeSessionContext)
+              return (
+                <details className={`day${dayProblemCount > 0 ? ' has-warning' : ''}`} key={day.date}>
+                  <summary className="day-heading">
+                    <div className="day-title">
+                      <h3>{formatDay(day.date)}</h3>
+                      {dayProblemCount > 0 && (
+                        <span className="day-warning">⚠ Wymaga uwagi ({dayProblemCount})</span>
+                      )}
+                      <DayOverview
+                        day={day}
+                        settings={applicationSettings}
+                        showIgnoredEvents={showIgnoredEvents}
+                        activeSessionContext={activeSessionContext}
                       />
-                    ))}
-                    {day.ignored_events
-                      .filter((event) => isEventVisible(event, showIgnoredEvents))
-                      .map((event) => (
-                        <article className="session ignored-session" key={`ignored-${event.id}`}>
-                          <div className="session-details">
-                            <EventRow event={event} actions={eventActions} />
-                            <span className="location">{getLocationDisplayName(applicationSettings, event.location)}</span>
-                          </div>
-                        </article>
+                    </div>
+                    <div className="day-totals">
+                      <span>Czas: <strong>{formatDuration(day.total_duration_seconds)}</strong></span>
+                      <span>
+                        Wynagrodzenie:{' '}
+                        <strong>
+                          {payState === 'ready' && paySummary
+                            ? formatMoney(findDailyPay(paySummary.days, day.date), paySummary.currency)
+                            : '—'}
+                        </strong>
+                      </span>
+                      <small className="disclosure-label">Szczegóły</small>
+                    </div>
+                  </summary>
+                  <div className="day-details">
+                    <div className="sessions">
+                      {day.items.map((item) => (
+                        <SessionItem
+                          key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
+                          item={item}
+                          actions={eventActions}
+                          locationName={getLocationDisplayName(applicationSettings, item.location)}
+                          activeSessionContext={activeSessionContext}
+                        />
                       ))}
+                      {day.ignored_events
+                        .filter((event) => isEventVisible(event, showIgnoredEvents))
+                        .map((event) => (
+                          <article className="session ignored-session" key={`ignored-${event.id}`}>
+                            <div className="session-details">
+                              <EventRow event={event} actions={eventActions} />
+                              <span className="location">{getLocationDisplayName(applicationSettings, event.location)}</span>
+                            </div>
+                          </article>
+                        ))}
+                    </div>
                   </div>
-                </div>
-              </details>
-            ))}
+                </details>
+              )
+            })}
           </div>
         </>}
       </section>

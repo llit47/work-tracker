@@ -3,10 +3,13 @@ import {
   LIVE_TIMER_INTERVAL_MS,
   advanceElapsedSeconds,
   advanceTodayEffectiveDuration,
+  dashboardDataFingerprint,
   dashboardStatusPresentation,
   formatDashboardDuration,
   formatLiveTimer,
   loadDashboard,
+  shouldRefreshMonthlyData,
+  type DashboardSummary,
 } from '../src/dashboard.js'
 import type { FetchLike } from '../src/pay.js'
 
@@ -64,6 +67,244 @@ assertEqual(
 )
 assertEqual(DASHBOARD_POLL_INTERVAL_MS, 30_000, 'dashboard uses modest 30-second polling')
 assertEqual(LIVE_TIMER_INTERVAL_MS, 1_000, 'internal live elapsed time remains second-precise')
+
+const workingSnapshot: DashboardSummary = {
+  status: 'working',
+  generated_at: '2026-09-08T10:00:00Z',
+  current_session: {
+    entry_timestamp: '2026-09-08T08:00:00+02:00',
+    entry_timestamp_utc: '2026-09-08T06:00:00Z',
+    elapsed_seconds: 14400,
+  },
+  today: {
+    date: '2026-09-08',
+    completed_duration_seconds: 0,
+    running_duration_seconds: 14400,
+    effective_duration_seconds: 14400,
+  },
+  month: {
+    year: 2026,
+    month: 9,
+    completed_duration_seconds: 0,
+    work_days: 0,
+    pay: '0.00',
+    currency: 'PLN',
+  },
+}
+const sameWorkingSessionLater: DashboardSummary = {
+  ...workingSnapshot,
+  generated_at: '2026-09-08T10:00:30Z',
+  current_session: {
+    ...workingSnapshot.current_session!,
+    elapsed_seconds: 14430,
+  },
+  today: {
+    ...workingSnapshot.today,
+    running_duration_seconds: 14430,
+    effective_duration_seconds: 14430,
+  },
+}
+assertEqual(
+  dashboardDataFingerprint({
+    ...workingSnapshot,
+    generated_at: '2026-09-08T10:00:30Z',
+  }),
+  dashboardDataFingerprint(workingSnapshot),
+  'generated_at alone does not change the semantic fingerprint',
+)
+assertEqual(
+  dashboardDataFingerprint(sameWorkingSessionLater),
+  dashboardDataFingerprint(workingSnapshot),
+  'running elapsed values do not change the semantic fingerprint',
+)
+assertEqual(
+  shouldRefreshMonthlyData(workingSnapshot, {
+    ...workingSnapshot,
+    generated_at: '2026-09-08T10:00:30Z',
+  }),
+  false,
+  'generated_at alone does not trigger monthly synchronization',
+)
+
+const outsideSnapshot: DashboardSummary = {
+  ...workingSnapshot,
+  status: 'outside',
+  current_session: null,
+  today: {
+    ...workingSnapshot.today,
+    running_duration_seconds: null,
+    effective_duration_seconds: 0,
+  },
+}
+assertEqual(
+  shouldRefreshMonthlyData(workingSnapshot, outsideSnapshot),
+  true,
+  'working to outside triggers monthly coherence refresh',
+)
+assertEqual(
+  shouldRefreshMonthlyData(outsideSnapshot, workingSnapshot),
+  true,
+  'outside to working triggers monthly coherence refresh',
+)
+
+const completedBetweenPolls: DashboardSummary = {
+  ...outsideSnapshot,
+  month: {
+    ...outsideSnapshot.month,
+    completed_duration_seconds: 8 * 3600,
+    work_days: 1,
+    pay: '400.00',
+  },
+}
+assertEqual(
+  shouldRefreshMonthlyData(outsideSnapshot, completedBetweenPolls),
+  true,
+  'outside to outside with a completed session still triggers refresh',
+)
+assertEqual(
+  shouldRefreshMonthlyData(
+    outsideSnapshot,
+    {
+      ...outsideSnapshot,
+      month: { ...outsideSnapshot.month, work_days: 1 },
+    },
+  ),
+  true,
+  'work-day changes trigger refresh',
+)
+assertEqual(
+  shouldRefreshMonthlyData(
+    outsideSnapshot,
+    {
+      ...outsideSnapshot,
+      month: { ...outsideSnapshot.month, pay: '25.00' },
+    },
+  ),
+  true,
+  'monthly pay changes trigger refresh',
+)
+
+for (const status of ['ambiguous', 'working'] as const) {
+  const changedStatus: DashboardSummary = {
+    ...outsideSnapshot,
+    status,
+    current_session: status === 'working' ? workingSnapshot.current_session : null,
+    today: status === 'working' ? workingSnapshot.today : outsideSnapshot.today,
+  }
+  assertEqual(
+    shouldRefreshMonthlyData(outsideSnapshot, changedStatus),
+    true,
+    `outside to ${status} triggers refresh`,
+  )
+}
+
+const ambiguousSnapshot: DashboardSummary = {
+  ...outsideSnapshot,
+  status: 'ambiguous',
+}
+assertEqual(
+  shouldRefreshMonthlyData(ambiguousSnapshot, workingSnapshot),
+  true,
+  'ambiguous to working triggers refresh',
+)
+
+assertEqual(
+  shouldRefreshMonthlyData(null, workingSnapshot),
+  true,
+  'first authoritative current-month snapshot triggers one coherence refresh',
+)
+assertEqual(
+  shouldRefreshMonthlyData(null, {
+    ...outsideSnapshot,
+    month: { ...outsideSnapshot.month, month: 10 },
+  }),
+  true,
+  'first authoritative snapshot refreshes the selected month even when it differs from dashboard month',
+)
+assertEqual(
+  shouldRefreshMonthlyData(workingSnapshot, sameWorkingSessionLater),
+  false,
+  'repeated semantic snapshot does not trigger another refresh',
+)
+assertEqual(
+  shouldRefreshMonthlyData(workingSnapshot, {
+    ...workingSnapshot,
+    current_session: {
+      ...workingSnapshot.current_session!,
+      entry_timestamp: '2026-09-08T09:00:00+02:00',
+      entry_timestamp_utc: '2026-09-08T07:00:00Z',
+    },
+  }),
+  true,
+  'a changed active-session identity triggers synchronization',
+)
+assertEqual(
+  shouldRefreshMonthlyData(outsideSnapshot, workingSnapshot),
+  true,
+  'meaningful dashboard transitions refresh whichever month is currently selected',
+)
+
+const overnightWorkingSnapshot: DashboardSummary = {
+  ...workingSnapshot,
+  current_session: {
+    ...workingSnapshot.current_session!,
+    entry_timestamp: '2026-09-30T23:00:00+02:00',
+    entry_timestamp_utc: '2026-09-30T21:00:00Z',
+  },
+  today: {
+    ...workingSnapshot.today,
+    date: '2026-09-30',
+  },
+}
+const overnightClosedSnapshot: DashboardSummary = {
+  ...overnightWorkingSnapshot,
+  status: 'outside',
+  current_session: null,
+  today: {
+    ...overnightWorkingSnapshot.today,
+    date: '2026-10-01',
+    running_duration_seconds: null,
+    effective_duration_seconds: 0,
+  },
+  month: {
+    ...overnightWorkingSnapshot.month,
+    month: 10,
+    completed_duration_seconds: 0,
+    work_days: 0,
+    pay: '0.00',
+  },
+}
+assertEqual(
+  shouldRefreshMonthlyData(null, overnightWorkingSnapshot),
+  true,
+  'the first observed overnight snapshot triggers a coherence refresh',
+)
+assertEqual(
+  shouldRefreshMonthlyData(overnightWorkingSnapshot, overnightClosedSnapshot),
+  true,
+  'closing an observed cross-month shift triggers a coherence refresh',
+)
+
+const septemberOutsideSnapshot: DashboardSummary = {
+  ...outsideSnapshot,
+  month: { ...outsideSnapshot.month, month: 9 },
+}
+const octoberOutsideSnapshot: DashboardSummary = {
+  ...outsideSnapshot,
+  generated_at: '2026-10-01T00:00:30Z',
+  today: { ...outsideSnapshot.today, date: '2026-10-01' },
+  month: { ...outsideSnapshot.month, month: 10 },
+}
+assertEqual(
+  shouldRefreshMonthlyData(septemberOutsideSnapshot, octoberOutsideSnapshot),
+  true,
+  'an unobserved fast cross-month entry and exit still triggers synchronization',
+)
+assertEqual(
+  shouldRefreshMonthlyData(null, octoberOutsideSnapshot),
+  true,
+  'the first snapshot after an unobserved cross-month close refreshes the selected month',
+)
 
 let requestCount = 0
 let requestedUrl = ''

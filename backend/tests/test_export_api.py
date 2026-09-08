@@ -102,6 +102,46 @@ async def test_csv_and_pdf_export_endpoints_return_downloadable_monthly_reports(
 
 
 @pytest.mark.anyio
+async def test_exports_use_latest_location_alias_without_changing_raw_history(tmp_path: Path):
+    app = make_app(tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await add_event(client, "entry", "2026-09-06T08:00:00+02:00")
+        await add_event(client, "exit", "2026-09-06T16:00:00+02:00")
+        first_settings = await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Work Tracker",
+                "locations": [
+                    {
+                        "location": "gabinet_zabki",
+                        "display_name": "ARTE Stomatologia",
+                    }
+                ],
+            },
+        )
+        first_csv = await client.get("/api/export/monthly.csv?year=2026&month=9")
+        changed_settings = await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Work Tracker",
+                "locations": [
+                    {"location": "gabinet_zabki", "display_name": "Nowa nazwa"}
+                ],
+            },
+        )
+        changed_csv = await client.get("/api/export/monthly.csv?year=2026&month=9")
+        raw_events = await client.get("/api/work-events?year=2026&month=9")
+
+    first_rows = list(reader(StringIO(first_csv.content.decode("utf-8-sig")), delimiter=";"))
+    changed_rows = list(reader(StringIO(changed_csv.content.decode("utf-8-sig")), delimiter=";"))
+    assert first_settings.status_code == 200
+    assert changed_settings.status_code == 200
+    assert first_rows[1][4] == "ARTE Stomatologia"
+    assert changed_rows[1][4] == "Nowa nazwa"
+    assert {item["location"] for item in raw_events.json()} == {"gabinet_zabki"}
+
+
+@pytest.mark.anyio
 async def test_empty_month_exports_header_only_csv_and_valid_pdf(tmp_path: Path):
     app = make_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

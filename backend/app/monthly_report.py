@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import ROUND_DOWN, Decimal
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from .pay import (
     MONEY_QUANTUM,
@@ -25,6 +25,7 @@ class ReportSession:
     exit_timestamp: datetime
     duration_seconds: int
     location: str
+    display_location: str
     hourly_rate: Decimal
     currency: str
     pay: Decimal
@@ -43,6 +44,7 @@ class ReportAnomalyEvent:
 class ReportAnomaly:
     date: date
     location: str
+    display_location: str
     status: SessionStatus
     events: tuple[ReportAnomalyEvent, ...]
 
@@ -69,6 +71,7 @@ class _ReportSessionDraft:
     exit_timestamp: datetime
     duration_seconds: int
     location: str
+    display_location: str
     hourly_rate: Decimal
     currency: str
     exact_pay: Decimal
@@ -126,12 +129,14 @@ def build_monthly_report(
     year: int,
     month: int,
     generated_at: datetime,
+    location_display_names: Mapping[str, str] | None = None,
 ) -> MonthlyReport:
     """Build one authoritative model shared by CSV and PDF renderers."""
     event_list = tuple(events)
     ordered_rates = sorted(rates, key=lambda rate: (rate.effective_from, rate.id))
     work_summary = calculate_monthly_work_time(event_list, year, month)
     pay_summary = calculate_monthly_pay(work_summary, ordered_rates)
+    display_names = location_display_names or {}
 
     session_drafts: list[_ReportSessionDraft] = []
     anomalies: list[ReportAnomaly] = []
@@ -150,6 +155,7 @@ def build_monthly_report(
                         exit_timestamp=exit_event.event_timestamp,
                         duration_seconds=item.duration_seconds,
                         location=item.location,
+                        display_location=display_names.get(item.location, item.location),
                         hourly_rate=rate.hourly_rate,
                         currency=rate.currency,
                         exact_pay=calculate_session_pay(item.duration_seconds, rate),
@@ -163,6 +169,7 @@ def build_monthly_report(
                 ReportAnomaly(
                     date=item.local_date,
                     location=item.location,
+                    display_location=display_names.get(item.location, item.location),
                     status=item.status,
                     events=tuple(
                         ReportAnomalyEvent(
@@ -185,6 +192,7 @@ def build_monthly_report(
             exit_timestamp=draft.exit_timestamp,
             duration_seconds=draft.duration_seconds,
             location=draft.location,
+            display_location=draft.display_location,
             hourly_rate=draft.hourly_rate,
             currency=draft.currency,
             pay=allocated_pay,
