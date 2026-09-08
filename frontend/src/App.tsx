@@ -11,7 +11,6 @@ import {
 } from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
 import {
-  dashboardDataFingerprint,
   shouldRefreshMonthlyData,
   type DashboardSummary,
 } from './dashboard'
@@ -382,7 +381,7 @@ function findSummaryLocation(summary: WorkSummary | null): string {
 function App() {
   const [today, setToday] = useState(() => currentMonth())
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
-  const lastDashboardFingerprint = useRef<string | null>(null)
+  const previousDashboardSummary = useRef<DashboardSummary | null>(null)
   const [initialUrlMonth] = useState(() => readMonthFromSearch(window.location.search, today))
   const [selectedMonth, setSelectedMonth] = useState(initialUrlMonth.selection)
   const [summary, setSummary] = useState<WorkSummary | null>(null)
@@ -520,9 +519,9 @@ function App() {
   useEffect(() => {
     if (dashboardSummary === null) return
 
-    const previousFingerprint = lastDashboardFingerprint.current
-    lastDashboardFingerprint.current = dashboardDataFingerprint(dashboardSummary)
-    if (!shouldRefreshMonthlyData(previousFingerprint, dashboardSummary, selectedMonth)) return
+    const previousDashboard = previousDashboardSummary.current
+    previousDashboardSummary.current = dashboardSummary
+    if (!shouldRefreshMonthlyData(previousDashboard, dashboardSummary, selectedMonth)) return
 
     setRetryRequest((request) => request + 1)
     setPayRetryRequest((request) => request + 1)

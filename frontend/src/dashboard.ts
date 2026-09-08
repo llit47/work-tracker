@@ -58,15 +58,40 @@ export function dashboardDataFingerprint(dashboard: DashboardSummary): string {
 }
 
 export function shouldRefreshMonthlyData(
-  previousFingerprint: string | null,
+  previousDashboard: DashboardSummary | null,
   dashboard: DashboardSummary,
   selectedMonth: { year: number; month: number },
 ): boolean {
+  const previousFingerprint = previousDashboard
+    ? dashboardDataFingerprint(previousDashboard)
+    : null
+  if (previousFingerprint === dashboardDataFingerprint(dashboard)) return false
+
+  const entryMonths = [previousDashboard, dashboard]
+    .map((snapshot) => dashboardEntryMonth(snapshot))
+    .filter((month): month is { year: number; month: number } => month !== null)
   return (
-    selectedMonth.year === dashboard.month.year
-    && selectedMonth.month === dashboard.month.month
-    && previousFingerprint !== dashboardDataFingerprint(dashboard)
+    isSameCalendarMonth(selectedMonth, dashboard.month)
+    || entryMonths.some((month) => isSameCalendarMonth(selectedMonth, month))
   )
+}
+
+function dashboardEntryMonth(
+  dashboard: DashboardSummary | null,
+): { year: number; month: number } | null {
+  const timestamp = dashboard?.current_session?.entry_timestamp
+  const match = timestamp?.match(/^(\d{4})-(\d{2})-/)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  return month >= 1 && month <= 12 ? { year, month } : null
+}
+
+function isSameCalendarMonth(
+  left: { year: number; month: number },
+  right: { year: number; month: number },
+): boolean {
+  return left.year === right.year && left.month === right.month
 }
 
 export const dashboardStatusPresentation: Record<DashboardStatus, {

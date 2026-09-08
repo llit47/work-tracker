@@ -130,7 +130,7 @@ const outsideSnapshot: DashboardSummary = {
 }
 assertEqual(
   shouldRefreshMonthlyData(
-    dashboardDataFingerprint(workingSnapshot),
+    workingSnapshot,
     outsideSnapshot,
     { year: 2026, month: 9 },
   ),
@@ -139,7 +139,7 @@ assertEqual(
 )
 assertEqual(
   shouldRefreshMonthlyData(
-    dashboardDataFingerprint(outsideSnapshot),
+    outsideSnapshot,
     workingSnapshot,
     { year: 2026, month: 9 },
   ),
@@ -158,7 +158,7 @@ const completedBetweenPolls: DashboardSummary = {
 }
 assertEqual(
   shouldRefreshMonthlyData(
-    dashboardDataFingerprint(outsideSnapshot),
+    outsideSnapshot,
     completedBetweenPolls,
     { year: 2026, month: 9 },
   ),
@@ -167,7 +167,7 @@ assertEqual(
 )
 assertEqual(
   shouldRefreshMonthlyData(
-    dashboardDataFingerprint(outsideSnapshot),
+    outsideSnapshot,
     {
       ...outsideSnapshot,
       month: { ...outsideSnapshot.month, work_days: 1 },
@@ -179,7 +179,7 @@ assertEqual(
 )
 assertEqual(
   shouldRefreshMonthlyData(
-    dashboardDataFingerprint(outsideSnapshot),
+    outsideSnapshot,
     {
       ...outsideSnapshot,
       month: { ...outsideSnapshot.month, pay: '25.00' },
@@ -199,7 +199,7 @@ for (const status of ['ambiguous', 'working'] as const) {
   }
   assertEqual(
     shouldRefreshMonthlyData(
-      dashboardDataFingerprint(outsideSnapshot),
+      outsideSnapshot,
       changedStatus,
       { year: 2026, month: 9 },
     ),
@@ -214,7 +214,7 @@ const ambiguousSnapshot: DashboardSummary = {
 }
 assertEqual(
   shouldRefreshMonthlyData(
-    dashboardDataFingerprint(ambiguousSnapshot),
+    ambiguousSnapshot,
     workingSnapshot,
     { year: 2026, month: 9 },
   ),
@@ -222,25 +222,82 @@ assertEqual(
   'ambiguous to working triggers refresh',
 )
 
-const workingFingerprint = dashboardDataFingerprint(workingSnapshot)
 assertEqual(
   shouldRefreshMonthlyData(null, workingSnapshot, { year: 2026, month: 9 }),
   true,
   'first authoritative current-month snapshot triggers one coherence refresh',
 )
 assertEqual(
-  shouldRefreshMonthlyData(workingFingerprint, sameWorkingSessionLater, { year: 2026, month: 9 }),
+  shouldRefreshMonthlyData(workingSnapshot, sameWorkingSessionLater, { year: 2026, month: 9 }),
   false,
   'repeated semantic snapshot does not trigger another refresh',
 )
 assertEqual(
   shouldRefreshMonthlyData(
-    dashboardDataFingerprint(outsideSnapshot),
+    outsideSnapshot,
     workingSnapshot,
     { year: 2026, month: 8 },
   ),
   false,
   'dashboard transitions do not refresh a selected historical month',
+)
+
+const overnightWorkingSnapshot: DashboardSummary = {
+  ...workingSnapshot,
+  current_session: {
+    ...workingSnapshot.current_session!,
+    entry_timestamp: '2026-09-30T23:00:00+02:00',
+    entry_timestamp_utc: '2026-09-30T21:00:00Z',
+  },
+  today: {
+    ...workingSnapshot.today,
+    date: '2026-10-01',
+    running_duration_seconds: null,
+    effective_duration_seconds: 0,
+  },
+  month: {
+    ...workingSnapshot.month,
+    year: 2026,
+    month: 10,
+  },
+}
+const overnightClosedSnapshot: DashboardSummary = {
+  ...overnightWorkingSnapshot,
+  status: 'outside',
+  current_session: null,
+  month: {
+    ...overnightWorkingSnapshot.month,
+    completed_duration_seconds: 0,
+    work_days: 0,
+    pay: '0.00',
+  },
+}
+assertEqual(
+  shouldRefreshMonthlyData(
+    null,
+    overnightWorkingSnapshot,
+    { year: 2026, month: 9 },
+  ),
+  true,
+  'the first overnight snapshot refreshes its selected canonical entry month',
+)
+assertEqual(
+  shouldRefreshMonthlyData(
+    overnightWorkingSnapshot,
+    overnightClosedSnapshot,
+    { year: 2026, month: 9 },
+  ),
+  true,
+  'closing an overnight shift refreshes its canonical entry month',
+)
+assertEqual(
+  shouldRefreshMonthlyData(
+    overnightWorkingSnapshot,
+    overnightClosedSnapshot,
+    { year: 2026, month: 8 },
+  ),
+  false,
+  'an unrelated historical month remains unaffected by an overnight close',
 )
 
 let requestCount = 0

@@ -251,6 +251,11 @@ const invalidTimestampItem: WorkItemPresentation = {
   events: [{ event_type: 'entry', event_timestamp_utc: 'not-a-timestamp' }],
 }
 assertEqual(
+  isPendingCurrentSession({ status: 'missing_exit', events: [] }, activeContext),
+  false,
+  'a missing entry timestamp fails safe',
+)
+assertEqual(
   isPendingCurrentSession(invalidTimestampItem, activeContext),
   false,
   'an invalid entry timestamp fails safe without throwing',
