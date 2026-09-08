@@ -12,6 +12,7 @@ from .work_time import SessionStatus
 LOCATION_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,99}$")
 CURRENCY_PATTERN = re.compile(r"^[A-Za-z]{3}$")
 MAX_HOURLY_RATE = Decimal("1000000.00")
+MAX_PRESENTATION_TEXT_LENGTH = 100
 
 
 class EventType(str, Enum):
@@ -247,6 +248,57 @@ class DashboardResponse(BaseModel):
     current_session: CurrentSessionResponse | None
     today: TodayDashboardResponse
     month: MonthDashboardResponse
+
+
+class LocationPresentationSetting(BaseModel):
+    location: str = Field(min_length=1, max_length=100)
+    display_name: str | None = Field(default=None, max_length=MAX_PRESENTATION_TEXT_LENGTH)
+
+    @field_validator("location")
+    @classmethod
+    def validate_location(cls, value: str) -> str:
+        if not LOCATION_PATTERN.fullmatch(value):
+            raise ValueError("location must use lowercase letters, digits, and underscores")
+        return value
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class ApplicationSettingsResponse(BaseModel):
+    application_title: str
+    locations: list[LocationPresentationSetting]
+
+
+class ApplicationSettingsUpdate(BaseModel):
+    application_title: str = Field(
+        min_length=1,
+        max_length=MAX_PRESENTATION_TEXT_LENGTH,
+    )
+    locations: list[LocationPresentationSetting] = Field(default_factory=list)
+
+    @field_validator("application_title")
+    @classmethod
+    def normalize_application_title(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("application_title must not be empty")
+        return normalized
+
+    @field_validator("locations")
+    @classmethod
+    def reject_duplicate_locations(
+        cls, values: list[LocationPresentationSetting]
+    ) -> list[LocationPresentationSetting]:
+        locations = [value.location for value in values]
+        if len(locations) != len(set(locations)):
+            raise ValueError("locations must not contain duplicate identifiers")
+        return values
 
 
 def validate_aware_timestamp(value: datetime) -> datetime:

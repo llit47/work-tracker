@@ -11,6 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .application_settings import (
+    APPLICATION_SETTINGS_ID,
+    ApplicationPresentationSettings,
+    load_application_settings,
+)
 from .config import Settings, get_settings
 from .database import build_session_factory, get_session
 from .dashboard import DashboardSummary, calculate_dashboard
@@ -20,7 +25,14 @@ from .corrections import (
     EffectiveEventStream,
     build_effective_event_stream,
 )
-from .models import CorrectionType, PayRate, WorkEvent, WorkEventCorrection
+from .models import (
+    ApplicationSetting,
+    CorrectionType,
+    LocationDisplayName,
+    PayRate,
+    WorkEvent,
+    WorkEventCorrection,
+)
 from .monthly_report import MonthlyReport, build_monthly_report
 from .pay import (
     MixedCurrenciesError,
@@ -31,6 +43,8 @@ from .pay import (
 )
 from .report_renderers import render_monthly_report_csv, render_monthly_report_pdf
 from .schemas import (
+    ApplicationSettingsResponse,
+    ApplicationSettingsUpdate,
     CorrectionResponse,
     DashboardResponse,
     EffectiveWorkEventResponse,
@@ -38,6 +52,7 @@ from .schemas import (
     ManualEventRequest,
     MonthlyPaySummaryResponse,
     MonthlyWorkSummaryResponse,
+    LocationPresentationSetting,
     PayRateRequest,
     PayRateResponse,
     TimestampCorrectionRequest,
@@ -85,6 +100,21 @@ def _to_pay_rate_record(rate: PayRate) -> PayRateRecord:
         effective_from=rate.effective_from,
         hourly_rate=rate.hourly_rate,
         currency=rate.currency,
+    )
+
+
+def _to_application_settings_response(
+    settings_data: ApplicationPresentationSettings,
+) -> ApplicationSettingsResponse:
+    return ApplicationSettingsResponse(
+        application_title=settings_data.application_title,
+        locations=[
+            LocationPresentationSetting(
+                location=item.location,
+                display_name=item.display_name,
+            )
+            for item in settings_data.locations
+        ],
     )
 
 
@@ -352,6 +382,51 @@ def create_app(
     def list_pay_rates(session: Session = Depends(get_session)) -> list[PayRate]:
         statement = select(PayRate).order_by(PayRate.effective_from.asc(), PayRate.id.asc())
         return list(session.scalars(statement))
+
+    @app.get("/api/application-settings", response_model=ApplicationSettingsResponse)
+    def get_application_settings(
+        session: Session = Depends(get_session),
+    ) -> ApplicationSettingsResponse:
+        return _to_application_settings_response(load_application_settings(session))
+
+    @app.put("/api/application-settings", response_model=ApplicationSettingsResponse)
+    def update_application_settings(
+        payload: ApplicationSettingsUpdate,
+        session: Session = Depends(get_session),
+    ) -> ApplicationSettingsResponse:
+        now = datetime.now(timezone.utc)
+        stored_settings = session.get(ApplicationSetting, APPLICATION_SETTINGS_ID)
+        if stored_settings is None:
+            stored_settings = ApplicationSetting(
+                id=APPLICATION_SETTINGS_ID,
+                application_title=payload.application_title,
+                updated_at=now,
+            )
+            session.add(stored_settings)
+        else:
+            stored_settings.application_title = payload.application_title
+            stored_settings.updated_at = now
+
+        for location_setting in payload.locations:
+            stored_alias = session.get(LocationDisplayName, location_setting.location)
+            if location_setting.display_name is None:
+                if stored_alias is not None:
+                    session.delete(stored_alias)
+                continue
+            if stored_alias is None:
+                session.add(
+                    LocationDisplayName(
+                        location=location_setting.location,
+                        display_name=location_setting.display_name,
+                        updated_at=now,
+                    )
+                )
+            else:
+                stored_alias.display_name = location_setting.display_name
+                stored_alias.updated_at = now
+
+        session.commit()
+        return _to_application_settings_response(load_application_settings(session))
 
     @app.post(
         "/api/pay-rates",
