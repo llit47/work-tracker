@@ -155,10 +155,47 @@ def test_report_uses_current_location_alias_for_csv_and_pdf_presentation():
         location_display_names={"gabinet_zabki": "Nowa nazwa"},
     )
     fallback = report(events)
+    fallback_csv_rows = list(
+        reader(
+            StringIO(render_monthly_report_csv(fallback).decode("utf-8-sig")),
+            delimiter=";",
+        )
+    )
 
     assert changed.sessions[0].display_location == "Nowa nazwa"
     assert fallback.sessions[0].display_location == "gabinet_zabki"
+    assert fallback_csv_rows[1][4] == "gabinet_zabki"
     assert events[0].location == "gabinet_zabki"
+
+
+@pytest.mark.parametrize("alias", ["=SUM(1+1)", "+123", "-123", "@something"])
+def test_csv_neutralizes_formula_prefixed_location_aliases_only(alias):
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-06T08:00:00+02:00"),
+            event(2, "exit", "2026-09-06T16:00:00+02:00"),
+            event(3, "exit", "2026-09-07T16:00:00+02:00"),
+        ],
+        location_display_names={"gabinet_zabki": alias},
+    )
+    csv_rows = list(
+        reader(
+            StringIO(render_monthly_report_csv(monthly_report).decode("utf-8-sig")),
+            delimiter=";",
+        )
+    )
+
+    assert [row[4] for row in csv_rows[1:]] == [f"'{alias}", f"'{alias}"]
+    assert monthly_report.sessions[0].location == "gabinet_zabki"
+    assert monthly_report.anomalies[0].location == "gabinet_zabki"
+    assert monthly_report.sessions[0].display_location == alias
+    assert monthly_report.anomalies[0].display_location == alias
+    assert _format_locations(monthly_report) == alias
+
+    _register_fonts()
+    anomaly_location_cell = _anomalies_table(monthly_report)._cellvalues[1][3]
+    assert isinstance(anomaly_location_cell, Paragraph)
+    assert anomaly_location_cell.getPlainText() == alias
 
 
 def test_session_cent_allocation_reconciles_two_half_cent_sessions():

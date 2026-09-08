@@ -66,6 +66,12 @@ ANOMALY_EVENT_COLUMN_WIDTH = 52 * mm
 TABLE_HORIZONTAL_PADDING = 12
 
 
+def _csv_safe_text(value: str) -> str:
+    if value.startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
+
 def render_monthly_report_csv(report: MonthlyReport) -> bytes:
     output = StringIO(newline="")
     csv_writer = writer(output, delimiter=";", lineterminator="\r\n")
@@ -78,7 +84,7 @@ def render_monthly_report_csv(report: MonthlyReport) -> bytes:
                 _format_minute_timestamp(session.entry_timestamp),
                 _format_minute_timestamp(session.exit_timestamp),
                 _format_clock_duration(session.duration_seconds),
-                session.display_location,
+                _csv_safe_text(session.display_location),
                 SessionStatus.VALID.value,
                 f"{session.hourly_rate:.2f}",
                 session.currency,
@@ -103,7 +109,7 @@ def render_monthly_report_csv(report: MonthlyReport) -> bytes:
                 " | ".join(entries),
                 " | ".join(exits),
                 "",
-                anomaly.display_location,
+                _csv_safe_text(anomaly.display_location),
                 anomaly.status.value,
                 "",
                 "",
