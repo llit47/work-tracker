@@ -521,11 +521,11 @@ function App() {
 
     const previousDashboard = previousDashboardSummary.current
     previousDashboardSummary.current = dashboardSummary
-    if (!shouldRefreshMonthlyData(previousDashboard, dashboardSummary, selectedMonth)) return
+    if (!shouldRefreshMonthlyData(previousDashboard, dashboardSummary)) return
 
     setRetryRequest((request) => request + 1)
     setPayRetryRequest((request) => request + 1)
-  }, [dashboardSummary, selectedMonth])
+  }, [dashboardSummary])
 
   useEffect(() => {
     const handlePopState = () => {
