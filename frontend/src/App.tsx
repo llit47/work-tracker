@@ -10,6 +10,7 @@ import {
   type ApplicationSettingsFormErrors,
 } from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
+import type { DashboardSummary } from './dashboard'
 import {
   downloadMonthlyExport,
   exportLabels,
@@ -27,7 +28,6 @@ import {
 import {
   MAX_YEAR,
   MIN_YEAR,
-  currentLocalDate,
   currentMonth,
   isSameMonth,
   millisecondsUntilNextLocalDay,
@@ -60,9 +60,10 @@ import {
   formatEventDateTime,
   formatEventTime,
   formatSessionRange,
-  isPendingCurrentDaySession,
+  isPendingCurrentSession,
   timestampOffset,
   workItemStatusLabels,
+  type ActiveSessionContext,
 } from './presentation'
 import {
   readThemePreference,
@@ -245,12 +246,12 @@ function SessionItem({
   item,
   actions,
   locationName,
-  currentLocalDateValue,
+  activeSessionContext,
 }: {
   item: WorkTimeItem
   actions: EventActions
   locationName: string
-  currentLocalDateValue: string
+  activeSessionContext: ActiveSessionContext
 }) {
   const entry = item.events.find((event) => event.event_type === 'entry')
   const exit = item.events.find((event) => event.event_type === 'exit')
@@ -276,7 +277,7 @@ function SessionItem({
     )
   }
 
-  if (isPendingCurrentDaySession(item, currentLocalDateValue)) {
+  if (isPendingCurrentSession(item, activeSessionContext)) {
     return (
       <article className="session pending">
         <div className="session-details">
@@ -312,12 +313,12 @@ function DayOverview({
   day,
   settings,
   showIgnoredEvents,
-  currentLocalDateValue,
+  activeSessionContext,
 }: {
   day: WorkDay
   settings: ApplicationSettings
   showIgnoredEvents: boolean
-  currentLocalDateValue: string
+  activeSessionContext: ActiveSessionContext
 }) {
   const locations = [...new Set([
     ...day.items.map((item) => item.location),
@@ -330,7 +331,7 @@ function DayOverview({
         {day.items.map((item) => {
           const entry = item.events.find((event) => event.event_type === 'entry')
           const exit = item.events.find((event) => event.event_type === 'exit')
-          const presentation = dayOverviewPresentation(item, currentLocalDateValue)
+          const presentation = dayOverviewPresentation(item, activeSessionContext)
           return (
             <span
               className={`day-overview-item${presentation.showWarning ? ' warning' : presentation.statusLabel ? ' pending' : ''}`}
@@ -376,7 +377,7 @@ function findSummaryLocation(summary: WorkSummary | null): string {
 
 function App() {
   const [today, setToday] = useState(() => currentMonth())
-  const [currentLocalDateValue, setCurrentLocalDateValue] = useState(() => currentLocalDate())
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
   const [initialUrlMonth] = useState(() => readMonthFromSearch(window.location.search, today))
   const [selectedMonth, setSelectedMonth] = useState(initialUrlMonth.selection)
   const [summary, setSummary] = useState<WorkSummary | null>(null)
@@ -478,35 +479,31 @@ function App() {
   useEffect(() => {
     let refreshTimer: number
 
-    const refreshCurrentCalendar = () => {
+    const refreshCurrentMonth = () => {
       const freshCurrentMonth = currentMonth()
-      const freshCurrentLocalDate = currentLocalDate()
       setToday((previousMonth) => (
         isSameMonth(previousMonth, freshCurrentMonth) ? previousMonth : freshCurrentMonth
-      ))
-      setCurrentLocalDateValue((previousDate) => (
-        previousDate === freshCurrentLocalDate ? previousDate : freshCurrentLocalDate
       ))
     }
 
     const scheduleMidnightRefresh = () => {
       refreshTimer = window.setTimeout(() => {
-        refreshCurrentCalendar()
+        refreshCurrentMonth()
         scheduleMidnightRefresh()
       }, millisecondsUntilNextLocalDay())
     }
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') refreshCurrentCalendar()
+      if (document.visibilityState === 'visible') refreshCurrentMonth()
     }
 
     scheduleMidnightRefresh()
-    window.addEventListener('focus', refreshCurrentCalendar)
+    window.addEventListener('focus', refreshCurrentMonth)
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
       window.clearTimeout(refreshTimer)
-      window.removeEventListener('focus', refreshCurrentCalendar)
+      window.removeEventListener('focus', refreshCurrentMonth)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [])
@@ -875,9 +872,14 @@ function App() {
       || timestampHasAmbiguousLocalTime(correctionForm.event.event_timestamp)
     )
   const visibleDays = summary ? getVisibleDays(summary.days, showIgnoredEvents) : []
+  const activeSessionContext: ActiveSessionContext = {
+    dashboardStatus: dashboardSummary?.status ?? null,
+    currentEntryTimestampUtc: dashboardSummary?.current_session?.entry_timestamp_utc ?? null,
+    runningToday: dashboardSummary !== null && dashboardSummary.today.running_duration_seconds !== null,
+  }
   const visibleProblemCount = summary
     ? summary.days.reduce(
-        (total, day) => total + countActionableProblems(day.items, currentLocalDateValue),
+        (total, day) => total + countActionableProblems(day.items, activeSessionContext),
         0,
       )
     : 0
@@ -890,7 +892,11 @@ function App() {
     <main className="page">
       <section className="card" aria-live="polite">
         <h1>{applicationSettings.application_title}</h1>
-        <DashboardPanel apiBase={apiBase} refreshRequest={dashboardRefreshRequest} />
+        <DashboardPanel
+          apiBase={apiBase}
+          refreshRequest={dashboardRefreshRequest}
+          onSummaryChange={setDashboardSummary}
+        />
         <nav className="month-navigation" aria-label="Nawigacja miesiąca">
           <button
             className="month-arrow"
@@ -1272,7 +1278,7 @@ function App() {
           {visibleDays.length === 0 && <p className="message">Brak zdarzeń w tym miesiącu.</p>}
           <div className="days">
             {visibleDays.map((day) => {
-              const dayProblemCount = countActionableProblems(day.items, currentLocalDateValue)
+              const dayProblemCount = countActionableProblems(day.items, activeSessionContext)
               return (
                 <details className={`day${dayProblemCount > 0 ? ' has-warning' : ''}`} key={day.date}>
                   <summary className="day-heading">
@@ -1285,7 +1291,7 @@ function App() {
                         day={day}
                         settings={applicationSettings}
                         showIgnoredEvents={showIgnoredEvents}
-                        currentLocalDateValue={currentLocalDateValue}
+                        activeSessionContext={activeSessionContext}
                       />
                     </div>
                     <div className="day-totals">
@@ -1309,7 +1315,7 @@ function App() {
                           item={item}
                           actions={eventActions}
                           locationName={getLocationDisplayName(applicationSettings, item.location)}
-                          currentLocalDateValue={currentLocalDateValue}
+                          activeSessionContext={activeSessionContext}
                         />
                       ))}
                       {day.ignored_events

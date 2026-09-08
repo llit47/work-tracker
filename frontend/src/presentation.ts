@@ -61,7 +61,16 @@ export type WorkItemPresentationStatus =
 
 export type WorkItemPresentation = {
   status: WorkItemPresentationStatus
-  local_date: string
+  events: readonly {
+    event_type: 'entry' | 'exit'
+    event_timestamp_utc: string
+  }[]
+}
+
+export type ActiveSessionContext = {
+  dashboardStatus: 'working' | 'outside' | 'ambiguous' | null
+  currentEntryTimestampUtc: string | null
+  runningToday: boolean
 }
 
 export const workItemStatusLabels: Record<Exclude<WorkItemPresentationStatus, 'valid'>, string> = {
@@ -72,42 +81,70 @@ export const workItemStatusLabels: Record<Exclude<WorkItemPresentationStatus, 'v
   ambiguous_timestamp: 'Sprzeczne zdarzenia o tej samej godzinie',
 }
 
-export function isPendingCurrentDaySession(
+function timestampsRepresentSameInstant(left: string, right: string): boolean {
+  const leftMilliseconds = Date.parse(left)
+  const rightMilliseconds = Date.parse(right)
+  return (
+    Number.isFinite(leftMilliseconds)
+    && Number.isFinite(rightMilliseconds)
+    && leftMilliseconds === rightMilliseconds
+  )
+}
+
+export function isPendingCurrentSession(
   item: WorkItemPresentation,
-  currentLocalDate: string,
+  context: ActiveSessionContext,
 ): boolean {
-  return item.status === 'missing_exit' && item.local_date === currentLocalDate
+  if (
+    item.status !== 'missing_exit'
+    || context.dashboardStatus !== 'working'
+    || context.currentEntryTimestampUtc === null
+    || !context.runningToday
+  ) {
+    return false
+  }
+
+  const entries = item.events.filter((event) => event.event_type === 'entry')
+  const hasExit = item.events.some((event) => event.event_type === 'exit')
+  return (
+    entries.length === 1
+    && !hasExit
+    && timestampsRepresentSameInstant(
+      entries[0].event_timestamp_utc,
+      context.currentEntryTimestampUtc,
+    )
+  )
 }
 
 export function isActionableProblem(
   item: WorkItemPresentation,
-  currentLocalDate: string,
+  context: ActiveSessionContext,
 ): boolean {
-  return item.status !== 'valid' && !isPendingCurrentDaySession(item, currentLocalDate)
+  return item.status !== 'valid' && !isPendingCurrentSession(item, context)
 }
 
 export function countActionableProblems(
   items: readonly WorkItemPresentation[],
-  currentLocalDate: string,
+  context: ActiveSessionContext,
 ): number {
-  return items.filter((item) => isActionableProblem(item, currentLocalDate)).length
+  return items.filter((item) => isActionableProblem(item, context)).length
 }
 
 export function dayOverviewPresentation(
   item: WorkItemPresentation,
-  currentLocalDate: string,
+  context: ActiveSessionContext,
 ): {
   showRange: boolean
   showDuration: boolean
   showWarning: boolean
   statusLabel: string | null
 } {
-  const pending = isPendingCurrentDaySession(item, currentLocalDate)
+  const pending = isPendingCurrentSession(item, context)
   const hasCompleteInterval = item.status === 'valid' || item.status === 'unusually_long_session'
   return {
     showRange: hasCompleteInterval || pending,
     showDuration: hasCompleteInterval,
-    showWarning: isActionableProblem(item, currentLocalDate),
+    showWarning: isActionableProblem(item, context),
     statusLabel: pending
       ? 'Trwająca zmiana'
       : item.status === 'valid'

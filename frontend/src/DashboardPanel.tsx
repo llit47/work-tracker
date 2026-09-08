@@ -17,6 +17,7 @@ import { formatMoney } from './pay'
 type DashboardPanelProps = {
   apiBase: string
   refreshRequest: number
+  onSummaryChange: (summary: DashboardSummary | null) => void
 }
 
 function formatShiftStart(timestamp: string): string {
@@ -29,7 +30,11 @@ function formatShiftStart(timestamp: string): string {
   }).format(new Date(timestamp))
 }
 
-export default function DashboardPanel({ apiBase, refreshRequest }: DashboardPanelProps) {
+export default function DashboardPanel({
+  apiBase,
+  refreshRequest,
+  onSummaryChange,
+}: DashboardPanelProps) {
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [retryRequest, setRetryRequest] = useState(0)
@@ -59,12 +64,17 @@ export default function DashboardPanel({ apiBase, refreshRequest }: DashboardPan
         if (!disposed && generation === requestGeneration) {
           const loadedAt = Date.now()
           setDashboard(loaded)
+          onSummaryChange(loaded)
           setReceivedAt(loadedAt)
           setTimerNow(loadedAt)
           setState('ready')
         }
       } catch {
-        if (!disposed && generation === requestGeneration) setState('error')
+        if (!disposed && generation === requestGeneration) {
+          setDashboard(null)
+          setState('error')
+          onSummaryChange(null)
+        }
       }
     }
 
@@ -87,7 +97,7 @@ export default function DashboardPanel({ apiBase, refreshRequest }: DashboardPan
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
     }
-  }, [apiBase, refreshRequest, retryRequest])
+  }, [apiBase, onSummaryChange, refreshRequest, retryRequest])
 
   useEffect(() => {
     if (dashboard?.status !== 'working' || !dashboard.current_session) return undefined
