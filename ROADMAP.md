@@ -183,7 +183,7 @@ Zakres nadal zakłada jedną lokalizację i jedną pracę.
 - [x] Dzisiejszy zakończony czas oraz efektywny czas z uwzględnieniem poprawnej otwartej zmiany.
 - [x] Bieżący miesięczny czas, liczba dni pracy i wynagrodzenie za zakończone sesje.
 - [x] `GET /api/dashboard` korzystający z istniejącego parowania i kalkulatora płac.
-- [x] Polling backendu co 30 sekund oraz sekundowy timer frontendowy bez zapisywania syntetycznego `exit`.
+- [x] Polling backendu co 30 sekund oraz lokalnie aktualizowany timer frontendowy bez zapisywania syntetycznego `exit`; prezentacja pokazuje ukończone minuty.
 - [x] Jawne traktowanie duplikatów, sprzecznych timestampów i otwartych zmian ponad 16 godzin jako stanu niejednoznacznego.
 - [x] Niezależny błąd dashboardu, który nie ukrywa historii czasu, korekt ani danych płacowych.
 - [x] Odświeżanie dashboardu po korektach, ignorowaniu/cofaniu, manualnych eventach i zmianie stawki.
@@ -193,7 +193,7 @@ Zakres nadal zakłada jedną lokalizację i jedną pracę.
 **Status: DONE**
 
 - [x] Jeden backendowy model raportu zasilany przez effective events, kanoniczne parowanie oraz historyczne stawki.
-- [x] Eksport CSV UTF-8 z BOM i separatorem `;`, zgodny z wybranym miesiącem historycznym.
+- [x] Eksport CSV UTF-8 z BOM i separatorem `;`, zgodny z wybranym miesiącem historycznym; prezentacja czasu ma dokładność ukończonej minuty, a pełne sekundy pozostają w obliczeniach wewnętrznych.
 - [x] Raport PDF A4 z podsumowaniem, sesjami, stawkami, kwotami i kompaktową sekcją problemów.
 - [x] Wiele sesji jednego dnia pozostaje osobnymi pozycjami raportu.
 - [x] Anomalie są widoczne, ale nie zwiększają czasu pracy ani wynagrodzenia.

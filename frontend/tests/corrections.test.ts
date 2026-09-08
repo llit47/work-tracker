@@ -28,7 +28,13 @@ const localSourceTimestamp = formatLocalDateTimeWithOffset(
   '2026-09-07T08:07:32',
   localDate.getTimezoneOffset(),
 )
-assertEqual(timestampToLocalInput(localSourceTimestamp ?? ''), '2026-09-07T08:07:32', 'uses browser-local input fields')
+const minuteLocalInput = '2026-09-07T08:07'
+assertEqual(timestampToLocalInput(localSourceTimestamp ?? ''), minuteLocalInput, 'uses minute-precision browser-local input fields')
+assertEqual(
+  resolveCorrectionTimestamp(minuteLocalInput, localSourceTimestamp ?? '', minuteLocalInput),
+  localSourceTimestamp,
+  'saving an unchanged minute-precision edit preserves the exact stored seconds',
+)
 assertEqual(formatLocalDateTimeWithOffset('2026-02-31T08:00', -60), null, 'rejects impossible dates')
 assertEqual(localDateTimeToOffsetIso('not-a-date'), null, 'rejects malformed local timestamps')
 
@@ -39,7 +45,7 @@ assertEqual(extractOffsetFromIso('2026-10-25T01:10:00Z'), '+00:00', 'normalizes 
 
 const winterTimestamp = '2026-10-25T02:10:00+01:00'
 const summerTimestamp = '2026-10-25T02:10:00+02:00'
-const repeatedLocalTime = '2026-10-25T02:10:00'
+const repeatedLocalTime = '2026-10-25T02:10'
 assertEqual(timestampToLocalInput(winterTimestamp), repeatedLocalTime, 'shows the winter occurrence as local wall time')
 assertEqual(timestampToLocalInput(summerTimestamp), repeatedLocalTime, 'shows the summer occurrence as local wall time')
 
@@ -56,6 +62,18 @@ assertEqual(
   new Date(preservedSummerTimestamp ?? '').getTime(),
   new Date(summerTimestamp).getTime(),
   'preserving +02:00 also preserves the UTC instant',
+)
+const winterTimestampWithHiddenSeconds = '2026-10-25T02:10:37+01:00'
+const summerTimestampWithHiddenSeconds = '2026-10-25T02:10:42+02:00'
+assertEqual(
+  resolveCorrectionTimestamp(repeatedLocalTime, winterTimestampWithHiddenSeconds, repeatedLocalTime),
+  winterTimestampWithHiddenSeconds,
+  'unchanged fallback edit preserves hidden seconds and the winter offset',
+)
+assertEqual(
+  resolveCorrectionTimestamp(repeatedLocalTime, summerTimestampWithHiddenSeconds, repeatedLocalTime),
+  summerTimestampWithHiddenSeconds,
+  'unchanged fallback edit preserves hidden seconds and the summer offset',
 )
 
 assertEqual(

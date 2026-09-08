@@ -15,6 +15,7 @@ from app.models import CorrectionType
 from app.monthly_report import allocate_session_pays, build_monthly_report
 from app.pay import PayRateRecord, calculate_monthly_pay
 from app.report_renderers import (
+    CSV_HEADERS,
     MAX_ANOMALY_EVENT_CELL_HEIGHT,
     MAX_ANOMALY_EVENTS_PER_ROW,
     _anomalies_table,
@@ -354,15 +355,15 @@ def test_csv_quotes_delimiter_and_preserves_polish_utf8_text():
 
     assert content.startswith(b"\xef\xbb\xbf")
     assert rows[0][1:3] == ["wejście", "wyjście"]
-    assert rows[1][5] == 'gabinet; "żółć"'
+    assert rows[1][4] == 'gabinet; "żółć"'
     assert '"gabinet; ""żółć"""' in content.decode("utf-8-sig")
 
 
 def test_csv_anomaly_timestamps_keep_dates_offsets_and_deterministic_columns():
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-01T08:00:00+02:00"),
-            event(2, "exit", "2026-09-02T16:00:00+02:00"),
+            event(1, "entry", "2026-09-01T08:00:32+02:00"),
+            event(2, "exit", "2026-09-02T16:00:59+02:00"),
         ]
     )
     rows = list(
@@ -374,10 +375,12 @@ def test_csv_anomaly_timestamps_keep_dates_offsets_and_deterministic_columns():
 
     assert rows[1][0:3] == [
         "2026-09-01",
-        "2026-09-01T08:00:00+02:00",
-        "2026-09-02T16:00:00+02:00",
+        "2026-09-01T08:00+02:00",
+        "2026-09-02T16:00+02:00",
     ]
-    assert rows[1][6] == SessionStatus.UNUSUALLY_LONG_SESSION.value
+    assert "08:00:32" not in rows[1][1]
+    assert "16:00:59" not in rows[1][2]
+    assert rows[1][5] == SessionStatus.UNUSUALLY_LONG_SESSION.value
 
 
 def test_csv_session_amounts_reconcile_to_monthly_total():
@@ -398,7 +401,7 @@ def test_csv_session_amounts_reconcile_to_monthly_total():
         )
     )
 
-    assert sum((Decimal(row[9]) for row in rows[1:]), Decimal("0.00")) == (
+    assert sum((Decimal(row[8]) for row in rows[1:]), Decimal("0.00")) == (
         monthly_report.total_pay
     )
 
@@ -452,8 +455,8 @@ def test_anomaly_table_wraps_and_escapes_dynamic_cells():
 def test_pdf_anomaly_events_show_local_dates_times_and_offsets():
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-01T08:00:00+02:00"),
-            event(2, "exit", "2026-09-02T16:00:00+02:00"),
+            event(1, "entry", "2026-09-01T08:00:32+02:00"),
+            event(2, "exit", "2026-09-02T16:00:59+02:00"),
         ]
     )
     table = _anomalies_table(monthly_report)
@@ -466,8 +469,8 @@ def test_pdf_anomaly_events_show_local_dates_times_and_offsets():
 def test_pdf_anomaly_events_distinguish_dst_fallback_offsets():
     monthly_report = report(
         [
-            event(1, "entry", "2026-10-25T02:30:00+02:00"),
-            event(2, "entry", "2026-10-25T02:30:00+01:00"),
+            event(1, "entry", "2026-10-25T02:30:15+02:00"),
+            event(2, "entry", "2026-10-25T02:30:45+01:00"),
         ],
         year=2026,
         month=10,
@@ -494,14 +497,14 @@ def test_pdf_ordinary_anomaly_stays_in_one_compact_row():
 def test_pdf_valid_session_times_are_compact_but_unambiguous():
     ordinary = report(
         [
-            event(1, "entry", "2026-09-01T08:00:00+02:00"),
-            event(2, "exit", "2026-09-01T16:00:00+02:00"),
+            event(1, "entry", "2026-09-01T08:00:12+02:00"),
+            event(2, "exit", "2026-09-01T16:00:49+02:00"),
         ]
     )
     cross_midnight = report(
         [
-            event(3, "entry", "2026-09-01T22:00:00+02:00"),
-            event(4, "exit", "2026-09-02T06:00:00+02:00"),
+            event(3, "entry", "2026-09-01T22:00:37+02:00"),
+            event(4, "exit", "2026-09-02T06:15:51+02:00"),
         ]
     )
     dst_fallback = report(
@@ -533,7 +536,7 @@ def test_pdf_valid_session_times_are_compact_but_unambiguous():
     assert [
         cross_midnight_row[1].getPlainText(),
         cross_midnight_row[2].getPlainText(),
-    ] == ["22:00", "02.09 06:00"]
+    ] == ["22:00", "02.09 06:15"]
     assert [dst_row[1].getPlainText(), dst_row[2].getPlainText()] == [
         "02:30 +02:00",
         "02:30 +01:00",
@@ -561,14 +564,21 @@ def test_pdf_duration_omits_seconds_without_rounding_or_changing_source_data():
     )[1]
 
     assert [row[1].getPlainText(), row[2].getPlainText(), row[3]] == [
-        "08:00:00",
-        "16:12:37",
+        "08:00",
+        "16:12",
         "8 godz. 12 min",
     ]
     assert summary[1] == "8 godz. 12 min"
     assert monthly_report.total_duration_seconds == 8 * 3600 + 12 * 60 + 37
     assert monthly_report.total_pay == Decimal("410.51")
-    assert csv_row[3:5] == ["08:12:37", "29557"]
+    assert csv_row[1:4] == [
+        "2026-09-06T08:00+02:00",
+        "2026-09-06T16:12+02:00",
+        "08:12",
+    ]
+    assert "czas_sekundy" not in CSV_HEADERS
+    assert len(csv_row) == len(CSV_HEADERS) == 9
+    assert csv_row[8] == "410.51"
 
 
 def test_pdf_subminute_duration_displays_zero_minutes_without_rounding_up():
@@ -588,6 +598,7 @@ def test_pdf_offset_formatter_uses_colon_and_rejects_naive_timestamps():
     assert _format_utc_offset(datetime.fromisoformat("2026-09-01T08:00:00+02:00")) == "+02:00"
     assert _format_utc_offset(datetime.fromisoformat("2026-10-25T02:30:00+01:00")) == "+01:00"
     assert _format_utc_offset(datetime.fromisoformat("2026-09-01T08:00:00-07:30")) == "-07:30"
+    assert _format_utc_offset(datetime.fromisoformat("2026-09-01T08:00:00+05:30:45")) == "+05:30"
     with pytest.raises(ValueError, match="must include a UTC offset"):
         _format_utc_offset(datetime(2026, 9, 1, 8))
 

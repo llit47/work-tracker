@@ -52,16 +52,18 @@ assertEqual(
   'a cross-midnight running shift is not reassigned to today',
 )
 
-assertEqual(formatLiveTimer(0), '00:00:00', 'zero timer is formatted')
-assertEqual(formatLiveTimer(2 * 3600 + 14 * 60 + 9), '02:14:09', 'live timer includes hours, minutes and seconds')
+assertEqual(formatLiveTimer(0), '00:00', 'zero timer is formatted without seconds')
+assertEqual(formatLiveTimer(2 * 3600 + 14 * 60 + 59), '02:14', 'live timer shows completed minutes only')
 assertEqual(formatDashboardDuration(8 * 3600 + 18 * 60), '8 godz. 18 min', 'dashboard duration is readable')
+assertEqual(formatDashboardDuration(59), '0 min', 'subminute dashboard duration does not expose seconds')
+assertEqual(formatDashboardDuration(119), '1 min', 'dashboard duration does not round up')
 assertEqual(
   advanceElapsedSeconds(3600, 1_000_000, 1_005_999),
   3605,
   'local timer advances from the backend baseline without another API response',
 )
 assertEqual(DASHBOARD_POLL_INTERVAL_MS, 30_000, 'dashboard uses modest 30-second polling')
-assertEqual(LIVE_TIMER_INTERVAL_MS, 1_000, 'visible live timer updates once per second')
+assertEqual(LIVE_TIMER_INTERVAL_MS, 1_000, 'internal live elapsed time remains second-precise')
 
 let requestCount = 0
 let requestedUrl = ''

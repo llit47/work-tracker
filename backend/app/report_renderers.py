@@ -27,7 +27,6 @@ CSV_HEADERS = (
     "wejście",
     "wyjście",
     "czas",
-    "czas_sekundy",
     "lokalizacja",
     "status",
     "stawka_godzinowa",
@@ -76,10 +75,9 @@ def render_monthly_report_csv(report: MonthlyReport) -> bytes:
         csv_writer.writerow(
             (
                 session.date.isoformat(),
-                session.entry_timestamp.isoformat(),
-                session.exit_timestamp.isoformat(),
+                _format_minute_timestamp(session.entry_timestamp),
+                _format_minute_timestamp(session.exit_timestamp),
                 _format_clock_duration(session.duration_seconds),
-                session.duration_seconds,
                 session.location,
                 SessionStatus.VALID.value,
                 f"{session.hourly_rate:.2f}",
@@ -89,14 +87,21 @@ def render_monthly_report_csv(report: MonthlyReport) -> bytes:
         )
 
     for anomaly in report.anomalies:
-        entries = [event.timestamp.isoformat() for event in anomaly.events if event.event_type == "entry"]
-        exits = [event.timestamp.isoformat() for event in anomaly.events if event.event_type == "exit"]
+        entries = [
+            _format_minute_timestamp(event.timestamp)
+            for event in anomaly.events
+            if event.event_type == "entry"
+        ]
+        exits = [
+            _format_minute_timestamp(event.timestamp)
+            for event in anomaly.events
+            if event.event_type == "exit"
+        ]
         csv_writer.writerow(
             (
                 anomaly.date.isoformat(),
                 " | ".join(entries),
                 " | ".join(exits),
-                "",
                 "",
                 anomaly.location,
                 anomaly.status.value,
@@ -437,11 +442,7 @@ def _format_session_times(
     exit_offset = _format_utc_offset(exit_timestamp)
     crosses_date = entry_timestamp.date() != exit_timestamp.date()
     changes_offset = entry_offset != exit_offset
-    show_seconds = any(
-        timestamp.second or timestamp.microsecond
-        for timestamp in (entry_timestamp, exit_timestamp)
-    )
-    clock_format = "%H:%M:%S" if show_seconds else "%H:%M"
+    clock_format = "%H:%M"
 
     entry_text = entry_timestamp.strftime(clock_format)
     exit_text = exit_timestamp.strftime(clock_format)
@@ -468,15 +469,13 @@ def _format_utc_offset(timestamp: datetime) -> str:
     )
     sign = "+" if total_microseconds >= 0 else "-"
     absolute_microseconds = abs(total_microseconds)
-    total_seconds, microseconds = divmod(absolute_microseconds, 1_000_000)
-    hours, remainder = divmod(total_seconds, 3_600)
-    minutes, seconds = divmod(remainder, 60)
-    formatted = f"{sign}{hours:02d}:{minutes:02d}"
-    if seconds or microseconds:
-        formatted += f":{seconds:02d}"
-        if microseconds:
-            formatted += f".{microseconds:06d}".rstrip("0")
-    return formatted
+    total_minutes = absolute_microseconds // 60_000_000
+    hours, minutes = divmod(total_minutes, 60)
+    return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+def _format_minute_timestamp(timestamp: datetime) -> str:
+    return f"{timestamp.strftime('%Y-%m-%dT%H:%M')}{_format_utc_offset(timestamp)}"
 
 
 def _format_rates(report: MonthlyReport) -> str:
@@ -507,8 +506,8 @@ def _format_duration(seconds: int) -> str:
 
 def _format_clock_duration(seconds: int) -> str:
     hours, remainder = divmod(seconds, 3600)
-    minutes, remaining_seconds = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
+    minutes = remainder // 60
+    return f"{hours:02d}:{minutes:02d}"
 
 
 def _format_decimal(value) -> str:
