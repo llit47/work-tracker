@@ -78,7 +78,7 @@ def render_monthly_report_csv(report: MonthlyReport) -> bytes:
                 _format_minute_timestamp(session.entry_timestamp),
                 _format_minute_timestamp(session.exit_timestamp),
                 _format_clock_duration(session.duration_seconds),
-                session.location,
+                session.display_location,
                 SessionStatus.VALID.value,
                 f"{session.hourly_rate:.2f}",
                 session.currency,
@@ -103,7 +103,7 @@ def render_monthly_report_csv(report: MonthlyReport) -> bytes:
                 " | ".join(entries),
                 " | ".join(exits),
                 "",
-                anomaly.location,
+                anomaly.display_location,
                 anomaly.status.value,
                 "",
                 "",
@@ -358,7 +358,7 @@ def _anomaly_rows(
                         else ""
                     ),
                     (
-                        Paragraph(escape(anomaly.location), cell_style)
+                        Paragraph(escape(anomaly.display_location), cell_style)
                         if first_row
                         else ""
                     ),
@@ -492,8 +492,8 @@ def _format_rates(report: MonthlyReport) -> str:
 
 def _format_locations(report: MonthlyReport) -> str:
     locations = sorted(
-        {session.location for session in report.sessions}
-        | {anomaly.location for anomaly in report.anomalies}
+        {session.display_location for session in report.sessions}
+        | {anomaly.display_location for anomaly in report.anomalies}
     )
     return ", ".join(locations) if locations else "brak"
 

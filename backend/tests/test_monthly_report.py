@@ -20,6 +20,7 @@ from app.report_renderers import (
     MAX_ANOMALY_EVENTS_PER_ROW,
     _anomalies_table,
     _format_anomaly_event,
+    _format_locations,
     _format_utc_offset,
     _register_fonts,
     _sessions_table,
@@ -54,13 +55,14 @@ def event(
     )
 
 
-def report(events, *, rates=None, year=2026, month=9):
+def report(events, *, rates=None, year=2026, month=9, location_display_names=None):
     return build_monthly_report(
         events,
         rates or [RATE],
         year=year,
         month=month,
         generated_at=GENERATED_AT,
+        location_display_names=location_display_names,
     )
 
 
@@ -123,6 +125,40 @@ def test_report_totals_equal_authoritative_work_and_pay_summaries():
     assert sum((session.pay for session in monthly_report.sessions), Decimal("0.00")) == (
         monthly_report.total_pay
     )
+
+
+def test_report_uses_current_location_alias_for_csv_and_pdf_presentation():
+    events = [
+        event(1, "entry", "2026-09-06T08:00:00+02:00"),
+        event(2, "exit", "2026-09-06T16:00:00+02:00"),
+    ]
+
+    aliased = report(
+        events,
+        location_display_names={"gabinet_zabki": "ARTE Stomatologia"},
+    )
+    csv_rows = list(
+        reader(
+            StringIO(render_monthly_report_csv(aliased).decode("utf-8-sig")),
+            delimiter=";",
+        )
+    )
+
+    assert aliased.sessions[0].location == "gabinet_zabki"
+    assert aliased.sessions[0].display_location == "ARTE Stomatologia"
+    assert csv_rows[1][4] == "ARTE Stomatologia"
+    assert _format_locations(aliased) == "ARTE Stomatologia"
+    assert events[0].location == "gabinet_zabki"
+
+    changed = report(
+        events,
+        location_display_names={"gabinet_zabki": "Nowa nazwa"},
+    )
+    fallback = report(events)
+
+    assert changed.sessions[0].display_location == "Nowa nazwa"
+    assert fallback.sessions[0].display_location == "gabinet_zabki"
+    assert events[0].location == "gabinet_zabki"
 
 
 def test_session_cent_allocation_reconciles_two_half_cent_sessions():

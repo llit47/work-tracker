@@ -1,6 +1,7 @@
 import {
   MAX_YEAR,
   MIN_YEAR,
+  currentLocalDate,
   currentMonth,
   isSameMonth,
   millisecondsUntilNextLocalDay,
@@ -21,6 +22,16 @@ function assertEqual<T>(actual: T, expected: T, message: string) {
 const fallback: MonthSelection = { year: 2026, month: 9 }
 
 assertEqual(currentMonth(new Date(2026, 8, 6)), fallback, 'uses the local current month')
+assertEqual(
+  currentLocalDate(new Date(2026, 8, 8, 23, 59)),
+  '2026-09-08',
+  'formats the browser-local calendar date',
+)
+assertEqual(
+  currentLocalDate(new Date(2026, 8, 9, 0, 0)),
+  '2026-09-09',
+  'reads the next local date after midnight',
+)
 assertEqual(
   currentMonth(new Date(2026, 9, 1, 0, 0)),
   { year: 2026, month: 10 },

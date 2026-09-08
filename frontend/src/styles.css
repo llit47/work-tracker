@@ -171,6 +171,7 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
 .day-overview-item { display: inline-flex; align-items: baseline; gap: 6px; color: var(--text-soft); font-size: .82rem; }
 .day-overview-item strong { color: var(--text); font-weight: 650; }
 .day-overview-item.warning strong { color: var(--warning); }
+.day-overview-item.pending strong { color: var(--success); }
 .day-overview-item.ignored-note { color: var(--text-muted); }
 .day-overview small { color: var(--text-muted); font-size: .72rem; }
 .day-totals { display: grid; grid-column: 2; grid-row: 1; gap: 2px; padding-right: 14px; color: var(--text-soft); font-size: .82rem; text-align: right; white-space: nowrap; }
@@ -180,6 +181,7 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
 .sessions { display: grid; gap: 7px; padding-top: 10px; }
 .session { display: flex; justify-content: space-between; gap: 16px; padding: 10px 12px; border-left: 4px solid; border-radius: 8px; background: var(--surface); }
 .session.valid { border-color: var(--success); }
+.session.pending { border-color: var(--success); background: var(--success-bg); }
 .session.warning { border-color: var(--warning); background: var(--warning-bg); }
 .session.ignored-session { border-color: var(--text-muted); background: var(--ignored-bg); }
 .session strong { display: block; }
@@ -188,6 +190,7 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
 .location { display: block; margin-top: 3px; color: var(--text-muted); font-size: .75rem; }
 .session-result { flex: 0 0 116px; text-align: right; white-space: nowrap; }
 .anomaly { display: block; flex: 0 0 170px; align-self: center; color: var(--warning); font-size: .82rem; font-weight: 700; text-align: right; }
+.pending-status { display: block; flex: 0 0 170px; align-self: center; color: var(--success); font-size: .82rem; font-weight: 700; text-align: right; }
 .event-list { display: grid; gap: 7px; margin-top: 8px; }
 .event-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(205px, auto); align-items: center; gap: 10px; padding-top: 7px; border-top: 1px solid var(--border); }
 .event-row.ignored { width: 100%; border-top: 0; padding-top: 0; }
@@ -235,7 +238,7 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
   .day-warning { display: block; margin: 3px 0 0; white-space: normal; }
   .day-totals { grid-column: 1; grid-row: auto; padding-right: 0; text-align: left; }
   .session { flex-direction: column; gap: 7px; }
-  .session-result, .anomaly { flex-basis: auto; text-align: left; }
+  .session-result, .anomaly, .pending-status { flex-basis: auto; text-align: left; }
   .theme-setting { grid-template-columns: 1fr; gap: 4px; width: 100%; }
   .theme-setting select { width: 100%; }
 }

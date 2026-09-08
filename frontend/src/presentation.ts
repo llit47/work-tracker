@@ -59,15 +59,59 @@ export type WorkItemPresentationStatus =
   | 'unusually_long_session'
   | 'ambiguous_timestamp'
 
-export function dayOverviewPresentation(status: WorkItemPresentationStatus): {
+export type WorkItemPresentation = {
+  status: WorkItemPresentationStatus
+  local_date: string
+}
+
+export const workItemStatusLabels: Record<Exclude<WorkItemPresentationStatus, 'valid'>, string> = {
+  missing_exit: 'Brak wyjścia',
+  duplicate_entry: 'Niejednoznaczne wejście',
+  orphan_exit: 'Wyjście bez wejścia',
+  unusually_long_session: 'Podejrzanie długa sesja',
+  ambiguous_timestamp: 'Sprzeczne zdarzenia o tej samej godzinie',
+}
+
+export function isPendingCurrentDaySession(
+  item: WorkItemPresentation,
+  currentLocalDate: string,
+): boolean {
+  return item.status === 'missing_exit' && item.local_date === currentLocalDate
+}
+
+export function isActionableProblem(
+  item: WorkItemPresentation,
+  currentLocalDate: string,
+): boolean {
+  return item.status !== 'valid' && !isPendingCurrentDaySession(item, currentLocalDate)
+}
+
+export function countActionableProblems(
+  items: readonly WorkItemPresentation[],
+  currentLocalDate: string,
+): number {
+  return items.filter((item) => isActionableProblem(item, currentLocalDate)).length
+}
+
+export function dayOverviewPresentation(
+  item: WorkItemPresentation,
+  currentLocalDate: string,
+): {
   showRange: boolean
   showDuration: boolean
   showWarning: boolean
+  statusLabel: string | null
 } {
-  const hasCompleteInterval = status === 'valid' || status === 'unusually_long_session'
+  const pending = isPendingCurrentDaySession(item, currentLocalDate)
+  const hasCompleteInterval = item.status === 'valid' || item.status === 'unusually_long_session'
   return {
-    showRange: hasCompleteInterval,
+    showRange: hasCompleteInterval || pending,
     showDuration: hasCompleteInterval,
-    showWarning: status !== 'valid',
+    showWarning: isActionableProblem(item, currentLocalDate),
+    statusLabel: pending
+      ? 'Trwająca zmiana'
+      : item.status === 'valid'
+        ? null
+        : workItemStatusLabels[item.status],
   }
 }

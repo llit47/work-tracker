@@ -1,10 +1,12 @@
 import {
   compactTimestampOffset,
+  countActionableProblems,
   dayOverviewPresentation,
   formatDuration,
   formatEventDateTime,
   formatEventTime,
   formatSessionRange,
+  isActionableProblem,
   timestampOffset,
 } from '../src/presentation.js'
 
@@ -104,14 +106,21 @@ assertEqual(
   'offsets differing only in seconds still trigger offset-changing presentation',
 )
 
+const today = '2026-09-08'
+
 assertEqual(
-  dayOverviewPresentation('valid'),
-  { showRange: true, showDuration: true, showWarning: false },
+  dayOverviewPresentation({ status: 'valid', local_date: today }, today),
+  { showRange: true, showDuration: true, showWarning: false, statusLabel: null },
   'valid overview presents its complete interval without a warning',
 )
 assertEqual(
-  dayOverviewPresentation('unusually_long_session'),
-  { showRange: true, showDuration: true, showWarning: true },
+  dayOverviewPresentation({ status: 'unusually_long_session', local_date: today }, today),
+  {
+    showRange: true,
+    showDuration: true,
+    showWarning: true,
+    statusLabel: 'Podejrzanie długa sesja',
+  },
   'long-session overview keeps its interval, duration, and warning',
 )
 assertEqual(
@@ -124,15 +133,78 @@ assertEqual(
 )
 assertEqual(formatDuration(17 * 3600 + 30 * 60), '17h 30m', 'long-session overview shows duration')
 for (const status of [
-  'missing_exit',
   'duplicate_entry',
   'orphan_exit',
   'ambiguous_timestamp',
 ] as const) {
   assertEqual(
-    dayOverviewPresentation(status),
-    { showRange: false, showDuration: false, showWarning: true },
+    dayOverviewPresentation({ status, local_date: today }, today),
+    {
+      showRange: false,
+      showDuration: false,
+      showWarning: true,
+      statusLabel: status === 'duplicate_entry'
+        ? 'Niejednoznaczne wejście'
+        : status === 'orphan_exit'
+          ? 'Wyjście bez wejścia'
+          : 'Sprzeczne zdarzenia o tej samej godzinie',
+    },
     `${status} overview does not invent a complete interval`,
+  )
+}
+
+const currentMissingExit = { status: 'missing_exit' as const, local_date: today }
+const pastMissingExit = { status: 'missing_exit' as const, local_date: '2026-09-07' }
+const currentOrphanExit = { status: 'orphan_exit' as const, local_date: today }
+
+assertEqual(
+  dayOverviewPresentation(currentMissingExit, today),
+  {
+    showRange: true,
+    showDuration: false,
+    showWarning: false,
+    statusLabel: 'Trwająca zmiana',
+  },
+  'current-day missing exit is presented as a pending session without invented duration',
+)
+assertEqual(isActionableProblem(currentMissingExit, today), false, 'current-day missing exit is not actionable')
+assertEqual(
+  dayOverviewPresentation(pastMissingExit, today),
+  {
+    showRange: false,
+    showDuration: false,
+    showWarning: true,
+    statusLabel: 'Brak wyjścia',
+  },
+  'past missing exit remains an actionable warning',
+)
+assertEqual(isActionableProblem(pastMissingExit, today), true, 'past missing exit remains actionable')
+assertEqual(
+  countActionableProblems([currentMissingExit], today),
+  0,
+  'current-day pending session is excluded from displayed monthly and day problem counts',
+)
+assertEqual(
+  countActionableProblems([currentMissingExit, currentOrphanExit], today),
+  1,
+  'other current-day anomalies remain in displayed problem counts',
+)
+assertEqual(countActionableProblems([pastMissingExit], today), 1, 'past missing exit is counted')
+assertEqual(
+  isActionableProblem(currentMissingExit, '2026-09-09'),
+  true,
+  'the same pending session becomes actionable after local midnight',
+)
+for (const status of [
+  'duplicate_entry',
+  'orphan_exit',
+  'ambiguous_timestamp',
+  'unusually_long_session',
+] as const) {
+  assertEqual(
+    isActionableProblem({ status, local_date: today }, today),
+    true,
+    `${status} remains actionable on the current day`,
   )
 }
 

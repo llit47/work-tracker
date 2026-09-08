@@ -131,6 +131,11 @@ def _load_effective_event_stream(session: Session) -> EffectiveEventStream:
 
 def _load_monthly_report(session: Session, year: int, month: int) -> MonthlyReport:
     effective_stream = _load_effective_event_stream(session)
+    location_display_names = dict(
+        session.execute(
+            select(LocationDisplayName.location, LocationDisplayName.display_name)
+        ).all()
+    )
     rates = [
         _to_pay_rate_record(rate)
         for rate in session.scalars(
@@ -143,6 +148,7 @@ def _load_monthly_report(session: Session, year: int, month: int) -> MonthlyRepo
         year=year,
         month=month,
         generated_at=datetime.now(timezone.utc),
+        location_display_names=location_display_names,
     )
 
 
