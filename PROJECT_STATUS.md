@@ -43,11 +43,13 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Kompaktowy dashboard pokazuje bieżący status, start i czas otwartej zmiany, dzisiejszy czas oraz zakończony czas i wynagrodzenie bieżącego miesiąca.
 - `GET /api/dashboard` wyprowadza live state z effective events i tych samych reguł parowania, które zasilają miesięczne podsumowania.
 - Frontend odświeża dashboard co 30 sekund, a czas bieżącej zmiany aktualizuje lokalnie bez ciągłego odpytywania API; użytkownik widzi ukończone minuty.
+- Frontend pokazuje `missing_exit` jako `Trwająca zmiana` wyłącznie dla pojedynczego wejścia odpowiadającego tej samej chwili UTC co autorytatywna bieżąca sesja dashboardu. Pozostałe otwarte lub niejednoznaczne wpisy pozostają problemami.
+- Pierwszy snapshot oraz istotne zmiany dashboardu odświeżają aktualnie wybrane podsumowanie czasu i płac, także przy zamknięciu sesji na granicy miesięcy; sam postęp timera nie wywołuje tych żądań.
 - Stan niejednoznaczny jest pokazywany jawnie dla duplikatów, sprzecznych eventów, wielu otwartych zmian oraz wejścia starszego niż 16 godzin.
 - Otwarta zmiana nie tworzy syntetycznego eventu, nie modyfikuje raw events i nie zwiększa wynagrodzenia przed poprawnym zakończeniem.
 - Wybrany miesiąc można pobrać jako CSV lub raport PDF bez ponownego wybierania daty.
-- CSV jest kodowany jako UTF-8 z BOM, używa separatora `;` dla zgodności z polskim Excelem i prezentuje timestampy oraz czas z dokładnością do ukończonej minuty. Kolumny to: `data`, `wejście`, `wyjście`, `czas`, `lokalizacja`, `status`, `stawka_godzinowa`, `waluta`, `wynagrodzenie`; kolumna `czas_sekundy` nie jest eksportowana.
-- PDF zawiera kompaktowe podsumowanie, wszystkie poprawne sesje, użyte stawki, kwoty oraz problemy; zwykły miesiąc mieści się na jednej stronie A4, a dłuższe raporty są paginowane.
+- CSV jest kodowany jako UTF-8 z BOM, używa separatora `;` dla zgodności z polskim Excelem i prezentuje timestampy oraz czas z dokładnością do ukończonej minuty. Kolumny to: `data`, `wejście`, `wyjście`, `czas`, `lokalizacja`, `status`, `stawka_godzinowa`, `waluta`, `wynagrodzenie`; kolumna `czas_sekundy` nie jest eksportowana. Lokalizacja używa bieżącego aliasu z fallbackiem do klucza technicznego, a aliasy o prefiksie formuły są neutralizowane wyłącznie podczas serializacji CSV.
+- PDF zawiera kompaktowe podsumowanie, wszystkie poprawne sesje, użyte stawki, kwoty oraz problemy; używa bieżących aliasów lokalizacji, zwykły miesiąc mieści się na jednej stronie A4, a dłuższe raporty są paginowane.
 - PDF jest generowany przez ReportLab z osadzonym fontem Roboto obsługującym polskie znaki; wdrożenie nie wymaga przeglądarki ani ręcznej instalacji fontu.
 - Oba formaty powstają z jednego modelu raportu zasilanego przez effective events, kanoniczny kalkulator czasu i historyczny kalkulator płac.
 - Dashboard i miesięczne podsumowanie mają bardziej zwarty układ, a dni są domyślnie zwinięte. Nagłówek dnia nadal pokazuje wszystkie sesje, czas, wynagrodzenie, lokalizację i ostrzeżenia; szczegółowe eventy oraz akcje korekt są dostępne po rozwinięciu.
@@ -158,6 +160,10 @@ Następny etap powinien dodać prosty login bez publicznej rejestracji, zgodnie 
 - PR #12 — `feat: add pay presentation and rate management`
 - PR #13 — `feat: add dashboard and live shift status`
 - PR #14 — `feat: add monthly CSV and PDF export`
+- PR #15 — `fix: hide seconds in PDF duration display`
+- PR #16 — `fix: hide seconds from user-facing output`
+- PR #17 — `feat: polish main dashboard and application settings`
+- PR #18 — `fix: use location aliases in exports and handle active-day sessions`
 
 ## Maintenance rule
 
