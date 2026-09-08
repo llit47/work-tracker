@@ -35,6 +35,40 @@ export type DashboardSummary = {
 export const DASHBOARD_POLL_INTERVAL_MS = 30_000
 export const LIVE_TIMER_INTERVAL_MS = 1_000
 
+function timestampFingerprint(timestamp: string | null): string | number | null {
+  if (timestamp === null) return null
+  const milliseconds = Date.parse(timestamp)
+  return Number.isFinite(milliseconds) ? milliseconds : timestamp
+}
+
+export function dashboardDataFingerprint(dashboard: DashboardSummary): string {
+  return JSON.stringify({
+    status: dashboard.status,
+    currentEntryInstant: timestampFingerprint(
+      dashboard.current_session?.entry_timestamp_utc ?? null,
+    ),
+    runningToday: dashboard.today.running_duration_seconds !== null,
+    year: dashboard.month.year,
+    month: dashboard.month.month,
+    completedDuration: dashboard.month.completed_duration_seconds,
+    workDays: dashboard.month.work_days,
+    pay: dashboard.month.pay,
+    currency: dashboard.month.currency,
+  })
+}
+
+export function shouldRefreshMonthlyData(
+  previousFingerprint: string | null,
+  dashboard: DashboardSummary,
+  selectedMonth: { year: number; month: number },
+): boolean {
+  return (
+    selectedMonth.year === dashboard.month.year
+    && selectedMonth.month === dashboard.month.month
+    && previousFingerprint !== dashboardDataFingerprint(dashboard)
+  )
+}
+
 export const dashboardStatusPresentation: Record<DashboardStatus, {
   label: string
   description: string

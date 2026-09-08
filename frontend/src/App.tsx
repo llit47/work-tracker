@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 import {
   DEFAULT_APPLICATION_SETTINGS,
@@ -10,7 +10,11 @@ import {
   type ApplicationSettingsFormErrors,
 } from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
-import type { DashboardSummary } from './dashboard'
+import {
+  dashboardDataFingerprint,
+  shouldRefreshMonthlyData,
+  type DashboardSummary,
+} from './dashboard'
 import {
   downloadMonthlyExport,
   exportLabels,
@@ -378,6 +382,7 @@ function findSummaryLocation(summary: WorkSummary | null): string {
 function App() {
   const [today, setToday] = useState(() => currentMonth())
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+  const lastDashboardFingerprint = useRef<string | null>(null)
   const [initialUrlMonth] = useState(() => readMonthFromSearch(window.location.search, today))
   const [selectedMonth, setSelectedMonth] = useState(initialUrlMonth.selection)
   const [summary, setSummary] = useState<WorkSummary | null>(null)
@@ -511,6 +516,17 @@ function App() {
   useEffect(() => {
     if (initialUrlMonth.shouldNormalize) writeMonthToUrl(initialUrlMonth.selection, 'replace')
   }, [initialUrlMonth])
+
+  useEffect(() => {
+    if (dashboardSummary === null) return
+
+    const previousFingerprint = lastDashboardFingerprint.current
+    lastDashboardFingerprint.current = dashboardDataFingerprint(dashboardSummary)
+    if (!shouldRefreshMonthlyData(previousFingerprint, dashboardSummary, selectedMonth)) return
+
+    setRetryRequest((request) => request + 1)
+    setPayRetryRequest((request) => request + 1)
+  }, [dashboardSummary, selectedMonth])
 
   useEffect(() => {
     const handlePopState = () => {
