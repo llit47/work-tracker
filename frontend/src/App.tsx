@@ -43,6 +43,7 @@ import {
   type PayRateFormErrors,
   type PayRateFormValues,
 } from './pay'
+import { formatDuration, formatEventDateTime, formatEventTime } from './presentation'
 import {
   getVisibleDays,
   hasStandaloneUndoAction,
@@ -159,27 +160,6 @@ function formatDay(date: string) {
 function formatCalendarDate(date: string): string {
   const [year, month, day] = date.split('-')
   return `${day}.${month}.${year}`
-}
-
-function formatDuration(seconds: number | null) {
-  if (seconds === null) return '—'
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const remainingSeconds = seconds % 60
-  const parts = []
-  if (hours > 0) parts.push(`${hours}h`)
-  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`)
-  if (remainingSeconds > 0) parts.push(`${remainingSeconds}s`)
-  return parts.length > 0 ? parts.join(' ') : '0m'
-}
-
-function formatEventTime(timestamp: string) {
-  const offset = timestamp.endsWith('Z') ? 'UTC' : `UTC${timestamp.slice(-6)}`
-  return `${timestamp.slice(11, 16)} ${offset}`
-}
-
-function formatEventDateTime(timestamp: string) {
-  return `${timestamp.slice(0, 10)} ${formatEventTime(timestamp)}`
 }
 
 function EventRow({ event, actions }: { event: WorkEvent; actions: EventActions }) {
@@ -895,9 +875,9 @@ function App() {
               <span>Data i godzina</span>
               <input
                 type="datetime-local"
-                min="2000-01-01T00:00:00"
-                max="2100-12-31T23:59:59"
-                step="1"
+                min="2000-01-01T00:00"
+                max="2100-12-31T23:59"
+                step="60"
                 required
                 value={correctionForm.value}
                 onChange={(event) => setCorrectionForm({

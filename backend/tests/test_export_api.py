@@ -74,7 +74,6 @@ async def test_csv_and_pdf_export_endpoints_return_downloadable_monthly_reports(
         "wejście",
         "wyjście",
         "czas",
-        "czas_sekundy",
         "lokalizacja",
         "status",
         "stawka_godzinowa",
@@ -83,10 +82,9 @@ async def test_csv_and_pdf_export_endpoints_return_downloadable_monthly_reports(
     ]
     assert csv_rows[1] == [
         "2026-09-06",
-        "2026-09-06T08:00:00+02:00",
-        "2026-09-06T16:30:00+02:00",
-        "08:30:00",
-        "30600",
+        "2026-09-06T08:00+02:00",
+        "2026-09-06T16:30+02:00",
+        "08:30",
         "gabinet_zabki",
         "valid",
         "50.00",

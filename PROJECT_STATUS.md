@@ -39,11 +39,11 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Błąd API płacowego jest prezentowany niezależnie i nie ukrywa poprawnie pobranego czasu pracy.
 - Kompaktowy dashboard pokazuje bieżący status, start i czas otwartej zmiany, dzisiejszy czas oraz zakończony czas i wynagrodzenie bieżącego miesiąca.
 - `GET /api/dashboard` wyprowadza live state z effective events i tych samych reguł parowania, które zasilają miesięczne podsumowania.
-- Frontend odświeża dashboard co 30 sekund, a działający licznik aktualizuje lokalnie co sekundę bez ciągłego odpytywania API.
+- Frontend odświeża dashboard co 30 sekund, a czas bieżącej zmiany aktualizuje lokalnie bez ciągłego odpytywania API; użytkownik widzi ukończone minuty.
 - Stan niejednoznaczny jest pokazywany jawnie dla duplikatów, sprzecznych eventów, wielu otwartych zmian oraz wejścia starszego niż 16 godzin.
 - Otwarta zmiana nie tworzy syntetycznego eventu, nie modyfikuje raw events i nie zwiększa wynagrodzenia przed poprawnym zakończeniem.
 - Wybrany miesiąc można pobrać jako CSV lub raport PDF bez ponownego wybierania daty.
-- CSV jest kodowany jako UTF-8 z BOM i używa separatora `;` dla zgodności z polskim Excelem.
+- CSV jest kodowany jako UTF-8 z BOM, używa separatora `;` dla zgodności z polskim Excelem i prezentuje timestampy oraz czas z dokładnością do ukończonej minuty. Kolumny to: `data`, `wejście`, `wyjście`, `czas`, `lokalizacja`, `status`, `stawka_godzinowa`, `waluta`, `wynagrodzenie`; kolumna `czas_sekundy` nie jest eksportowana.
 - PDF zawiera kompaktowe podsumowanie, wszystkie poprawne sesje, użyte stawki, kwoty oraz problemy; zwykły miesiąc mieści się na jednej stronie A4, a dłuższe raporty są paginowane.
 - PDF jest generowany przez ReportLab z osadzonym fontem Roboto obsługującym polskie znaki; wdrożenie nie wymaga przeglądarki ani ręcznej instalacji fontu.
 - Oba formaty powstają z jednego modelu raportu zasilanego przez effective events, kanoniczny kalkulator czasu i historyczny kalkulator płac.
@@ -107,6 +107,7 @@ Aktualne endpointy:
 - Stawka sesji jest wybierana jako najnowsza z `effective_from <=` lokalna data efektywnego wejścia.
 - Płaca powstaje wyłącznie z sesji `valid`; czas anomalii nie jest zgadywany ani opłacany.
 - Kwoty są liczone z sekund za pomocą `Decimal`, zaokrąglane do dwóch miejsc przez `ROUND_HALF_UP` dopiero dla wyniku dnia i miesiąca oraz zwracane przez API jako stringi.
+- Prezentacja UI, PDF i CSV nie pokazuje sekund ani nie zaokrągla czasu do najbliższej minuty; baza, API domenowe, obliczenia czasu i wynagrodzenia zachowują pełną precyzję sekundową.
 - Backend nie sumuje sesji rozliczanych w różnych walutach; taki miesiąc zwraca jednoznaczny błąd.
 - Dashboard otrzymuje nazwę strefy IANA przeglądarki, aby poprawnie określić lokalne „dzisiaj” i bieżący miesiąc; wszystkie czasy trwania nadal wynikają z chwil UTC.
 - Status `working` wymaga dokładnie jednego terminalnego `missing_exit` nie starszego niż 16 godzin. Terminalny `duplicate_entry`, `ambiguous_timestamp`, wiele otwartych wejść, czas przyszły lub wejście starsze niż 16 godzin daje status `ambiguous`.

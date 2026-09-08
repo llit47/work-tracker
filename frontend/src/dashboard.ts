@@ -61,19 +61,16 @@ export function formatLiveTimer(totalSeconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds))
   const hours = Math.floor(safeSeconds / 3600)
   const minutes = Math.floor((safeSeconds % 3600) / 60)
-  const seconds = safeSeconds % 60
-  return [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':')
+  return [hours, minutes].map((part) => String(part).padStart(2, '0')).join(':')
 }
 
 export function formatDashboardDuration(totalSeconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(totalSeconds))
   const hours = Math.floor(safeSeconds / 3600)
   const minutes = Math.floor((safeSeconds % 3600) / 60)
-  const seconds = safeSeconds % 60
   const parts: string[] = []
   if (hours > 0) parts.push(`${hours} godz.`)
   if (minutes > 0 || hours > 0) parts.push(`${minutes} min`)
-  if (hours === 0 && minutes === 0 && seconds > 0) parts.push(`${seconds} sek.`)
   return parts.length > 0 ? parts.join(' ') : '0 min'
 }
 
