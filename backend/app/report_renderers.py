@@ -501,11 +501,8 @@ def _format_locations(report: MonthlyReport) -> str:
 
 def _format_duration(seconds: int) -> str:
     hours, remainder = divmod(seconds, 3600)
-    minutes, remaining_seconds = divmod(remainder, 60)
-    formatted = f"{hours} godz. {minutes:02d} min"
-    if remaining_seconds:
-        formatted += f" {remaining_seconds:02d} s"
-    return formatted
+    minutes = remainder // 60
+    return f"{hours} godz. {minutes:02d} min"
 
 
 def _format_clock_duration(seconds: int) -> str:
