@@ -22,6 +22,7 @@ from app.report_renderers import (
     _format_utc_offset,
     _register_fonts,
     _sessions_table,
+    _summary_table,
     render_monthly_report_csv,
     render_monthly_report_pdf,
 )
@@ -543,20 +544,44 @@ def test_pdf_valid_session_times_are_compact_but_unambiguous():
     ]
 
 
-def test_pdf_short_session_keeps_significant_seconds_visible():
+def test_pdf_duration_omits_seconds_without_rounding_or_changing_source_data():
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-06T16:42:00+02:00"),
-            event(2, "exit", "2026-09-06T16:42:03+02:00"),
+            event(1, "entry", "2026-09-06T08:00:00+02:00"),
+            event(2, "exit", "2026-09-06T16:12:37+02:00"),
         ]
     )
     row = _sessions_table(monthly_report)._cellvalues[1]
+    summary = _summary_table(monthly_report)._cellvalues[1]
+    csv_row = list(
+        reader(
+            StringIO(render_monthly_report_csv(monthly_report).decode("utf-8-sig")),
+            delimiter=";",
+        )
+    )[1]
 
     assert [row[1].getPlainText(), row[2].getPlainText(), row[3]] == [
-        "16:42:00",
-        "16:42:03",
-        "0 godz. 00 min 03 s",
+        "08:00:00",
+        "16:12:37",
+        "8 godz. 12 min",
     ]
+    assert summary[1] == "8 godz. 12 min"
+    assert monthly_report.total_duration_seconds == 8 * 3600 + 12 * 60 + 37
+    assert monthly_report.total_pay == Decimal("410.51")
+    assert csv_row[3:5] == ["08:12:37", "29557"]
+
+
+def test_pdf_subminute_duration_displays_zero_minutes_without_rounding_up():
+    monthly_report = report(
+        [
+            event(1, "entry", "2026-09-06T16:42:00+02:00"),
+            event(2, "exit", "2026-09-06T16:42:59+02:00"),
+        ]
+    )
+
+    assert _sessions_table(monthly_report)._cellvalues[1][3] == "0 godz. 00 min"
+    assert _summary_table(monthly_report)._cellvalues[1][1] == "0 godz. 00 min"
+    assert monthly_report.total_duration_seconds == 59
 
 
 def test_pdf_offset_formatter_uses_colon_and_rejects_naive_timestamps():
