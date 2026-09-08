@@ -21,6 +21,7 @@ from .corrections import (
     build_effective_event_stream,
 )
 from .models import CorrectionType, PayRate, WorkEvent, WorkEventCorrection
+from .monthly_report import MonthlyReport, build_monthly_report
 from .pay import (
     MixedCurrenciesError,
     MissingPayRateError,
@@ -28,6 +29,7 @@ from .pay import (
     PayRateRecord,
     calculate_monthly_pay,
 )
+from .report_renderers import render_monthly_report_csv, render_monthly_report_pdf
 from .schemas import (
     CorrectionResponse,
     DashboardResponse,
@@ -95,6 +97,23 @@ def _load_effective_event_stream(session: Session) -> EffectiveEventStream:
         for correction in session.scalars(correction_statement)
     ]
     return build_effective_event_stream(raw_events, corrections)
+
+
+def _load_monthly_report(session: Session, year: int, month: int) -> MonthlyReport:
+    effective_stream = _load_effective_event_stream(session)
+    rates = [
+        _to_pay_rate_record(rate)
+        for rate in session.scalars(
+            select(PayRate).order_by(PayRate.effective_from.asc(), PayRate.id.asc())
+        )
+    ]
+    return build_monthly_report(
+        effective_stream.events,
+        rates,
+        year=year,
+        month=month,
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 def create_app(
@@ -415,6 +434,40 @@ def create_app(
             )
         except (MissingPayRateError, MixedCurrenciesError) as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+    @app.get("/api/export/monthly.csv")
+    def export_monthly_csv(
+        year: int = Query(ge=2000, le=2100),
+        month: int = Query(ge=1, le=12),
+        session: Session = Depends(get_session),
+    ) -> Response:
+        try:
+            report = _load_monthly_report(session, year, month)
+        except (MissingPayRateError, MixedCurrenciesError) as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        filename = f"work-tracker-{year:04d}-{month:02d}.csv"
+        return Response(
+            content=render_monthly_report_csv(report),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/api/export/monthly.pdf")
+    def export_monthly_pdf(
+        year: int = Query(ge=2000, le=2100),
+        month: int = Query(ge=1, le=12),
+        session: Session = Depends(get_session),
+    ) -> Response:
+        try:
+            report = _load_monthly_report(session, year, month)
+        except (MissingPayRateError, MixedCurrenciesError) as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        filename = f"work-tracker-{year:04d}-{month:02d}.pdf"
+        return Response(
+            content=render_monthly_report_pdf(report),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

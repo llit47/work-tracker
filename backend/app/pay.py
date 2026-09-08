@@ -78,9 +78,7 @@ def calculate_monthly_pay(
             if item.duration_seconds is None:
                 raise PayCalculationError("Valid work session has no duration")
             rate = select_rate(ordered_rates, item.local_date)
-            exact_session_pay = (
-                Decimal(item.duration_seconds) * rate.hourly_rate / SECONDS_PER_HOUR
-            )
+            exact_session_pay = calculate_session_pay(item.duration_seconds, rate)
             exact_daily_pay += exact_session_pay
             exact_monthly_pay += exact_session_pay
             currencies_used.add(rate.currency)
@@ -131,6 +129,11 @@ def select_rate(rates: list[PayRateRecord], work_date: date) -> PayRateRecord:
     if matching_rate is None:
         raise MissingPayRateError(f"No pay rate applies on {work_date.isoformat()}")
     return matching_rate
+
+
+def calculate_session_pay(duration_seconds: int, rate: PayRateRecord) -> Decimal:
+    """Return an exact, unrounded session amount for shared pay consumers."""
+    return Decimal(duration_seconds) * rate.hourly_rate / SECONDS_PER_HOUR
 
 
 def round_money(value: Decimal) -> Decimal:

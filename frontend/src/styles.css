@@ -32,6 +32,12 @@ button:disabled { cursor: default; opacity: .45; }
 .month-actions { display: flex; justify-content: center; align-items: end; gap: 10px; margin-bottom: 24px; }
 .month-actions label { display: grid; gap: 4px; color: #52616b; font-size: .76rem; text-transform: uppercase; }
 .month-actions input { min-height: 40px; border: 1px solid #c8d1d7; border-radius: 8px; padding: 6px 9px; color: #26343c; background: #fff; }
+.export-panel { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px 16px; margin: -8px 0 18px; padding: 12px 14px; border: 1px solid #dce2e6; border-radius: 10px; background: #fafbfc; }
+.export-panel > div:first-child { display: grid; gap: 2px; }
+.export-panel > div:first-child span { color: #687780; font-size: .8rem; }
+.export-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.export-actions button { min-height: 36px; padding: 5px 11px; }
+.export-panel > p { grid-column: 1 / -1; margin: 0; color: #a22828; font-size: .86rem; }
 .settings-panel { margin: 0 0 16px; border: 1px solid #dce2e6; border-radius: 10px; background: #fafbfc; }
 .settings-panel summary { padding: 11px 14px; color: #364750; font-weight: 700; cursor: pointer; }
 .settings-panel[open] summary { border-bottom: 1px solid #e3e8eb; }
@@ -121,6 +127,8 @@ button:disabled { cursor: default; opacity: .45; }
   .month-navigation { gap: 8px; }
   .month-actions { align-items: stretch; }
   .month-actions label { flex: 1; }
+  .export-panel { grid-template-columns: 1fr; align-items: stretch; }
+  .export-actions button { flex: 1; }
   .correction-toolbar { align-items: stretch; flex-direction: column; }
   .pay-rate-fields { grid-template-columns: 1fr; }
   .settings-error, .pay-error, .current-rate { align-items: stretch; flex-direction: column; }

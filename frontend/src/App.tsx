@@ -2,6 +2,12 @@ import { useEffect, useState, type FormEvent } from 'react'
 
 import DashboardPanel from './DashboardPanel'
 import {
+  downloadMonthlyExport,
+  exportLabels,
+  monthlyExportFilename,
+  type ExportFormat,
+} from './export'
+import {
   extractOffsetFromIso,
   getPossibleOffsetsForLocalDateTime,
   localDateTimeToOffsetIso,
@@ -292,6 +298,8 @@ function App() {
   const [correctionForm, setCorrectionForm] = useState<CorrectionForm | null>(null)
   const [isSavingCorrection, setIsSavingCorrection] = useState(false)
   const [actionMessage, setActionMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [exportingFormat, setExportingFormat] = useState<ExportFormat | null>(null)
+  const [exportError, setExportError] = useState('')
   const [showIgnoredEvents, setShowIgnoredEvents] = useState(() => {
     try {
       return readShowIgnoredEventsPreference(window.localStorage)
@@ -458,6 +466,7 @@ function App() {
   useEffect(() => {
     setCorrectionForm(null)
     setActionMessage(null)
+    setExportError('')
   }, [selectedMonth.year, selectedMonth.month])
 
   const selectMonth = (selection: MonthSelection) => {
@@ -522,6 +531,32 @@ function App() {
       setActionMessage({ kind: 'error', text: 'Nie udało się zapisać korekty. Spróbuj ponownie.' })
     } finally {
       setIsSavingCorrection(false)
+    }
+  }
+
+  const startExport = async (format: ExportFormat) => {
+    setExportingFormat(format)
+    setExportError('')
+    try {
+      const blob = await downloadMonthlyExport(
+        fetch,
+        apiBase,
+        format,
+        selectedMonth.year,
+        selectedMonth.month,
+      )
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = monthlyExportFilename(format, selectedMonth.year, selectedMonth.month)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+    } catch {
+      setExportError('Nie udało się przygotować pliku. Spróbuj ponownie.')
+    } finally {
+      setExportingFormat(null)
     }
   }
 
@@ -702,6 +737,25 @@ function App() {
             Dzisiaj
           </button>
         </div>
+        <section className="export-panel" aria-labelledby="export-heading">
+          <div>
+            <strong id="export-heading">Eksport</strong>
+            <span>Raport dla wybranego miesiąca</span>
+          </div>
+          <div className="export-actions">
+            {(['csv', 'pdf'] as const).map((format) => (
+              <button
+                type="button"
+                key={format}
+                disabled={exportingFormat !== null}
+                onClick={() => { void startExport(format) }}
+              >
+                {exportingFormat === format ? 'Przygotowywanie…' : exportLabels[format]}
+              </button>
+            ))}
+          </div>
+          {exportError && <p role="alert">{exportError}</p>}
+        </section>
         <details className="settings-panel">
           <summary>Ustawienia</summary>
           <div className="settings-content">
