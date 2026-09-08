@@ -106,7 +106,9 @@ The backend dashboard is authoritative for live work status.
 
 Do not reconstruct authoritative `working` / `outside` / `ambiguous` state in React from raw events or browser-local heuristics.
 
-A visible open work item may be presented as a currently running shift only when it can be uniquely matched to the authoritative dashboard current session.
+A `missing_exit` item may be presented as a currently running shift only when it contains exactly one entry and no exit, the dashboard reports `working` with a current session and a non-null running duration for today, and the entry matches the dashboard session as the same UTC instant.
+
+All other `missing_exit` items remain actionable anomalies, including ambiguous or unmatched open entries.
 
 Ambiguous states must fail safe: prefer leaving an anomaly visible over hiding a real problem.
 
@@ -170,7 +172,7 @@ Configured display names are presentation-only, for example `ARTE Stomatologia`.
 
 Never replace canonical location identifiers in raw events, corrections, pairing, or stored domain relationships with display aliases.
 
-UI/PDF/CSV may display the configured alias, with fallback to the canonical identifier when no alias exists.
+Normal UI/PDF/CSV presentation uses the configured alias, with fallback to the canonical identifier when no alias exists. Administrative settings may also show the canonical identifier explicitly.
 
 Changing an alias must not rewrite historical work data.
 

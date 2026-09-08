@@ -1,6 +1,6 @@
 # Work Tracker
 
-Prosta aplikacja działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i wylicza sesje pracy bez zmiany danych źródłowych. Frontend React pokazuje sesje, dzienne sumy, miesięczne podsumowanie i anomalie bieżącego miesiąca.
+Prosta aplikacja działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i wylicza sesje pracy bez zmiany danych źródłowych. Frontend React pokazuje bieżący status pracy, miesięczne sesje i anomalie, korekty, wynagrodzenie oraz eksporty CSV/PDF.
 
 Nie konfiguruje publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
 
@@ -206,6 +206,14 @@ npm run build
 - `POST /api/manual-events` — dodaje ręczne `entry` albo `exit` jako rekord korekty.
 - `GET /api/corrections` — zwraca aktualne korekty.
 - `DELETE /api/corrections/{correction_id}` — cofa korektę bez zmiany raw eventu.
+- `GET /api/pay-rates` — zwraca historyczne stawki godzinowe w kolejności obowiązywania.
+- `POST /api/pay-rates` — dodaje nową historyczną stawkę bez nadpisywania wcześniejszych okresów.
+- `GET /api/application-settings` — zwraca globalny tytuł aplikacji i aliasy lokalizacji.
+- `PUT /api/application-settings` — aktualizuje globalne ustawienia prezentacji.
+- `GET /api/pay-summary?year=2026&month=9` — zwraca autorytatywne dzienne i miesięczne wynagrodzenie za poprawne sesje.
+- `GET /api/dashboard?timezone=Europe/Warsaw` — zwraca autorytatywny live status oraz podsumowanie dnia i bieżącego miesiąca w podanej strefie IANA.
+- `GET /api/export/monthly.csv?year=2026&month=9` — pobiera historyczny raport miesiąca jako CSV UTF-8 z BOM i separatorem `;`.
+- `GET /api/export/monthly.pdf?year=2026&month=9` — pobiera historyczny raport miesiąca jako PDF A4.
 - `GET /api/health` — prosty status API.
 
 Przykładowy webhook:
@@ -219,4 +227,8 @@ curl -X POST http://127.0.0.1:8000/api/webhook/home-assistant \
 
 Format lokalizacji to małe litery, cyfry i `_`, np. `gabinet_zabki`; dzięki temu można później dodać kolejne lokalizacje bez zmiany modelu.
 
-`source` w obecnej wersji musi mieć wartość `home_assistant`. Zdarzenia zapisują oryginalny ISO-8601 timestamp wraz z offsetem oraz osobny, znormalizowany timestamp UTC. Ten drugi będzie podstawą przyszłego liczenia czasu pracy, a pierwszy zachowuje lokalną datę i godzinę zdarzenia również przy zmianie czasu letniego/zimowego.
+`source` w obecnej wersji musi mieć wartość `home_assistant`. Zdarzenia zapisują oryginalny ISO-8601 timestamp wraz z offsetem oraz osobny, znormalizowany timestamp UTC. Chwila UTC jest podstawą bieżącego liczenia czasu trwania, a pierwszy timestamp zachowuje lokalną datę, godzinę i offset również przy zmianie czasu letniego/zimowego.
+
+Skonfigurowane nazwy wyświetlane lokalizacji są używane w zwykłym UI oraz w nowo generowanych CSV/PDF, z fallbackiem do identyfikatora technicznego. Identyfikator zapisany w zdarzeniach nie jest zmieniany. Alias zaczynający się od `=`, `+`, `-` lub `@` jest neutralizowany apostrofem wyłącznie w komórce CSV, aby arkusz kalkulacyjny nie wykonał go jako formuły; UI, PDF i zapisane ustawienie zachowują oryginalny tekst.
+
+Frontend pokazuje `missing_exit` jako „Trwająca zmiana” tylko wtedy, gdy jego wejście odpowiada tej samej chwili UTC co jednoznaczna sesja zwrócona przez dashboard. Pierwszy snapshot i późniejsze istotne zmiany dashboardu odświeżają aktualnie wybrane podsumowanie czasu i płac; sam upływ czasu bieżącej zmiany nie powoduje dodatkowych żądań miesięcznych.
