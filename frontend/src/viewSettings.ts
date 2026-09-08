@@ -8,6 +8,7 @@ type VisibleEvent = {
 }
 
 type VisibleDay = {
+  date: string
   items: readonly unknown[]
   ignored_events: readonly unknown[]
 }
@@ -38,7 +39,9 @@ export function isEventVisible(event: VisibleEvent, showIgnoredEvents: boolean):
 }
 
 export function getVisibleDays<T extends VisibleDay>(days: readonly T[], showIgnoredEvents: boolean): T[] {
-  return days.filter((day) => day.items.length > 0 || (showIgnoredEvents && day.ignored_events.length > 0))
+  return days
+    .filter((day) => day.items.length > 0 || (showIgnoredEvents && day.ignored_events.length > 0))
+    .sort((left, right) => right.date.localeCompare(left.date))
 }
 
 export function hasStandaloneUndoAction(event: UndoableEvent): boolean {

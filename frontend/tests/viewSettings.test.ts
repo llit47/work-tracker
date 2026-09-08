@@ -37,14 +37,21 @@ assertEqual(isEventVisible(manualEvent, false), true, 'manual events remain visi
 assertEqual(isEventVisible(correctedEvent, false), true, 'timestamp-corrected events remain visible')
 assertEqual(hasStandaloneUndoAction(ignoredEvent), true, 'revealed ignored events retain their undo control')
 
-const normalDay = { date: '2026-09-06', items: [normalEvent], ignored_events: [] }
+const oldestDay = { date: '2026-09-01', items: [normalEvent], ignored_events: [] }
+const newestDay = { date: '2026-09-08', items: [normalEvent], ignored_events: [] }
 const ignoredOnlyDay = { date: '2026-09-07', items: [], ignored_events: [ignoredEvent] }
-assertEqual(getVisibleDays([normalDay, ignoredOnlyDay], false), [normalDay], 'ignored-only days are hidden by default')
+const apiDays = [oldestDay, ignoredOnlyDay, newestDay]
 assertEqual(
-  getVisibleDays([normalDay, ignoredOnlyDay], true),
-  [normalDay, ignoredOnlyDay],
-  'ignored-only days are restored with the preference',
+  getVisibleDays(apiDays, false),
+  [newestDay, oldestDay],
+  'visible days are newest-first while ignored-only days are hidden',
 )
+assertEqual(
+  getVisibleDays(apiDays, true),
+  [newestDay, ignoredOnlyDay, oldestDay],
+  'ignored-only days are restored in newest-first order',
+)
+assertEqual(apiDays, [oldestDay, ignoredOnlyDay, newestDay], 'the fetched day array is not mutated')
 
 const storage = memoryStorage()
 assertEqual(readShowIgnoredEventsPreference(storage), false, 'the first visit defaults to hidden ignored events')
