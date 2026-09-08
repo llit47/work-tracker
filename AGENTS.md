@@ -142,7 +142,7 @@ Do not implement an independent salary calculation in the frontend.
 
 Only finalized valid sessions contribute to pay.
 
-Rate selection is based on the effective local entry date.
+Historical work/pay uses the effective entry date under the canonical work-time rules. Live dashboard pay uses the entry date interpreted in the dashboard's requested IANA timezone, matching dashboard month/day semantics.
 
 Use `Decimal`-based monetary arithmetic and the existing rounding rules. Do not replace them with floating-point calculations.
 
