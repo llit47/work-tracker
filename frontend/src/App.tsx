@@ -1,5 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 
+import {
+  DEFAULT_APPLICATION_SETTINGS,
+  getLocationDisplayName,
+  loadApplicationSettings,
+  saveApplicationSettings,
+  validateApplicationTitle,
+  type ApplicationSettings,
+  type ApplicationSettingsFormErrors,
+} from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
 import {
   downloadMonthlyExport,
@@ -43,7 +52,20 @@ import {
   type PayRateFormErrors,
   type PayRateFormValues,
 } from './pay'
-import { formatDuration, formatEventDateTime, formatEventTime } from './presentation'
+import {
+  dayOverviewPresentation,
+  formatDuration,
+  formatEventDateTime,
+  formatEventTime,
+  formatSessionRange,
+  timestampOffset,
+} from './presentation'
+import {
+  readThemePreference,
+  resolveTheme,
+  writeThemePreference,
+  type ThemePreference,
+} from './theme'
 import {
   getVisibleDays,
   hasStandaloneUndoAction,
@@ -162,21 +184,40 @@ function formatCalendarDate(date: string): string {
   return `${day}.${month}.${year}`
 }
 
-function EventRow({ event, actions }: { event: WorkEvent; actions: EventActions }) {
+function timestampHasAmbiguousLocalTime(timestamp: string): boolean {
+  return getPossibleOffsetsForLocalDateTime(timestampToLocalInput(timestamp)).length > 1
+}
+
+function EventRow({
+  event,
+  actions,
+  showOffset = false,
+}: {
+  event: WorkEvent
+  actions: EventActions
+  showOffset?: boolean
+}) {
   const eventLabel = event.event_type === 'entry' ? 'WEJŚCIE' : 'WYJŚCIE'
+  const originalTimestamp = event.original_event_timestamp ?? event.event_timestamp
+  const correctionNeedsOffsets = event.is_timestamp_corrected && (
+    timestampOffset(originalTimestamp) !== timestampOffset(event.event_timestamp)
+    || timestampHasAmbiguousLocalTime(originalTimestamp)
+    || timestampHasAmbiguousLocalTime(event.event_timestamp)
+  )
+  const eventNeedsOffset = showOffset || timestampHasAmbiguousLocalTime(event.event_timestamp)
 
   return (
     <div className={`event-row${event.is_ignored ? ' ignored' : ''}`}>
       <div className="event-audit">
         {event.is_timestamp_corrected && event.original_event_timestamp ? (
           <>
-            <span>Oryginalnie: {formatEventDateTime(event.original_event_timestamp)} — {eventLabel}</span>
-            <strong>Po korekcie: {formatEventDateTime(event.event_timestamp)} — {eventLabel}</strong>
+            <span>Oryginalnie: {formatEventDateTime(event.original_event_timestamp, correctionNeedsOffsets)} — {eventLabel}</span>
+            <strong>Po korekcie: {formatEventDateTime(event.event_timestamp, correctionNeedsOffsets)} — {eventLabel}</strong>
             <small className="audit-status corrected">Zdarzenie Home Assistant · Korekta ręczna</small>
           </>
         ) : (
           <>
-            <strong>{formatEventTime(event.event_timestamp)} — {eventLabel}</strong>
+            <strong>{formatEventTime(event.event_timestamp, eventNeedsOffset)} — {eventLabel}</strong>
             {!event.is_manual && !event.is_ignored && <small className="audit-status source">Home Assistant</small>}
             {event.is_manual && <small className="audit-status manual">Dodano ręcznie</small>}
             {event.is_ignored && <small className="audit-status ignored">Zdarzenie Home Assistant · Zignorowano ręcznie</small>}
@@ -204,18 +245,29 @@ function EventRow({ event, actions }: { event: WorkEvent; actions: EventActions 
   )
 }
 
-function SessionItem({ item, actions }: { item: WorkTimeItem; actions: EventActions }) {
+function SessionItem({
+  item,
+  actions,
+  locationName,
+}: {
+  item: WorkTimeItem
+  actions: EventActions
+  locationName: string
+}) {
   const entry = item.events.find((event) => event.event_type === 'entry')
   const exit = item.events.find((event) => event.event_type === 'exit')
+  const showEventOffsets = new Set(item.events.map((event) => timestampOffset(event.event_timestamp))).size > 1
 
   if (item.status === 'valid' || item.status === 'unusually_long_session') {
     return (
       <article className={`session ${item.status === 'valid' ? 'valid' : 'warning'}`}>
         <div className="session-details">
-          <strong className="session-range">{entry ? formatEventTime(entry.event_timestamp) : '—'} → {exit ? formatEventTime(exit.event_timestamp) : '—'}</strong>
-          <span className="location">{item.location}</span>
+          <strong className="session-range">{formatSessionRange(entry?.event_timestamp ?? null, exit?.event_timestamp ?? null)}</strong>
+          <span className="location">{locationName}</span>
           <div className="event-list">
-            {item.events.map((event) => <EventRow key={event.id} event={event} actions={actions} />)}
+            {item.events.map((event) => (
+              <EventRow key={event.id} event={event} actions={actions} showOffset={showEventOffsets} />
+            ))}
           </div>
         </div>
         <div className="session-result">
@@ -230,12 +282,61 @@ function SessionItem({ item, actions }: { item: WorkTimeItem; actions: EventActi
     <article className="session warning">
       <div className="session-details">
         <div className="event-list">
-          {item.events.map((event) => <EventRow key={event.id} event={event} actions={actions} />)}
+          {item.events.map((event) => (
+            <EventRow key={event.id} event={event} actions={actions} showOffset={showEventOffsets} />
+          ))}
         </div>
-        <span className="location">{item.location}</span>
+        <span className="location">{locationName}</span>
       </div>
       <span className="anomaly">⚠ {anomalyLabels[item.status]}</span>
     </article>
+  )
+}
+
+function DayOverview({
+  day,
+  settings,
+  showIgnoredEvents,
+}: {
+  day: WorkDay
+  settings: ApplicationSettings
+  showIgnoredEvents: boolean
+}) {
+  const locations = [...new Set([
+    ...day.items.map((item) => item.location),
+    ...(showIgnoredEvents ? day.ignored_events.map((event) => event.location) : []),
+  ])].map((location) => getLocationDisplayName(settings, location))
+
+  return (
+    <div className="day-overview">
+      <div className="day-overview-items">
+        {day.items.map((item) => {
+          const entry = item.events.find((event) => event.event_type === 'entry')
+          const exit = item.events.find((event) => event.event_type === 'exit')
+          const presentation = dayOverviewPresentation(item.status)
+          return (
+            <span
+              className={`day-overview-item${item.status === 'valid' ? '' : ' warning'}`}
+              key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
+            >
+              {presentation.showRange && (
+                <strong>{formatSessionRange(entry?.event_timestamp ?? null, exit?.event_timestamp ?? null)}</strong>
+              )}
+              {presentation.showDuration && <span>{formatDuration(item.duration_seconds)}</span>}
+              {presentation.showWarning && item.status !== 'valid' && (
+                <strong>⚠ {anomalyLabels[item.status]}</strong>
+              )}
+            </span>
+          )
+        })}
+        {showIgnoredEvents && day.ignored_events.length > 0 && (
+          <span className="day-overview-item ignored-note">
+            Zignorowane zdarzenia: {day.ignored_events.length}
+          </span>
+        )}
+      </div>
+      {locations.length > 0 && <small>{locations.join(', ')}</small>}
+    </div>
   )
 }
 
@@ -287,6 +388,24 @@ function App() {
       return false
     }
   })
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
+    try {
+      return readThemePreference(window.localStorage)
+    } catch {
+      return 'auto'
+    }
+  })
+  const [applicationSettings, setApplicationSettings] = useState<ApplicationSettings>(
+    DEFAULT_APPLICATION_SETTINGS,
+  )
+  const [applicationSettingsForm, setApplicationSettingsForm] = useState<ApplicationSettings>(
+    DEFAULT_APPLICATION_SETTINGS,
+  )
+  const [applicationSettingsState, setApplicationSettingsState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [applicationSettingsRetry, setApplicationSettingsRetry] = useState(0)
+  const [applicationSettingsErrors, setApplicationSettingsErrors] = useState<ApplicationSettingsFormErrors>({})
+  const [applicationSettingsMessage, setApplicationSettingsMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [isSavingApplicationSettings, setIsSavingApplicationSettings] = useState(false)
 
   useEffect(() => {
     try {
@@ -295,6 +414,48 @@ function App() {
       // The setting still works until this page is closed when storage is unavailable.
     }
   }, [showIgnoredEvents])
+
+  useEffect(() => {
+    try {
+      writeThemePreference(window.localStorage, themePreference)
+    } catch {
+      // The theme remains active for this tab when storage is unavailable.
+    }
+    const colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
+    const applyResolvedTheme = () => {
+      document.documentElement.dataset.theme = resolveTheme(themePreference, colorScheme.matches)
+    }
+    applyResolvedTheme()
+    if (themePreference === 'auto') colorScheme.addEventListener('change', applyResolvedTheme)
+    return () => colorScheme.removeEventListener('change', applyResolvedTheme)
+  }, [themePreference])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let ignoreResponse = false
+    setApplicationSettingsState('loading')
+    const load = async () => {
+      try {
+        const loaded = await loadApplicationSettings(fetch, apiBase, controller.signal)
+        if (!ignoreResponse) {
+          setApplicationSettings(loaded)
+          setApplicationSettingsForm(loaded)
+          setApplicationSettingsState('ready')
+        }
+      } catch {
+        if (!ignoreResponse) setApplicationSettingsState('error')
+      }
+    }
+    void load()
+    return () => {
+      ignoreResponse = true
+      controller.abort()
+    }
+  }, [applicationSettingsRetry])
+
+  useEffect(() => {
+    document.title = applicationSettings.application_title
+  }, [applicationSettings.application_title])
 
   useEffect(() => {
     let refreshTimer: number
@@ -470,6 +631,30 @@ function App() {
     setRetryRequest((request) => request + 1)
     refreshPaySummary()
     setDashboardRefreshRequest((request) => request + 1)
+  }
+
+  const saveGlobalApplicationSettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setApplicationSettingsMessage(null)
+    const titleValidation = validateApplicationTitle(applicationSettingsForm.application_title)
+    setApplicationSettingsErrors(titleValidation.errors)
+    if (!titleValidation.value) return
+
+    setIsSavingApplicationSettings(true)
+    try {
+      const saved = await saveApplicationSettings(fetch, apiBase, {
+        application_title: titleValidation.value,
+        locations: applicationSettingsForm.locations,
+      })
+      setApplicationSettings(saved)
+      setApplicationSettingsForm(saved)
+      setApplicationSettingsState('ready')
+      setApplicationSettingsMessage({ kind: 'success', text: 'Ustawienia aplikacji zostały zapisane.' })
+    } catch {
+      setApplicationSettingsMessage({ kind: 'error', text: 'Nie udało się zapisać ustawień aplikacji.' })
+    } finally {
+      setIsSavingApplicationSettings(false)
+    }
   }
 
   const savePayRate = async (event: FormEvent<HTMLFormElement>) => {
@@ -657,6 +842,16 @@ function App() {
     ? extractOffsetFromIso(correctionForm.existingTimestamp)
     : null
   const correctionSelectedOffset = correctionForm?.selectedOffset ?? correctionPreservedOffset ?? ''
+  const correctionOriginalTimestamp = correctionForm?.kind === 'timestamp'
+    ? correctionForm.event.original_event_timestamp ?? correctionForm.event.event_timestamp
+    : null
+  const correctionAuditShowsOffsets = correctionForm?.kind === 'timestamp'
+    && correctionOriginalTimestamp !== null
+    && (
+      timestampOffset(correctionOriginalTimestamp) !== timestampOffset(correctionForm.event.event_timestamp)
+      || timestampHasAmbiguousLocalTime(correctionOriginalTimestamp)
+      || timestampHasAmbiguousLocalTime(correctionForm.event.event_timestamp)
+    )
   const visibleDays = summary ? getVisibleDays(summary.days, showIgnoredEvents) : []
   const latestPayRate = payRates.length > 0 ? payRates[payRates.length - 1] : null
   const usedRateDescription = paySummary
@@ -666,7 +861,7 @@ function App() {
   return (
     <main className="page">
       <section className="card" aria-live="polite">
-        <h1>Work Tracker</h1>
+        <h1>{applicationSettings.application_title}</h1>
         <DashboardPanel apiBase={apiBase} refreshRequest={dashboardRefreshRequest} />
         <nav className="month-navigation" aria-label="Nawigacja miesiąca">
           <button
@@ -739,8 +934,92 @@ function App() {
         <details className="settings-panel">
           <summary>Ustawienia</summary>
           <div className="settings-content">
+            <section className="settings-section application-settings" aria-labelledby="application-settings-heading">
+              <h3 id="application-settings-heading">Aplikacja</h3>
+              {applicationSettingsState === 'loading' && (
+                <p className="settings-note">Ładowanie ustawień aplikacji…</p>
+              )}
+              {applicationSettingsState === 'error' && (
+                <div className="settings-error" role="alert">
+                  <span>Nie udało się pobrać ustawień aplikacji.</span>
+                  <button type="button" onClick={() => setApplicationSettingsRetry((value) => value + 1)}>
+                    Spróbuj ponownie
+                  </button>
+                </div>
+              )}
+              <form className="application-settings-form" onSubmit={saveGlobalApplicationSettings} noValidate>
+                <label>
+                  <span>Nazwa aplikacji</span>
+                  <input
+                    type="text"
+                    required
+                    maxLength={100}
+                    value={applicationSettingsForm.application_title}
+                    aria-invalid={Boolean(applicationSettingsErrors.applicationTitle)}
+                    aria-describedby={applicationSettingsErrors.applicationTitle ? 'application-title-error' : undefined}
+                    onChange={(event) => {
+                      setApplicationSettingsForm({
+                        ...applicationSettingsForm,
+                        application_title: event.target.value,
+                      })
+                      setApplicationSettingsErrors({})
+                    }}
+                  />
+                  {applicationSettingsErrors.applicationTitle && (
+                    <small id="application-title-error" className="field-error">
+                      {applicationSettingsErrors.applicationTitle}
+                    </small>
+                  )}
+                </label>
+                <div className="location-settings">
+                  <h4>Lokalizacje</h4>
+                  {applicationSettingsForm.locations.map((locationSetting) => (
+                    <label key={locationSetting.location}>
+                      <span>Nazwa wyświetlana</span>
+                      <input
+                        type="text"
+                        maxLength={100}
+                        placeholder={locationSetting.location}
+                        value={locationSetting.display_name ?? ''}
+                        onChange={(event) => setApplicationSettingsForm({
+                          ...applicationSettingsForm,
+                          locations: applicationSettingsForm.locations.map((item) => (
+                            item.location === locationSetting.location
+                              ? { ...item, display_name: event.target.value || null }
+                              : item
+                          )),
+                        })}
+                      />
+                      <small>Identyfikator techniczny: <code>{locationSetting.location}</code></small>
+                    </label>
+                  ))}
+                </div>
+                <button type="submit" disabled={isSavingApplicationSettings || applicationSettingsState !== 'ready'}>
+                  {isSavingApplicationSettings ? 'Zapisywanie…' : 'Zapisz ustawienia aplikacji'}
+                </button>
+                {applicationSettingsMessage && (
+                  <p
+                    className={`inline-message ${applicationSettingsMessage.kind}`}
+                    role={applicationSettingsMessage.kind === 'error' ? 'alert' : 'status'}
+                  >
+                    {applicationSettingsMessage.text}
+                  </p>
+                )}
+              </form>
+            </section>
             <section className="settings-section">
               <h3>Widok</h3>
+              <label className="theme-setting">
+                <span>Motyw</span>
+                <select
+                  value={themePreference}
+                  onChange={(event) => setThemePreference(event.target.value as ThemePreference)}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="light">Jasny</option>
+                  <option value="dark">Ciemny</option>
+                </select>
+              </label>
               <label className="setting-option">
                 <input
                   type="checkbox"
@@ -863,13 +1142,13 @@ function App() {
             <h3>{correctionForm.kind === 'timestamp' ? 'Edytuj godzinę' : correctionForm.eventType === 'entry' ? 'Dodaj wejście' : 'Dodaj wyjście'}</h3>
             {correctionForm.kind === 'timestamp' ? (
               <div className="correction-context">
-                <span>Oryginalna data i godzina: <strong>{formatEventDateTime(correctionForm.event.original_event_timestamp ?? correctionForm.event.event_timestamp)}</strong></span>
+                <span>Oryginalna data i godzina: <strong>{formatEventDateTime(correctionOriginalTimestamp ?? correctionForm.event.event_timestamp, correctionAuditShowsOffsets)}</strong></span>
                 {correctionForm.event.is_timestamp_corrected && (
-                  <span>Aktualna korekta: <strong>{formatEventDateTime(correctionForm.event.event_timestamp)}</strong></span>
+                  <span>Aktualna korekta: <strong>{formatEventDateTime(correctionForm.event.event_timestamp, correctionAuditShowsOffsets)}</strong></span>
                 )}
               </div>
             ) : (
-              <p className="correction-context">Lokalizacja: <strong>{correctionForm.location}</strong></p>
+              <p className="correction-context">Lokalizacja: <strong>{getLocationDisplayName(applicationSettings, correctionForm.location)}</strong></p>
             )}
             <label>
               <span>Data i godzina</span>
@@ -965,9 +1244,19 @@ function App() {
           {visibleDays.length === 0 && <p className="message">Brak zdarzeń w tym miesiącu.</p>}
           <div className="days">
             {visibleDays.map((day) => (
-              <section className="day" key={day.date}>
-                <div className="day-heading">
-                  <h3>{formatDay(day.date)}</h3>
+              <details className={`day${day.anomaly_count > 0 ? ' has-warning' : ''}`} key={day.date}>
+                <summary className="day-heading">
+                  <div className="day-title">
+                    <h3>{formatDay(day.date)}</h3>
+                    {day.anomaly_count > 0 && (
+                      <span className="day-warning">⚠ Wymaga uwagi ({day.anomaly_count})</span>
+                    )}
+                    <DayOverview
+                      day={day}
+                      settings={applicationSettings}
+                      showIgnoredEvents={showIgnoredEvents}
+                    />
+                  </div>
                   <div className="day-totals">
                     <span>Czas: <strong>{formatDuration(day.total_duration_seconds)}</strong></span>
                     <span>
@@ -978,28 +1267,32 @@ function App() {
                           : '—'}
                       </strong>
                     </span>
+                    <small className="disclosure-label">Szczegóły</small>
+                  </div>
+                </summary>
+                <div className="day-details">
+                  <div className="sessions">
+                    {day.items.map((item) => (
+                      <SessionItem
+                        key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
+                        item={item}
+                        actions={eventActions}
+                        locationName={getLocationDisplayName(applicationSettings, item.location)}
+                      />
+                    ))}
+                    {day.ignored_events
+                      .filter((event) => isEventVisible(event, showIgnoredEvents))
+                      .map((event) => (
+                        <article className="session ignored-session" key={`ignored-${event.id}`}>
+                          <div className="session-details">
+                            <EventRow event={event} actions={eventActions} />
+                            <span className="location">{getLocationDisplayName(applicationSettings, event.location)}</span>
+                          </div>
+                        </article>
+                      ))}
                   </div>
                 </div>
-                <div className="sessions">
-                  {day.items.map((item) => (
-                    <SessionItem
-                      key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
-                      item={item}
-                      actions={eventActions}
-                    />
-                  ))}
-                  {day.ignored_events
-                    .filter((event) => isEventVisible(event, showIgnoredEvents))
-                    .map((event) => (
-                      <article className="session ignored-session" key={`ignored-${event.id}`}>
-                        <div className="session-details">
-                          <EventRow event={event} actions={eventActions} />
-                          <span className="location">{event.location}</span>
-                        </div>
-                      </article>
-                    ))}
-                </div>
-              </section>
+              </details>
             ))}
           </div>
         </>}

@@ -139,3 +139,32 @@ class PayRate(Base):
     hourly_rate: Mapped[Decimal] = mapped_column(ExactDecimal(), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PLN")
     created_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)
+
+
+class ApplicationSetting(Base):
+    __tablename__ = "application_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_application_settings_singleton"),
+        CheckConstraint(
+            "length(trim(application_title)) BETWEEN 1 AND 100",
+            name="ck_application_settings_title",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    application_title: Mapped[str] = mapped_column(String(100), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)
+
+
+class LocationDisplayName(Base):
+    __tablename__ = "location_display_names"
+    __table_args__ = (
+        CheckConstraint(
+            "length(trim(display_name)) BETWEEN 1 AND 100",
+            name="ck_location_display_names_value",
+        ),
+    )
+
+    location: Mapped[str] = mapped_column(String(100), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)

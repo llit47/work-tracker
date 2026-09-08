@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 import pytest
 
 from app.database import build_engine
-from app.models import PayRate
+from app.models import ApplicationSetting, LocationDisplayName, PayRate
 
 
 def alembic_config(backend_dir: Path, database_url: str) -> Config:
@@ -152,3 +152,49 @@ def test_pay_rate_migration_seeds_default_and_preserves_existing_data(tmp_path: 
     with engine.connect() as connection:
         assert connection.execute(text("SELECT count(*) FROM work_events")).scalar_one() == 1
         assert connection.execute(text("SELECT count(*) FROM work_event_corrections")).scalar_one() == 1
+
+
+def test_application_settings_migration_preserves_domain_data(tmp_path: Path, monkeypatch):
+    backend_dir = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'settings-migration.db'}"
+    config = alembic_config(backend_dir, database_url)
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    command.upgrade(config, "20260907_03")
+    engine = build_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO work_events "
+                "(id, event_type, location, event_timestamp, event_timestamp_utc, received_at, source) "
+                "VALUES (1, 'entry', 'gabinet_zabki', '2026-09-08T08:00:00+02:00', "
+                "'2026-09-08T06:00:00+00:00', '2026-09-08T06:00:01+00:00', 'home_assistant')"
+            )
+        )
+
+    command.upgrade(config, "head")
+    with Session(engine) as session:
+        application_settings = session.get(ApplicationSetting, 1)
+        assert application_settings is not None
+        assert application_settings.application_title == "Work Tracker"
+        assert list(session.scalars(select(LocationDisplayName))) == []
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM work_events")).scalar_one() == 1
+
+    command.downgrade(config, "20260907_03")
+    table_names = inspect(engine).get_table_names()
+    assert "application_settings" not in table_names
+    assert "location_display_names" not in table_names
+    assert "work_events" in table_names
+    assert "pay_rates" in table_names
+    assert connection_event_count(engine) == 1
+    with Session(engine) as session:
+        default_rate = session.scalar(
+            select(PayRate).where(PayRate.effective_from == date(1970, 1, 1))
+        )
+        assert default_rate is not None
+
+
+def connection_event_count(engine) -> int:
+    with engine.connect() as connection:
+        return connection.execute(text("SELECT count(*) FROM work_events")).scalar_one()

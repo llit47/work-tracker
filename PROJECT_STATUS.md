@@ -29,6 +29,9 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Każdą korektę można cofnąć; frontend po mutacji pobiera nowe podsumowanie z backendu.
 - Frontend rozróżnia zdarzenia Home Assistant, zdarzenia skorygowane, zignorowane i dodane ręcznie.
 - Kompaktowa sekcja `Ustawienia` zawiera preferencje widoku i pozostaje domyślnie zwinięta.
+- Sekcja `Ustawienia → Aplikacja` zapisuje globalną nazwę aplikacji i przyjazne nazwy lokalizacji w backendzie, dzięki czemu są wspólne dla wszystkich urządzeń.
+- Tytuł strony i karty przeglądarki korzysta z globalnej nazwy aplikacji; identyfikator `gabinet_zabki` pozostaje niezmienionym kluczem technicznym, a UI stosuje skonfigurowaną nazwę wyświetlaną z bezpiecznym fallbackiem do klucza.
+- Widok obsługuje motywy `Auto`, `Jasny` i `Ciemny`; wybór jest lokalny dla przeglądarki, a tryb automatyczny reaguje na zmianę systemowego schematu kolorów.
 - Ignorowane eventy są domyślnie ukryte; opcja `Pokaż ignorowane wydarzenia` przywraca ich audytowy widok wraz z możliwością cofnięcia korekty i jest zapamiętywana w `localStorage`.
 - Backend przechowuje historyczne stawki godzinowe i wylicza dzienne oraz miesięczne wynagrodzenie wyłącznie z poprawnych sesji.
 - Domyślna stawka to `50,00 PLN/h` od `1970-01-01`; kolejne stawki nie zmieniają historycznych rozliczeń.
@@ -47,6 +50,8 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - PDF zawiera kompaktowe podsumowanie, wszystkie poprawne sesje, użyte stawki, kwoty oraz problemy; zwykły miesiąc mieści się na jednej stronie A4, a dłuższe raporty są paginowane.
 - PDF jest generowany przez ReportLab z osadzonym fontem Roboto obsługującym polskie znaki; wdrożenie nie wymaga przeglądarki ani ręcznej instalacji fontu.
 - Oba formaty powstają z jednego modelu raportu zasilanego przez effective events, kanoniczny kalkulator czasu i historyczny kalkulator płac.
+- Dashboard i miesięczne podsumowanie mają bardziej zwarty układ, a dni są domyślnie zwinięte. Nagłówek dnia nadal pokazuje wszystkie sesje, czas, wynagrodzenie, lokalizację i ostrzeżenia; szczegółowe eventy oraz akcje korekt są dostępne po rozwinięciu.
+- Zwykłe godziny w interfejsie nie pokazują offsetu UTC; przy zmianie offsetu (np. DST) wyświetlany jest kompaktowy `+HH:MM`, a sesja przez północ pokazuje datę wyjścia.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
@@ -62,6 +67,8 @@ Aktualne endpointy:
 - `DELETE /api/corrections/{correction_id}`
 - `GET /api/pay-rates`
 - `POST /api/pay-rates`
+- `GET /api/application-settings`
+- `PUT /api/application-settings`
 - `GET /api/pay-summary?year=YYYY&month=MM`
 - `GET /api/dashboard?timezone=IANA_TIMEZONE`
 - `GET /api/export/monthly.csv?year=YYYY&month=MM`
@@ -103,6 +110,8 @@ Aktualne endpointy:
 - Undo usuwa rekord `work_event_corrections`; nigdy nie usuwa ani nie modyfikuje raw eventu.
 - Migracja Alembic `20260907_02` dodaje wyłącznie strukturę korekt i zachowuje dane `work_events`.
 - Migracja Alembic `20260907_03` dodaje `pay_rates` i seeduje jedną stawkę `50,00 PLN/h` od `1970-01-01`, bez modyfikacji eventów ani korekt.
+- Migracja Alembic `20260908_04` dodaje izolowane tabele `application_settings` i `location_display_names`, seeduje tytuł `Work Tracker` i nie modyfikuje danych czasu pracy.
+- Globalne ustawienia prezentacji przechowują jeden tytuł aplikacji oraz opcjonalne aliasy kluczy lokalizacji. Brak aliasu zawsze oznacza wyświetlenie niezmienionego identyfikatora technicznego.
 - `pay_rates` zawiera `id`, unikalne `effective_from`, dokładne `hourly_rate`, `currency` oraz `created_at`; stawka jest przechowywana jako kanoniczny zapis dziesiętny, ponieważ SQLite `NUMERIC` używa dla takich wartości binarnego `REAL`.
 - Stawka sesji jest wybierana jako najnowsza z `effective_from <=` lokalna data efektywnego wejścia.
 - Płaca powstaje wyłącznie z sesji `valid`; czas anomalii nie jest zgadywany ani opłacany.
