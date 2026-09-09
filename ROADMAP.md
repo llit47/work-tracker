@@ -218,7 +218,8 @@ Funkcja jest planowana i nie została jeszcze zaimplementowana.
 Planowany zakres:
 
 - Istniejący `POST /api/webhook/home-assistant` nadal zapisuje immutable raw event przed uruchomieniem opcjonalnej warstwy powiadomień.
-- Odpowiedź webhooka docelowo zwraca dane potrzebne Home Assistantowi do powiadomienia: `raw_event_id`, typ eventu, timestamp, technical location identifier oraz aktualny display alias lokalizacji.
+- Odpowiedź webhooka zachowuje backward-compatible pole `id` zapisanego raw eventu i zostaje rozszerzona o dane potrzebne Home Assistantowi do powiadomienia: typ eventu, timestamp, technical location identifier oraz aktualny display alias lokalizacji.
+- Home Assistant używa istniejącego pola `id` jako identyfikatora raw eventu; roadmapa nie zakłada breaking rename do `raw_event_id` ani redundantnego drugiego identyfikatora.
 - Display alias pochodzi z istniejących application settings i ma fallback do technical location identifier; user-facing nazwa lokalizacji nie jest wpisana na sztywno w Home Assistant.
 - Osobny endpoint integracyjny Home Assistanta, zabezpieczony tokenem, umożliwia korektę godziny konkretnego raw eventu.
 - Endpoint integracyjny korzysta z istniejącego mechanizmu `timestamp_override`; logika ustawiania timestamp correction jest współdzielona z istniejącą korektą timestampu, a nie zduplikowana.
@@ -233,7 +234,10 @@ Planowany zakres:
 Planowany zakres:
 
 - Wejście godziny z powiadomienia jest przyjazne dla użytkownika i akceptuje co najmniej formaty `7:45`, `07:45`, `7.45` oraz `07.45`.
-- Backend normalizuje zaakceptowany input do poprawnego timezone-aware timestampu; data pochodzi z raw eventu, a nie z chwili odpowiedzi na powiadomienie.
+- Wpisana godzina jest rozwiązywana względem konkretnego raw eventu, nigdy względem daty ani chwili odpowiedzi na powiadomienie.
+- Backend rozważa lokalną datę raw eventu oraz sąsiednie daty (`raw_date - 1 day`, `raw_date`, `raw_date + 1 day`) i tworzy dla wpisanej godziny poprawne timezone-aware candidate instants w odpowiedniej strefie IANA.
+- Backend wybiera jednoznaczny poprawny instant najbliższy raw eventowi, mieszczący się w dozwolonym oknie ±4 godzin. Dzięki temu raw `23:50` z inputem `00:10` oznacza następny dzień `00:10` (+20 minut), a raw `00:10` z inputem `23:50` może oznaczać poprzedni dzień `23:50` (-20 minut).
+- Jeżeli nie istnieje jednoznaczny poprawny candidate instant w dozwolonym oknie, korekta jest odrzucana bez utworzenia lub zmiany danych.
 - Ręczna korekta do konkretnej minuty ustawia sekundy na `00`.
 - Nieprawidłowe godziny, w tym `24:00`, `7:72` i tekst niebędący godziną, są odrzucane bez utworzenia lub zmiany korekty.
 - Korekta z mobilnego powiadomienia może przesunąć timestamp najwyżej o 4 godziny wstecz lub w przyszłość względem raw timestampu; większa zmiana jest odrzucana i pozostaje do wykonania w normalnym interfejsie Work Trackera.
@@ -249,7 +253,7 @@ Planowany zakres:
 
 Planowany zakres:
 
-- Home Assistant korzysta z odpowiedzi istniejącego webhooka, aby znać konkretny `raw_event_id`; interaktywne powiadomienie może zostać wysłane dopiero po udanym zapisaniu raw eventu.
+- Home Assistant korzysta z istniejącego pola `id` w odpowiedzi webhooka, aby znać konkretny zapisany raw event; interaktywne powiadomienie może zostać wysłane dopiero po udanym zapisaniu raw eventu.
 - User-facing nazwa lokalizacji w powiadomieniu pochodzi z backendowego display aliasu.
 - Powiadomienie udostępnia akcję potwierdzenia oraz akcję korekty korzystającą z inline text input, bez konieczności otwierania Work Trackera lub Home Assistanta.
 - Odpowiedzi z powiadomień obsługuje osobna automatyzacja lub handler, a nie długotrwałe `wait_for_trigger` w głównej automatyzacji strefowej.
@@ -266,8 +270,11 @@ Planowany zakres:
 - [ ] Raw Home Assistant events pozostają immutable.
 - [ ] Potwierdzenie wykrytej godziny nie tworzy timestamp correction.
 - [ ] Korekta z powiadomienia korzysta z istniejącego mechanizmu `timestamp_override` i współdzielonej logiki korekt.
-- [ ] Backend normalizuje akceptowany time input do timezone-aware timestampu opartego na dacie raw eventu i z sekundami ustawionymi na `00`.
-- [ ] Nieprawidłowy input nie tworzy ani nie zmienia danych.
+- [ ] Istniejący webhook zachowuje backward-compatible pole `id`, którego Home Assistant używa jako identyfikatora raw eventu; rozszerzenie odpowiedzi nie wprowadza breaking rename ani redundantnego identyfikatora.
+- [ ] Backend normalizuje akceptowany time input do timezone-aware timestampu z sekundami ustawionymi na `00`.
+- [ ] Dla time-only inputu backend rozważa lokalną datę raw eventu oraz dzień poprzedni i następny, tworzy poprawne candidate instants w odpowiedniej strefie IANA i wybiera jednoznaczny instant najbliższy raw eventowi w oknie ±4 godzin.
+- [ ] Data ani chwila odpowiedzi na powiadomienie nigdy nie określa daty korekty.
+- [ ] Nieprawidłowy input lub brak jednoznacznego poprawnego candidate instant w dozwolonym oknie nie tworzy ani nie zmienia danych.
 - [ ] Display alias lokalizacji pochodzi z application settings i ma fallback do canonical technical location identifier.
 - [ ] Zmiana display aliasu nie wymaga edycji automatyzacji Home Assistanta.
 - [ ] Future effective entry nie nalicza czasu przed swoim timestampem i nie powoduje samoistnie stanu `ambiguous`.
