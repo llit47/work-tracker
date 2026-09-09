@@ -136,6 +136,14 @@ Manual events must remain distinguishable from Home Assistant source events.
 
 After corrections, calculations must use the effective event stream and the same canonical pairing rules as uncorrected data.
 
+## Interactive Home Assistant integration
+
+Interactive notifications are an optional layer that may run only after a raw Home Assistant event has been ingested successfully. Notification delivery, user actions, or action-handler failures must never block, roll back, or otherwise affect raw event ingestion.
+
+A time correction submitted through Home Assistant must use the existing auditable `timestamp_override` correction layer. Confirming an unchanged time must not create a correction, and a missing response must not change the raw or effective event stream.
+
+Technical location identifiers remain canonical throughout the integration. User-facing location names must come from backend application settings, with fallback to the technical identifier; Home Assistant automation must not hard-code display aliases.
+
 ## Pay invariants
 
 Pay is backend-authoritative.

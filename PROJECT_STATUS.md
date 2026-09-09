@@ -11,7 +11,11 @@
   - **Phase 4B — frontend pay presentation and rate management: DONE**
 - **Phase 5 — Dashboard and live shift: DONE**
 - **Phase 6 — Export: DONE**
-- **Phase 7 — Authentication and hardening: NEXT**
+- **Phase 7 — Interactive Home Assistant event confirmation: NEXT**
+  - **Phase 7A — Backend integration: NEXT**
+  - **Phase 7B — Correction input and live-domain behavior: PLANNED**
+  - **Phase 7C — Home Assistant integration and safe rollout: PLANNED**
+- **Phase 8 — Authentication and hardening: PLANNED**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
@@ -129,9 +133,11 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 7 — Authentication and hardening**
+**Phase 7 — Interactive Home Assistant event confirmation**
 
-Następny etap powinien dodać prosty login bez publicznej rejestracji, zgodnie z zakresem w `ROADMAP.md`. Nie oznacza to decyzji o wystawieniu aplikacji do publicznego Internetu.
+Interaktywne potwierdzanie i korygowanie godziny eventu z mobilnego powiadomienia Home Assistanta jest planowane, ale nie zostało jeszcze zaimplementowane. Szczegółowy zakres backendu, zachowania future effective entry oraz bezpiecznego rolloutu integracji znajduje się w `ROADMAP.md`.
+
+Dotychczasowy etap Authentication and hardening został przesunięty do Phase 8 i ma status `PLANNED`. Nie oznacza to decyzji o wystawieniu aplikacji do publicznego Internetu.
 
 ## Known intentional limitations
 
