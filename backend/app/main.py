@@ -236,6 +236,22 @@ def create_app(
                 detail=integration_error(error, error.code),
             )
 
+        existing_correction = session.scalar(
+            select(WorkEventCorrection).where(
+                WorkEventCorrection.raw_event_id == raw_event.id
+            )
+        )
+        if (
+            existing_correction is not None
+            and existing_correction.correction_type
+            != CorrectionType.TIMESTAMP_OVERRIDE.value
+        ):
+            error = CorrectionConflictError()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=integration_error(error, error.code),
+            )
+
         timezone_setting = session.get(LocationTimezone, raw_event.location)
         if timezone_setting is None:
             error = TimeOnlyCorrectionError(
@@ -252,35 +268,49 @@ def create_app(
                 timezone_setting.timezone,
                 payload.time,
             )
-            _, correction = upsert_timestamp_correction(
-                session,
-                raw_event.id,
-                effective_timestamp,
-            )
-        except CorrectionConflictError as error:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=integration_error(error, error.code),
-            ) from error
         except TimeOnlyCorrectionError as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=integration_error(error, error.code),
             ) from error
 
-        session.commit()
-        session.refresh(correction)
+        if (
+            effective_timestamp.astimezone(timezone.utc)
+            == raw_event.event_timestamp_utc.astimezone(timezone.utc)
+        ):
+            if existing_correction is not None:
+                session.delete(existing_correction)
+                session.commit()
+            correction_id = None
+            response_timestamp = raw_event.event_timestamp
+        else:
+            try:
+                _, correction = upsert_timestamp_correction(
+                    session,
+                    raw_event.id,
+                    effective_timestamp,
+                )
+            except CorrectionConflictError as error:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=integration_error(error, error.code),
+                ) from error
+            session.commit()
+            session.refresh(correction)
+            correction_id = correction.id
+            response_timestamp = correction.event_timestamp
+
         alias = session.get(LocationDisplayName, raw_event.location)
         return HomeAssistantCorrectionResponse(
             raw_event_id=raw_event.id,
-            correction_id=correction.id,
+            correction_id=correction_id,
             event=raw_event.event_type,
             location=raw_event.location,
             location_display_name=(
                 alias.display_name if alias is not None else raw_event.location
             ),
             original_timestamp=raw_event.event_timestamp,
-            effective_timestamp=correction.event_timestamp,
+            effective_timestamp=response_timestamp,
         )
 
     @app.get("/api/work-events", response_model=list[WorkEventResponse])

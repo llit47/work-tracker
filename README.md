@@ -277,6 +277,13 @@ curl -X POST http://127.0.0.1:8000/api/webhook/home-assistant/correction \
 }
 ```
 
+`correction_id: null` oznacza, że po obsłużeniu żądania nie istnieje aktywna
+korekta timestampu, ponieważ requested effective instant jest dokładnie równy
+immutable raw instantowi. W takim przypadku backend nie tworzy no-op
+`timestamp_override`, a istniejący `timestamp_override` usuwa jako undo warstwy
+korekty. Porównanie odbywa się między pełnymi UTC instants, więc raw
+`07:20:14` i resolved `07:20:00` nadal są różne i tworzą korektę.
+
 Pole `time` akceptuje `H:MM`, `HH:MM`, `H.MM` i `HH.MM` z zewnętrznym
 whitespace. Backend wyznacza datę wyłącznie względem raw UTC instantu i IANA
 timezone jego canonical location, uwzględnia dzień poprzedni/bieżący/następny,

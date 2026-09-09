@@ -97,6 +97,102 @@ async def test_correction_endpoint_requires_the_webhook_token(tmp_path: Path):
 
 
 @pytest.mark.anyio
+async def test_exact_raw_instant_is_a_no_op_without_a_correction_record(tmp_path: Path):
+    async with AsyncClient(
+        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
+    ) as client:
+        await configure_location(client)
+        raw_event_id = await add_raw_event(
+            client, timestamp="2026-09-09T07:20:00+02:00"
+        )
+        raw_before = (await client.get("/api/work-events?year=2026&month=9")).json()
+
+        response = await correct(client, raw_event_id, "07:20")
+        corrections = (await client.get("/api/corrections")).json()
+        raw_after = (await client.get("/api/work-events?year=2026&month=9")).json()
+
+    assert response.status_code == 200
+    assert response.json()["correction_id"] is None
+    assert response.json()["effective_timestamp"] == "2026-09-09T07:20:00+02:00"
+    assert corrections == []
+    assert raw_after == raw_before
+
+
+@pytest.mark.anyio
+async def test_no_op_comparison_uses_utc_instants_not_timestamp_strings(tmp_path: Path):
+    async with AsyncClient(
+        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
+    ) as client:
+        await configure_location(client)
+        raw_event_id = await add_raw_event(
+            client, timestamp="2026-09-09T05:20:00+00:00"
+        )
+
+        response = await correct(client, raw_event_id, "07:20")
+        corrections = (await client.get("/api/corrections")).json()
+
+    assert response.status_code == 200
+    assert response.json()["correction_id"] is None
+    assert response.json()["effective_timestamp"] == "2026-09-09T05:20:00Z"
+    assert corrections == []
+
+
+@pytest.mark.anyio
+async def test_returning_to_raw_instant_removes_existing_timestamp_override(
+    tmp_path: Path,
+):
+    async with AsyncClient(
+        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
+    ) as client:
+        await configure_location(client)
+        raw_event_id = await add_raw_event(
+            client, timestamp="2026-09-09T07:20:00+02:00"
+        )
+        raw_before = (await client.get("/api/work-events?year=2026&month=9")).json()
+        created = await correct(client, raw_event_id, "08:00")
+
+        removed = await correct(client, raw_event_id, "07:20")
+        corrections = (await client.get("/api/corrections")).json()
+        work_summary = (await client.get("/api/work-summary?year=2026&month=9")).json()
+        effective_event = work_summary["days"][0]["items"][0]["events"][0]
+        raw_after = (await client.get("/api/work-events?year=2026&month=9")).json()
+
+    assert created.status_code == 200
+    assert created.json()["correction_id"] is not None
+    assert removed.status_code == 200
+    assert removed.json()["correction_id"] is None
+    assert removed.json()["effective_timestamp"] == "2026-09-09T07:20:00+02:00"
+    assert corrections == []
+    assert effective_event["event_timestamp"] == "2026-09-09T07:20:00+02:00"
+    assert effective_event["correction_id"] is None
+    assert effective_event["is_timestamp_corrected"] is False
+    assert raw_after == raw_before
+
+
+@pytest.mark.anyio
+async def test_same_minute_with_different_seconds_still_creates_an_override(tmp_path: Path):
+    async with AsyncClient(
+        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
+    ) as client:
+        await configure_location(client)
+        raw_event_id = await add_raw_event(
+            client, timestamp="2026-09-09T07:20:14+02:00"
+        )
+        raw_before = (await client.get("/api/work-events?year=2026&month=9")).json()
+
+        response = await correct(client, raw_event_id, "07:20")
+        corrections = (await client.get("/api/corrections")).json()
+        raw_after = (await client.get("/api/work-events?year=2026&month=9")).json()
+
+    assert response.status_code == 200
+    assert response.json()["correction_id"] is not None
+    assert response.json()["effective_timestamp"] == "2026-09-09T07:20:00+02:00"
+    assert len(corrections) == 1
+    assert corrections[0]["correction_type"] == "timestamp_override"
+    assert raw_after == raw_before
+
+
+@pytest.mark.anyio
 async def test_correction_creates_and_updates_one_override_without_mutating_raw_event(
     tmp_path: Path,
 ):
@@ -182,9 +278,11 @@ async def test_ignore_conflict_is_preserved_and_returns_stable_conflict_error(tm
         transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
     ) as client:
         await configure_location(client)
-        raw_event_id = await add_raw_event(client)
+        raw_event_id = await add_raw_event(
+            client, timestamp="2026-09-09T07:20:00+02:00"
+        )
         ignored = await client.put(f"/api/work-events/{raw_event_id}/ignore")
-        conflict = await correct(client, raw_event_id, "7:45")
+        conflict = await correct(client, raw_event_id, "07:20")
         corrections = (await client.get("/api/corrections")).json()
 
     assert conflict.status_code == 409

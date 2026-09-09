@@ -63,7 +63,7 @@ class HomeAssistantCorrectionRequest(BaseModel):
 
 class HomeAssistantCorrectionResponse(BaseModel):
     raw_event_id: int
-    correction_id: int
+    correction_id: int | None
     event: EventType
     location: str
     location_display_name: str
