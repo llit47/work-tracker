@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 import pytest
 
 from app.database import build_engine
-from app.models import ApplicationSetting, LocationDisplayName, PayRate
+from app.models import ApplicationSetting, LocationDisplayName, LocationTimezone, PayRate
 
 
 def alembic_config(backend_dir: Path, database_url: str) -> Config:
@@ -193,6 +193,66 @@ def test_application_settings_migration_preserves_domain_data(tmp_path: Path, mo
             select(PayRate).where(PayRate.effective_from == date(1970, 1, 1))
         )
         assert default_rate is not None
+
+
+def test_location_timezone_migration_is_additive_and_preserves_existing_data(
+    tmp_path: Path, monkeypatch
+):
+    backend_dir = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'timezone-migration.db'}"
+    config = alembic_config(backend_dir, database_url)
+    monkeypatch.setenv("DATABASE_URL", database_url)
+
+    command.upgrade(config, "20260908_04")
+    engine = build_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO work_events "
+                "(id, event_type, location, event_timestamp, event_timestamp_utc, received_at, source) "
+                "VALUES (1, 'entry', 'gabinet_zabki', '2026-09-09T07:20:14+02:00', "
+                "'2026-09-09T05:20:14+00:00', '2026-09-09T05:20:15+00:00', 'home_assistant')"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO work_event_corrections "
+                "(id, correction_type, created_at, updated_at, raw_event_id) "
+                "VALUES (1, 'ignore_event', '2026-09-09T05:21:00+00:00', "
+                "'2026-09-09T05:21:00+00:00', 1)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO location_display_names (location, display_name, updated_at) "
+                "VALUES ('gabinet_zabki', 'ARTE Stomatologia', '2026-09-09T05:00:00+00:00')"
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    assert "location_timezones" in inspect(engine).get_table_names()
+    with Session(engine) as session:
+        assert list(session.scalars(select(LocationTimezone))) == []
+        assert session.get(ApplicationSetting, 1).application_title == "Work Tracker"
+        assert session.get(LocationDisplayName, "gabinet_zabki").display_name == "ARTE Stomatologia"
+        assert len(list(session.scalars(select(PayRate)))) == 1
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM work_events")).scalar_one() == 1
+        assert connection.execute(
+            text("SELECT count(*) FROM work_event_corrections")
+        ).scalar_one() == 1
+
+    command.downgrade(config, "20260908_04")
+    assert "location_timezones" not in inspect(engine).get_table_names()
+    assert connection_event_count(engine) == 1
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT count(*) FROM work_event_corrections")
+        ).scalar_one() == 1
+        assert connection.execute(
+            text("SELECT display_name FROM location_display_names")
+        ).scalar_one() == "ARTE Stomatologia"
 
 
 def connection_event_count(engine) -> int:

@@ -205,17 +205,18 @@ Eksport zachowuje historyczne reguły `work-summary` i `pay-summary`: sesja nale
 
 ## Phase 7 — Interactive Home Assistant event confirmation
 
-**Status: NEXT**
+**Status: IN PROGRESS**
 
 Cel: po poprawnym zapisaniu raw eventu `entry` lub `exit` umożliwić użytkownikowi potwierdzenie wykrytej godziny albo jej korektę bezpośrednio w interaktywnym powiadomieniu mobilnym Home Assistanta, bez otwierania Work Trackera lub innej aplikacji.
 
-Funkcja jest planowana i nie została jeszcze zaimplementowana.
+Backend oraz konfiguracja timezone są gotowe. Interaktywne powiadomienia i
+automatyzacja Home Assistanta pozostają do wykonania w Phase 7C.
 
 ### Phase 7A — Backend integration
 
-**Status: NEXT**
+**Status: DONE**
 
-Planowany zakres:
+Zrealizowany zakres:
 
 - Istniejący `POST /api/webhook/home-assistant` nadal zapisuje immutable raw event przed uruchomieniem opcjonalnej warstwy powiadomień.
 - Odpowiedź webhooka zachowuje backward-compatible pole `id` zapisanego raw eventu i zostaje rozszerzona o dane potrzebne Home Assistantowi do powiadomienia: typ eventu, timestamp, technical location identifier oraz aktualny display alias lokalizacji.
@@ -234,9 +235,9 @@ Planowany zakres:
 
 ### Phase 7B — Correction input and live-domain behavior
 
-**Status: PLANNED**
+**Status: DONE**
 
-Planowany zakres:
+Zrealizowany zakres:
 
 - Wejście godziny z powiadomienia jest przyjazne dla użytkownika i akceptuje co najmniej formaty `7:45`, `07:45`, `7.45` oraz `07.45`.
 - Wpisana godzina jest rozwiązywana względem konkretnego raw eventu, nigdy względem daty ani chwili odpowiedzi na powiadomienie.
@@ -256,7 +257,7 @@ Planowany zakres:
 
 ### Phase 7C — Home Assistant integration and safe rollout
 
-**Status: PLANNED**
+**Status: NEXT**
 
 Planowany zakres:
 
@@ -276,29 +277,29 @@ Planowany zakres:
 
 ### Acceptance criteria
 
-- [ ] Raw Home Assistant events pozostają immutable.
+- [x] Raw Home Assistant events pozostają immutable.
 - [ ] Potwierdzenie wykrytej godziny nie tworzy timestamp correction.
-- [ ] Korekta z powiadomienia korzysta z istniejącego mechanizmu `timestamp_override` i współdzielonej logiki korekt.
-- [ ] Istniejący webhook zachowuje backward-compatible pole `id`, którego Home Assistant używa jako identyfikatora raw eventu; rozszerzenie odpowiedzi nie wprowadza breaking rename ani redundantnego identyfikatora.
-- [ ] Location timezone jest trwałą backendową konfiguracją przypisaną do canonical technical location, oddzielną od display aliasu, i może być odczytana oraz skonfigurowana przez application settings.
-- [ ] Backend waliduje location timezone jako identyfikator IANA z użyciem bazy IANA/`ZoneInfo`; konfiguracja nie ma zgadywanego fallbacku.
-- [ ] Ewentualna addytywna migracja location timezone zachowuje istniejące `work_events` i `work_event_corrections` bez zmian.
-- [ ] Backend normalizuje akceptowany time input do timezone-aware timestampu z sekundami ustawionymi na `00`.
-- [ ] Dla time-only inputu backend pobiera timezone na podstawie canonical location raw eventu, rozważa lokalną datę raw instantu w tej strefie oraz dzień poprzedni i następny, a następnie wybiera jednoznaczny instant najbliższy raw eventowi w oknie ±4 godzin.
-- [ ] Offset raw timestampu, browser timezone, Home Assistant ani chwila odpowiedzi na powiadomienie nie zastępują skonfigurowanej location timezone przy tworzeniu kandydatów.
-- [ ] Data ani chwila odpowiedzi na powiadomienie nigdy nie określa daty korekty.
-- [ ] Brak lub nieprawidłowa location timezone odrzuca time-only correction bez utworzenia lub zmiany danych.
-- [ ] Nonexistent i ambiguous local times są obsługiwane fail-safe bez zgadywania; brak jednego jednoznacznego poprawnego candidate instant odrzuca korektę bez zmiany danych.
-- [ ] Nieprawidłowy input lub brak jednoznacznego poprawnego candidate instant w dozwolonym oknie nie tworzy ani nie zmienia danych.
-- [ ] Display alias lokalizacji pochodzi z application settings i ma fallback do canonical technical location identifier.
-- [ ] Zmiana display aliasu nie wymaga edycji automatyzacji Home Assistanta.
-- [ ] Future effective entry nie nalicza czasu przed swoim timestampem i nie powoduje samoistnie stanu `ambiguous`.
+- [x] Korekta z powiadomienia korzysta z istniejącego mechanizmu `timestamp_override` i współdzielonej logiki korekt.
+- [x] Istniejący webhook zachowuje backward-compatible pole `id`, którego Home Assistant używa jako identyfikatora raw eventu; rozszerzenie odpowiedzi nie wprowadza breaking rename ani redundantnego identyfikatora.
+- [x] Location timezone jest trwałą backendową konfiguracją przypisaną do canonical technical location, oddzielną od display aliasu, i może być odczytana oraz skonfigurowana przez application settings.
+- [x] Backend waliduje location timezone jako identyfikator IANA z użyciem bazy IANA/`ZoneInfo`; konfiguracja nie ma zgadywanego fallbacku.
+- [x] Addytywna migracja location timezone zachowuje istniejące `work_events` i `work_event_corrections` bez zmian.
+- [x] Backend normalizuje akceptowany time input do timezone-aware timestampu z sekundami ustawionymi na `00`.
+- [x] Dla time-only inputu backend pobiera timezone na podstawie canonical location raw eventu, rozważa lokalną datę raw instantu w tej strefie oraz dzień poprzedni i następny, a następnie wybiera jednoznaczny instant najbliższy raw eventowi w oknie ±4 godzin.
+- [x] Offset raw timestampu, browser timezone, Home Assistant ani chwila odpowiedzi na powiadomienie nie zastępują skonfigurowanej location timezone przy tworzeniu kandydatów.
+- [x] Data ani chwila odpowiedzi na powiadomienie nigdy nie określa daty korekty.
+- [x] Brak lub nieprawidłowa location timezone odrzuca time-only correction bez utworzenia lub zmiany danych.
+- [x] Nonexistent i ambiguous local times są obsługiwane fail-safe bez zgadywania; brak jednego jednoznacznego poprawnego candidate instant odrzuca korektę bez zmiany danych.
+- [x] Nieprawidłowy input lub brak jednoznacznego poprawnego candidate instant w dozwolonym oknie nie tworzy ani nie zmienia danych.
+- [x] Display alias lokalizacji pochodzi z application settings i ma fallback do canonical technical location identifier.
+- [x] Zmiana display aliasu nie wymaga edycji automatyzacji Home Assistanta.
+- [x] Future effective entry nie nalicza czasu przed swoim timestampem i nie powoduje samoistnie stanu `ambiguous`.
 - [ ] Notification failure, brak reakcji lub błąd handlera nie wpływa na zapis raw eventu.
 - [ ] Kill switch wyłącza wyłącznie warstwę interaktywnych powiadomień, zachowując zone tracking i webhook ingestion.
 - [ ] Poprawna IANA timezone jest zweryfikowana dla lokalizacji przed aktywacją Phase 7C.
-- [ ] Brak location timezone nie wpływa na podstawowe Home Assistant raw ingestion ani zwykłe zone tracking.
-- [ ] Funkcja jest pokryta testami backendowymi przed aktywacją integracji Home Assistanta.
-- [ ] Rollout backendu i jego weryfikacja następują przed zmianą produkcyjnej automatyzacji strefowej.
+- [x] Brak location timezone nie wpływa na podstawowe Home Assistant raw ingestion ani zwykłe zone tracking.
+- [x] Funkcja jest pokryta testami backendowymi przed aktywacją integracji Home Assistanta.
+- [x] Rollout backendu i jego weryfikacja następują przed zmianą produkcyjnej automatyzacji strefowej.
 
 ## Phase 8 — Authentication and hardening
 

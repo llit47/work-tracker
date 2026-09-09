@@ -198,7 +198,8 @@ npm run build
 
 ## Endpointy
 
-- `POST /api/webhook/home-assistant` — przyjmuje JSON webhooka; wymaga nagłówka `X-Webhook-Token`.
+- `POST /api/webhook/home-assistant` — przyjmuje JSON webhooka, zapisuje immutable raw event i zwraca jego `id`, status oraz dane prezentacyjne; wymaga nagłówka `X-Webhook-Token`.
+- `POST /api/webhook/home-assistant/correction` — ustawia audytowalną korektę godziny konkretnego raw eventu na podstawie time-only inputu; wymaga nagłówka `X-Webhook-Token`.
 - `GET /api/work-events?year=2026&month=9` — zwraca chronologicznie zdarzenia dla wskazanego miesiąca kalendarzowego w offsetcie przekazanym przez Home Assistanta.
 - `GET /api/work-summary?year=2026&month=9` — wylicza sesje, dni, miesięczny czas pracy i anomalie na podstawie effective events oraz zwraca metadane audytowe korekt.
 - `PUT /api/work-events/{raw_event_id}/timestamp-correction` — tworzy lub aktualizuje korektę timestampu raw eventu.
@@ -208,8 +209,8 @@ npm run build
 - `DELETE /api/corrections/{correction_id}` — cofa korektę bez zmiany raw eventu.
 - `GET /api/pay-rates` — zwraca historyczne stawki godzinowe w kolejności obowiązywania.
 - `POST /api/pay-rates` — dodaje nową historyczną stawkę bez nadpisywania wcześniejszych okresów.
-- `GET /api/application-settings` — zwraca globalny tytuł aplikacji i aliasy lokalizacji.
-- `PUT /api/application-settings` — aktualizuje globalne ustawienia prezentacji.
+- `GET /api/application-settings` — zwraca globalny tytuł aplikacji, aliasy i opcjonalne IANA timezone canonical locations.
+- `PUT /api/application-settings` — transakcyjnie aktualizuje globalne ustawienia; pominięta timezone zachowuje poprzednią wartość, a jawne `null` ją usuwa.
 - `GET /api/pay-summary?year=2026&month=9` — zwraca autorytatywne dzienne i miesięczne wynagrodzenie za poprawne sesje.
 - `GET /api/dashboard?timezone=Europe/Warsaw` — zwraca autorytatywny live status oraz podsumowanie dnia i bieżącego miesiąca w podanej strefie IANA.
 - `GET /api/export/monthly.csv?year=2026&month=9` — pobiera historyczny raport miesiąca jako CSV UTF-8 z BOM i separatorem `;`.
@@ -225,10 +226,77 @@ curl -X POST http://127.0.0.1:8000/api/webhook/home-assistant \
   -d '{"event":"entry","location":"gabinet_zabki","timestamp":"2026-09-06T08:14:32+02:00","source":"home_assistant"}'
 ```
 
+Po poprawnym zapisie webhook zwraca nadal istniejące pola `id` i `status` oraz
+dodatkowy kontekst potrzebny przyszłej integracji interaktywnych powiadomień:
+
+```json
+{
+  "id": 123,
+  "status": "accepted",
+  "event": "entry",
+  "location": "gabinet_zabki",
+  "location_display_name": "ARTE Stomatologia",
+  "timestamp": "2026-09-09T07:20:14+02:00"
+}
+```
+
+`location_display_name` pochodzi z bieżących application settings i bez aliasu
+jest równy canonical `location`. Zapis i odpowiedź ingestion nie wymagają
+skonfigurowanej timezone.
+
 Format lokalizacji to małe litery, cyfry i `_`, np. `gabinet_zabki`; dzięki temu można później dodać kolejne lokalizacje bez zmiany modelu.
 
 `source` w obecnej wersji musi mieć wartość `home_assistant`. Zdarzenia zapisują oryginalny ISO-8601 timestamp wraz z offsetem oraz osobny, znormalizowany timestamp UTC. Chwila UTC jest podstawą bieżącego liczenia czasu trwania, a pierwszy timestamp zachowuje lokalną datę, godzinę i offset również przy zmianie czasu letniego/zimowego.
 
 Skonfigurowane nazwy wyświetlane lokalizacji są używane w zwykłym UI oraz w nowo generowanych CSV/PDF, z fallbackiem do identyfikatora technicznego. Identyfikator zapisany w zdarzeniach nie jest zmieniany. Alias zaczynający się od `=`, `+`, `-` lub `@` jest neutralizowany apostrofem wyłącznie w komórce CSV, aby arkusz kalkulacyjny nie wykonał go jako formuły; UI, PDF i zapisane ustawienie zachowują oryginalny tekst.
+
+W `Ustawienia → Aplikacja` każda znana canonical location ma również opcjonalne
+pole IANA timezone, np. `Europe/Warsaw`. Backend waliduje identyfikator przez
+`ZoneInfo`. Pusta timezone jest dozwolona i nie jest zgadywana z przeglądarki,
+offsetu raw eventu ani Home Assistanta. Istniejącą lokalizację produkcyjną
+`gabinet_zabki` należy skonfigurować ręcznie po wdrożeniu migracji.
+
+Przykładowa korekta godziny z warstwy integracyjnej Home Assistanta:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/webhook/home-assistant/correction \
+  -H 'Content-Type: application/json' \
+  -H 'X-Webhook-Token: TWOJ_SEKRET' \
+  -d '{"raw_event_id":123,"time":"7.45"}'
+```
+
+```json
+{
+  "raw_event_id": 123,
+  "correction_id": 45,
+  "event": "entry",
+  "location": "gabinet_zabki",
+  "location_display_name": "ARTE Stomatologia",
+  "original_timestamp": "2026-09-09T07:20:14+02:00",
+  "effective_timestamp": "2026-09-09T07:45:00+02:00"
+}
+```
+
+`correction_id: null` oznacza, że po obsłużeniu żądania nie istnieje aktywna
+korekta timestampu, ponieważ requested effective instant jest dokładnie równy
+immutable raw instantowi. W takim przypadku backend nie tworzy no-op
+`timestamp_override`, a istniejący `timestamp_override` usuwa jako undo warstwy
+korekty. Porównanie odbywa się między pełnymi UTC instants, więc raw
+`07:20:14` i resolved `07:20:00` nadal są różne i tworzą korektę.
+
+Pole `time` akceptuje `H:MM`, `HH:MM`, `H.MM` i `HH.MM` z zewnętrznym
+whitespace. Backend wyznacza datę wyłącznie względem raw UTC instantu i IANA
+timezone jego canonical location, uwzględnia dzień poprzedni/bieżący/następny,
+oba `fold` DST oraz okno ±4 godzin. Brak lub błędna timezone, nonexistent lub
+nierozstrzygalny ambiguous local time, błędny format i wyjście poza okno zwracają
+HTTP 422 bez zmiany danych. Błędy integracyjne mają stabilny kod w
+`detail.code`, m.in. `invalid_time`, `location_timezone_missing`,
+`location_timezone_invalid`, `time_not_resolvable`, `time_out_of_range`,
+`correction_conflict` i `raw_event_not_found`.
+
+Ten etap nie dodaje actionable notifications, handlera
+`mobile_app_notification_action`, kill switcha ani YAML Home Assistanta. Żadna
+produkcyjna automatyzacja Home Assistanta nie jest przez niego zmieniana ani
+aktywowana; to pozostaje zakresem Phase 7C.
 
 Frontend pokazuje `missing_exit` jako „Trwająca zmiana” tylko wtedy, gdy jego wejście odpowiada tej samej chwili UTC co jednoznaczna sesja zwrócona przez dashboard. Pierwszy snapshot i późniejsze istotne zmiany dashboardu odświeżają aktualnie wybrane podsumowanie czasu i płac; sam upływ czasu bieżącej zmiany nie powoduje dodatkowych żądań miesięcznych.

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from .models import (
     ApplicationSetting,
     LocationDisplayName,
+    LocationTimezone,
     WorkEvent,
     WorkEventCorrection,
 )
@@ -19,6 +20,7 @@ DEFAULT_LOCATION = "gabinet_zabki"
 class LocationPresentation:
     location: str
     display_name: str | None
+    timezone: str | None
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,13 @@ def load_application_settings(session: Session) -> ApplicationPresentationSettin
             select(LocationDisplayName).order_by(LocationDisplayName.location.asc())
         )
     }
-    known_locations = {DEFAULT_LOCATION, *aliases}
+    timezones = {
+        setting.location: setting.timezone
+        for setting in session.scalars(
+            select(LocationTimezone).order_by(LocationTimezone.location.asc())
+        )
+    }
+    known_locations = {DEFAULT_LOCATION, *aliases, *timezones}
     known_locations.update(session.scalars(select(WorkEvent.location).distinct()))
     known_locations.update(
         location
@@ -53,7 +61,11 @@ def load_application_settings(session: Session) -> ApplicationPresentationSettin
             else DEFAULT_APPLICATION_TITLE
         ),
         locations=tuple(
-            LocationPresentation(location=location, display_name=aliases.get(location))
+            LocationPresentation(
+                location=location,
+                display_name=aliases.get(location),
+                timezone=timezones.get(location),
+            )
             for location in sorted(known_locations)
         ),
     )

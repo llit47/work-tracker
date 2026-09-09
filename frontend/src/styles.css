@@ -110,6 +110,8 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
 .application-settings-form input { width: min(100%, 420px); min-height: 38px; border: 1px solid var(--border-strong); border-radius: 8px; padding: 5px 8px; }
 .application-settings-form > button { width: fit-content; }
 .location-settings { display: grid; gap: 8px; }
+.location-setting { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 10px; max-width: 850px; }
+.location-setting small { grid-column: 1 / -1; }
 .location-settings small { color: var(--text-muted); }
 .settings-note { margin: 0; color: var(--text-muted); font-size: .8rem; line-height: 1.4; }
 .settings-error, .pay-error { display: flex; justify-content: space-between; align-items: center; gap: 9px; color: var(--error); }
@@ -241,6 +243,8 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
   .session-result, .anomaly, .pending-status { flex-basis: auto; text-align: left; }
   .theme-setting { grid-template-columns: 1fr; gap: 4px; width: 100%; }
   .theme-setting select { width: 100%; }
+  .location-setting { grid-template-columns: 1fr; }
+  .location-setting small { grid-column: auto; }
 }
 
 @media (max-width: 360px) {

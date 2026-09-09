@@ -168,3 +168,17 @@ class LocationDisplayName(Base):
     location: Mapped[str] = mapped_column(String(100), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)
+
+
+class LocationTimezone(Base):
+    __tablename__ = "location_timezones"
+    __table_args__ = (
+        CheckConstraint(
+            "length(trim(timezone)) BETWEEN 1 AND 100",
+            name="ck_location_timezones_value",
+        ),
+    )
+
+    location: Mapped[str] = mapped_column(String(100), primary_key=True)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)

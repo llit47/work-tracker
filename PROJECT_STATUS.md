@@ -11,10 +11,10 @@
   - **Phase 4B — frontend pay presentation and rate management: DONE**
 - **Phase 5 — Dashboard and live shift: DONE**
 - **Phase 6 — Export: DONE**
-- **Phase 7 — Interactive Home Assistant event confirmation: NEXT**
-  - **Phase 7A — Backend integration: NEXT**
-  - **Phase 7B — Correction input and live-domain behavior: PLANNED**
-  - **Phase 7C — Home Assistant integration and safe rollout: PLANNED**
+- **Phase 7 — Interactive Home Assistant event confirmation: IN PROGRESS**
+  - **Phase 7A — Backend integration: DONE**
+  - **Phase 7B — Correction input and live-domain behavior: DONE**
+  - **Phase 7C — Home Assistant integration and safe rollout: NEXT**
 - **Phase 8 — Authentication and hardening: PLANNED**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
@@ -34,6 +34,7 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Frontend rozróżnia zdarzenia Home Assistant, zdarzenia skorygowane, zignorowane i dodane ręcznie.
 - Kompaktowa sekcja `Ustawienia` zawiera preferencje widoku i pozostaje domyślnie zwinięta.
 - Sekcja `Ustawienia → Aplikacja` zapisuje globalną nazwę aplikacji i przyjazne nazwy lokalizacji w backendzie, dzięki czemu są wspólne dla wszystkich urządzeń.
+- Każda canonical location może mieć osobno zapisaną opcjonalną IANA timezone. Backend waliduje ją przez `ZoneInfo`, a minimalny formularz `Ustawienia → Aplikacja` pozwala ją ustawić lub wyczyścić bez zgadywania wartości.
 - Tytuł strony i karty przeglądarki korzysta z globalnej nazwy aplikacji; identyfikator `gabinet_zabki` pozostaje niezmienionym kluczem technicznym, a UI stosuje skonfigurowaną nazwę wyświetlaną z bezpiecznym fallbackiem do klucza.
 - Widok obsługuje motywy `Auto`, `Jasny` i `Ciemny`; wybór jest lokalny dla przeglądarki, a tryb automatyczny reaguje na zmianę systemowego schematu kolorów.
 - Ignorowane eventy są domyślnie ukryte; opcja `Pokaż ignorowane wydarzenia` przywraca ich audytowy widok wraz z możliwością cofnięcia korekty i jest zapamiętywana w `localStorage`.
@@ -59,11 +60,17 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Dashboard i miesięczne podsumowanie mają bardziej zwarty układ, a dni są domyślnie zwinięte. Nagłówek dnia nadal pokazuje wszystkie sesje, czas, wynagrodzenie, lokalizację i ostrzeżenia; szczegółowe eventy oraz akcje korekt są dostępne po rozwinięciu.
 - Zwykłe godziny w interfejsie nie pokazują offsetu UTC; przy zmianie offsetu (np. DST) wyświetlany jest kompaktowy `+HH:MM`, a sesja przez północ pokazuje datę wyjścia.
 - Home Assistant wysyła eventy przez `rest_command`; automatyzacje wejścia i wyjścia ze strefy są skonfigurowane.
+- Odpowiedź webhooka ingestion zachowuje `id` i `status`, a dodatkowo zwraca event, canonical location, aktualny alias z fallbackiem oraz zapisany timestamp.
+- Token-protected `POST /api/webhook/home-assistant/correction` przyjmuje time-only input dla konkretnego raw eventu i używa wspólnej audytowalnej korekty `timestamp_override`.
+- Time-only correction jest rozwiązywana w timezone canonical location względem raw UTC instantu, przez sąsiednie daty i jednoznaczny najbliższy kandydat w oknie ±4 godzin; nonexistent/ambiguous DST jest odrzucane bez zgadywania.
+- Pojedyncze future effective `entry` pozostaje oczekującym startem: przed godziną dashboard pokazuje `outside`, od wskazanej chwili zwykłe `working`; future `exit` i konflikty nadal fail-safe dają stan niejednoznaczny.
+- Actionable notifications, handler akcji i YAML Home Assistanta nie są jeszcze wdrożone ani aktywowane; to zakres Phase 7C.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
 Aktualne endpointy:
 
 - `POST /api/webhook/home-assistant`
+- `POST /api/webhook/home-assistant/correction`
 - `GET /api/work-events?year=YYYY&month=MM`
 - `GET /api/work-summary?year=YYYY&month=MM`
 - `PUT /api/work-events/{raw_event_id}/timestamp-correction`
@@ -117,7 +124,8 @@ Aktualne endpointy:
 - Migracja Alembic `20260907_02` dodaje wyłącznie strukturę korekt i zachowuje dane `work_events`.
 - Migracja Alembic `20260907_03` dodaje `pay_rates` i seeduje jedną stawkę `50,00 PLN/h` od `1970-01-01`, bez modyfikacji eventów ani korekt.
 - Migracja Alembic `20260908_04` dodaje izolowane tabele `application_settings` i `location_display_names`, seeduje tytuł `Work Tracker` i nie modyfikuje danych czasu pracy.
-- Globalne ustawienia prezentacji przechowują jeden tytuł aplikacji oraz opcjonalne aliasy kluczy lokalizacji. Brak aliasu zawsze oznacza wyświetlenie niezmienionego identyfikatora technicznego.
+- Migracja Alembic `20260909_05` dodaje izolowaną tabelę `location_timezones` bez seedowania timezone i bez modyfikacji eventów, korekt, stawek, tytułu lub aliasów.
+- Globalne ustawienia przechowują jeden tytuł aplikacji, opcjonalne aliasy oraz oddzielne opcjonalne IANA timezone canonical locations. Brak aliasu oznacza wyświetlenie identyfikatora technicznego; brak timezone pozostaje jawnym dozwolonym stanem i nie ma fallbacku.
 - `pay_rates` zawiera `id`, unikalne `effective_from`, dokładne `hourly_rate`, `currency` oraz `created_at`; stawka jest przechowywana jako kanoniczny zapis dziesiętny, ponieważ SQLite `NUMERIC` używa dla takich wartości binarnego `REAL`.
 - Stawka sesji jest wybierana jako najnowsza z `effective_from <=` lokalna data efektywnego wejścia.
 - Płaca powstaje wyłącznie z sesji `valid`; czas anomalii nie jest zgadywany ani opłacany.
@@ -125,7 +133,7 @@ Aktualne endpointy:
 - Prezentacja UI, PDF i CSV nie pokazuje sekund ani nie zaokrągla czasu do najbliższej minuty; baza, API domenowe, obliczenia czasu i wynagrodzenia zachowują pełną precyzję sekundową.
 - Backend nie sumuje sesji rozliczanych w różnych walutach; taki miesiąc zwraca jednoznaczny błąd.
 - Dashboard otrzymuje nazwę strefy IANA przeglądarki, aby poprawnie określić lokalne „dzisiaj” i bieżący miesiąc; wszystkie czasy trwania nadal wynikają z chwil UTC.
-- Status `working` wymaga dokładnie jednego terminalnego `missing_exit` nie starszego niż 16 godzin. Terminalny `duplicate_entry`, `ambiguous_timestamp`, wiele otwartych wejść, czas przyszły lub wejście starsze niż 16 godzin daje status `ambiguous`.
+- Status `working` wymaga dokładnie jednego terminalnego `missing_exit` nie starszego niż 16 godzin. Pojedyncze future `entry` przy jednoznacznym bieżącym stanie `outside` pozostaje oczekującym startem; future `exit`, konfliktujące przyszłe eventy, terminalny `duplicate_entry`, `ambiguous_timestamp`, wiele otwartych wejść lub wejście starsze niż 16 godzin daje status `ambiguous`.
 - Dzisiejszy efektywny czas dodaje otwartą zmianę wyłącznie do lokalnej daty jej wejścia. Miesięczna płaca obejmuje tylko zakończone sesje `valid`.
 - Eksporty historyczne zachowują własność dnia/miesiąca z `WorkTimeItem.local_date`; nie używają odmiennych reguł strefowych live dashboardu.
 - Raport obejmuje wyłącznie effective events, dlatego ignorowanie, korekta timestampu i manualne eventy automatycznie wpływają na eksport bez zmiany raw events.
@@ -133,9 +141,9 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 7 — Interactive Home Assistant event confirmation**
+**Phase 7C — Home Assistant integration and safe rollout**
 
-Interaktywne potwierdzanie i korygowanie godziny eventu z mobilnego powiadomienia Home Assistanta jest planowane, ale nie zostało jeszcze zaimplementowane. Szczegółowy zakres backendu, zachowania future effective entry oraz bezpiecznego rolloutu integracji znajduje się w `ROADMAP.md`.
+Backend Phase 7A/7B jest gotowy. Następny etap obejmuje dopiero actionable notifications, handler odpowiedzi, kill switch, testowy push, YAML Home Assistanta i bezpieczną aktywację produkcyjną. Obecne automatyzacje Home Assistanta nie zostały zmienione.
 
 Dotychczasowy etap Authentication and hardening został przesunięty do Phase 8 i ma status `PLANNED`. Nie oznacza to decyzji o wystawieniu aplikacji do publicznego Internetu.
 

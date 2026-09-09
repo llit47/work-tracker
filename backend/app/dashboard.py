@@ -111,7 +111,15 @@ def calculate_dashboard(
 def _derive_live_state(
     items: tuple[WorkTimeItem, ...], now_utc: datetime
 ) -> tuple[DashboardStatus, CurrentSession | None]:
-    if any(not _item_has_no_future_events(item, now_utc) for item in items):
+    future_items = tuple(
+        item for item in items if not _item_has_no_future_events(item, now_utc)
+    )
+    if future_items:
+        if len(future_items) == 1 and _is_pending_future_entry(future_items[0], now_utc):
+            current_items = tuple(item for item in items if item is not future_items[0])
+            current_status, _ = _derive_live_state(current_items, now_utc)
+            if current_status is DashboardStatus.OUTSIDE:
+                return DashboardStatus.OUTSIDE, None
         return DashboardStatus.AMBIGUOUS, None
 
     terminal_items_by_location: dict[str, WorkTimeItem] = {}
@@ -152,6 +160,15 @@ def _derive_live_state(
         entry_timestamp=entry.event_timestamp,
         entry_timestamp_utc=entry.event_timestamp_utc,
         elapsed_seconds=elapsed_seconds,
+    )
+
+
+def _is_pending_future_entry(item: WorkTimeItem, now_utc: datetime) -> bool:
+    return (
+        item.status is SessionStatus.MISSING_EXIT
+        and len(item.events) == 1
+        and item.events[0].event_type == "entry"
+        and item.events[0].event_timestamp_utc > now_utc
     )
 
 
