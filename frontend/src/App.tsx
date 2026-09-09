@@ -1023,24 +1023,43 @@ function App() {
                 <div className="location-settings">
                   <h4>Lokalizacje</h4>
                   {applicationSettingsForm.locations.map((locationSetting) => (
-                    <label key={locationSetting.location}>
-                      <span>Nazwa wyświetlana</span>
-                      <input
-                        type="text"
-                        maxLength={100}
-                        placeholder={locationSetting.location}
-                        value={locationSetting.display_name ?? ''}
-                        onChange={(event) => setApplicationSettingsForm({
-                          ...applicationSettingsForm,
-                          locations: applicationSettingsForm.locations.map((item) => (
-                            item.location === locationSetting.location
-                              ? { ...item, display_name: event.target.value || null }
-                              : item
-                          )),
-                        })}
-                      />
+                    <div className="location-setting" key={locationSetting.location}>
+                      <label>
+                        <span>Nazwa wyświetlana</span>
+                        <input
+                          type="text"
+                          maxLength={100}
+                          placeholder={locationSetting.location}
+                          value={locationSetting.display_name ?? ''}
+                          onChange={(event) => setApplicationSettingsForm({
+                            ...applicationSettingsForm,
+                            locations: applicationSettingsForm.locations.map((item) => (
+                              item.location === locationSetting.location
+                                ? { ...item, display_name: event.target.value || null }
+                                : item
+                            )),
+                          })}
+                        />
+                      </label>
+                      <label>
+                        <span>Strefa czasowa</span>
+                        <input
+                          type="text"
+                          maxLength={100}
+                          placeholder="Europe/Warsaw"
+                          value={locationSetting.timezone ?? ''}
+                          onChange={(event) => setApplicationSettingsForm({
+                            ...applicationSettingsForm,
+                            locations: applicationSettingsForm.locations.map((item) => (
+                              item.location === locationSetting.location
+                                ? { ...item, timezone: event.target.value || null }
+                                : item
+                            )),
+                          })}
+                        />
+                      </label>
                       <small>Identyfikator techniczny: <code>{locationSetting.location}</code></small>
-                    </label>
+                    </div>
                   ))}
                 </div>
                 <button type="submit" disabled={isSavingApplicationSettings || applicationSettingsState !== 'ready'}>

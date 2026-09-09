@@ -3,6 +3,7 @@ import type { FetchLike } from './pay.js'
 export type LocationPresentationSetting = {
   location: string
   display_name: string | null
+  timezone: string | null
 }
 
 export type ApplicationSettings = {
@@ -16,7 +17,7 @@ export type ApplicationSettingsFormErrors = {
 
 export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
   application_title: 'Work Tracker',
-  locations: [{ location: 'gabinet_zabki', display_name: null }],
+  locations: [{ location: 'gabinet_zabki', display_name: null, timezone: null }],
 }
 
 export function getLocationDisplayName(

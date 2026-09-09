@@ -123,14 +123,85 @@ def test_past_entry_with_future_exit_is_not_finalized_or_paid_by_dashboard():
     assert result.month.pay == Decimal("0.00")
 
 
-def test_future_open_entry_remains_ambiguous():
-    result = dashboard([event(1, "entry", "2026-09-07T14:00:00+00:00")])
+def test_future_orphan_exit_remains_ambiguous():
+    result = dashboard([event(1, "exit", "2026-09-07T14:00:00+00:00")])
 
     assert result.status is DashboardStatus.AMBIGUOUS
     assert result.current_session is None
     assert result.today.effective_duration_seconds == 0
+
+
+def test_single_future_open_entry_is_a_pending_start_while_current_state_is_outside():
+    result = dashboard([event(1, "entry", "2026-09-07T14:00:00+00:00")])
+
+    assert result.status is DashboardStatus.OUTSIDE
+    assert result.current_session is None
+    assert result.today.running_duration_seconds is None
+    assert result.today.effective_duration_seconds == 0
     assert result.month.completed_duration_seconds == 0
     assert result.month.pay == Decimal("0.00")
+
+
+def test_future_effective_entry_starts_exactly_at_its_corrected_instant():
+    raw_entry = event(1, "entry", "2026-09-07T07:20:00+02:00")
+    corrected_stream = build_effective_event_stream(
+        [raw_entry],
+        [
+            correction(
+                1,
+                CorrectionType.TIMESTAMP_OVERRIDE,
+                raw_event_id=1,
+                timestamp="2026-09-07T08:00:00+02:00",
+            )
+        ],
+    )
+
+    before = dashboard(
+        list(corrected_stream.events),
+        now=datetime.fromisoformat("2026-09-07T05:21:00+00:00"),
+    )
+    at_start = dashboard(
+        list(corrected_stream.events),
+        now=datetime.fromisoformat("2026-09-07T06:00:00+00:00"),
+    )
+    later = dashboard(
+        list(corrected_stream.events),
+        now=datetime.fromisoformat("2026-09-07T06:30:00+00:00"),
+    )
+
+    assert before.status is DashboardStatus.OUTSIDE
+    assert before.current_session is None
+    assert before.today.running_duration_seconds is None
+    assert at_start.status is DashboardStatus.WORKING
+    assert at_start.current_session is not None
+    assert at_start.current_session.elapsed_seconds == 0
+    assert later.status is DashboardStatus.WORKING
+    assert later.current_session is not None
+    assert later.current_session.elapsed_seconds == 30 * 60
+
+
+def test_future_entry_does_not_hide_an_existing_open_entry():
+    result = dashboard(
+        [
+            event(1, "entry", "2026-09-07T10:00:00+00:00"),
+            event(2, "entry", "2026-09-07T14:00:00+00:00"),
+        ]
+    )
+
+    assert result.status is DashboardStatus.AMBIGUOUS
+    assert result.current_session is None
+
+
+def test_multiple_future_entries_remain_ambiguous():
+    result = dashboard(
+        [
+            event(1, "entry", "2026-09-07T14:00:00+00:00"),
+            event(2, "entry", "2026-09-07T15:00:00+00:00"),
+        ]
+    )
+
+    assert result.status is DashboardStatus.AMBIGUOUS
+    assert result.current_session is None
 
 
 def test_dashboard_combines_completed_today_with_one_running_shift_without_paying_it():

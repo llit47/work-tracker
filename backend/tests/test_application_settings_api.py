@@ -43,11 +43,25 @@ async def test_default_settings_and_unconfigured_location_fallback(tmp_path: Pat
     assert response.status_code == 200
     assert response.json() == {
         "application_title": "Work Tracker",
-        "locations": [{"location": "gabinet_zabki", "display_name": None}],
+        "locations": [
+            {
+                "location": "gabinet_zabki",
+                "display_name": None,
+                "timezone": None,
+            }
+        ],
     }
-    assert {item["location"]: item["display_name"] for item in with_unknown.json()["locations"]} == {
-        "gabinet_zabki": None,
-        "unknown_room": None,
+    assert {item["location"]: item for item in with_unknown.json()["locations"]} == {
+        "gabinet_zabki": {
+            "location": "gabinet_zabki",
+            "display_name": None,
+            "timezone": None,
+        },
+        "unknown_room": {
+            "location": "unknown_room",
+            "display_name": None,
+            "timezone": None,
+        },
     }
 
 
@@ -71,7 +85,11 @@ async def test_global_title_and_location_alias_persist_without_changing_raw_key(
             json={
                 "application_title": "  Czas pracy Przemek  ",
                 "locations": [
-                    {"location": "gabinet_zabki", "display_name": "  Gabinet Ząbki  "}
+                    {
+                        "location": "gabinet_zabki",
+                        "display_name": "  Gabinet Ząbki  ",
+                        "timezone": " Europe/Warsaw ",
+                    }
                 ],
             },
         )
@@ -87,7 +105,11 @@ async def test_global_title_and_location_alias_persist_without_changing_raw_key(
     assert persisted.json() == {
         "application_title": "Czas pracy Przemek",
         "locations": [
-            {"location": "gabinet_zabki", "display_name": "Gabinet Ząbki"}
+            {
+                "location": "gabinet_zabki",
+                "display_name": "Gabinet Ząbki",
+                "timezone": "Europe/Warsaw",
+            }
         ],
     }
     assert raw_events.json()[0]["location"] == "gabinet_zabki"
@@ -143,5 +165,106 @@ async def test_settings_validation_and_alias_removal(tmp_path: Path):
     assert invalid_location.status_code == 422
     assert duplicate_location.status_code == 422
     assert removed.json()["locations"] == [
-        {"location": "gabinet_zabki", "display_name": None}
+        {"location": "gabinet_zabki", "display_name": None, "timezone": None}
     ]
+
+
+@pytest.mark.anyio
+async def test_timezone_update_removal_and_legacy_payload_preservation(tmp_path: Path):
+    database_url = f"sqlite:///{tmp_path / 'timezone-settings.db'}"
+    app = make_app(database_url)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        configured = await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Work Tracker",
+                "locations": [
+                    {
+                        "location": "gabinet_zabki",
+                        "display_name": "Gabinet",
+                        "timezone": "Europe/Warsaw",
+                    }
+                ],
+            },
+        )
+        legacy_alias_update = await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Nowy tytuł",
+                "locations": [
+                    {"location": "gabinet_zabki", "display_name": "Nowy alias"}
+                ],
+            },
+        )
+        title_only_update = await client.put(
+            "/api/application-settings",
+            json={"application_title": "Tylko tytuł", "locations": []},
+        )
+        removed = await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Tylko tytuł",
+                "locations": [
+                    {
+                        "location": "gabinet_zabki",
+                        "display_name": "Nowy alias",
+                        "timezone": None,
+                    }
+                ],
+            },
+        )
+
+    assert configured.json()["locations"][0]["timezone"] == "Europe/Warsaw"
+    assert legacy_alias_update.json()["locations"][0] == {
+        "location": "gabinet_zabki",
+        "display_name": "Nowy alias",
+        "timezone": "Europe/Warsaw",
+    }
+    assert title_only_update.json()["locations"][0]["timezone"] == "Europe/Warsaw"
+    assert removed.json()["locations"][0]["timezone"] is None
+
+
+@pytest.mark.anyio
+async def test_invalid_timezone_rejects_the_whole_settings_transaction(tmp_path: Path):
+    database_url = f"sqlite:///{tmp_path / 'invalid-timezone.db'}"
+    app = make_app(database_url)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Stan początkowy",
+                "locations": [
+                    {
+                        "location": "gabinet_zabki",
+                        "display_name": "Poprawny alias",
+                        "timezone": "Europe/Warsaw",
+                    }
+                ],
+            },
+        )
+        invalid = await client.put(
+            "/api/application-settings",
+            json={
+                "application_title": "Nie może się zapisać",
+                "locations": [
+                    {
+                        "location": "gabinet_zabki",
+                        "display_name": "Też nie może się zapisać",
+                        "timezone": "Mars/Olympus_Mons",
+                    }
+                ],
+            },
+        )
+        persisted = await client.get("/api/application-settings")
+
+    assert invalid.status_code == 422
+    assert persisted.json() == {
+        "application_title": "Stan początkowy",
+        "locations": [
+            {
+                "location": "gabinet_zabki",
+                "display_name": "Poprawny alias",
+                "timezone": "Europe/Warsaw",
+            }
+        ],
+    }

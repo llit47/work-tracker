@@ -16,7 +16,10 @@ function assertEqual<T>(actual: T, expected: T, message: string) {
 assertEqual(DEFAULT_APPLICATION_SETTINGS.application_title, 'Work Tracker', 'default title is stable')
 assertEqual(
   getLocationDisplayName(
-    { application_title: 'Work Tracker', locations: [{ location: 'gabinet_zabki', display_name: 'Gabinet Ząbki' }] },
+    {
+      application_title: 'Work Tracker',
+      locations: [{ location: 'gabinet_zabki', display_name: 'Gabinet Ząbki', timezone: 'Europe/Warsaw' }],
+    },
     'gabinet_zabki',
   ),
   'Gabinet Ząbki',
@@ -32,7 +35,7 @@ assertEqual(validateApplicationTitle('  Czas pracy  ').value, 'Czas pracy', 'tit
 
 const responseSettings = {
   application_title: 'Czas pracy Przemek',
-  locations: [{ location: 'gabinet_zabki', display_name: 'Gabinet Ząbki' }],
+  locations: [{ location: 'gabinet_zabki', display_name: 'Gabinet Ząbki', timezone: 'Europe/Warsaw' }],
 }
 let requestedUrl = ''
 let requestInit: RequestInit | undefined
@@ -51,5 +54,10 @@ assertEqual(
 )
 assertEqual(requestInit?.method, 'PUT', 'settings use an explicit update request')
 assertEqual(JSON.parse(String(requestInit?.body)), responseSettings, 'technical location key stays in payload')
+assertEqual(
+  JSON.parse(String(requestInit?.body)).locations[0].timezone,
+  'Europe/Warsaw',
+  'configured location timezone stays in save payload',
+)
 
 console.log('Application settings tests passed.')

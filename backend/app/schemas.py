@@ -2,6 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 import re
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -49,6 +50,25 @@ class HomeAssistantWebhook(BaseModel):
 class WebhookAccepted(BaseModel):
     id: int
     status: str = "accepted"
+    event: EventType
+    location: str
+    location_display_name: str
+    timestamp: datetime
+
+
+class HomeAssistantCorrectionRequest(BaseModel):
+    raw_event_id: int
+    time: str
+
+
+class HomeAssistantCorrectionResponse(BaseModel):
+    raw_event_id: int
+    correction_id: int
+    event: EventType
+    location: str
+    location_display_name: str
+    original_timestamp: datetime
+    effective_timestamp: datetime
 
 
 class WorkEventResponse(BaseModel):
@@ -253,6 +273,7 @@ class DashboardResponse(BaseModel):
 class LocationPresentationSetting(BaseModel):
     location: str = Field(min_length=1, max_length=100)
     display_name: str | None = Field(default=None, max_length=MAX_PRESENTATION_TEXT_LENGTH)
+    timezone: str | None = Field(default=None, max_length=MAX_PRESENTATION_TEXT_LENGTH)
 
     @field_validator("location")
     @classmethod
@@ -268,6 +289,20 @@ class LocationPresentationSetting(BaseModel):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @field_validator("timezone")
+    @classmethod
+    def normalize_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            ZoneInfo(normalized)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise ValueError("timezone must be a known IANA timezone") from error
+        return normalized
 
 
 class ApplicationSettingsResponse(BaseModel):

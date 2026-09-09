@@ -20,15 +20,21 @@ from .config import Settings, get_settings
 from .database import build_session_factory, get_session
 from .dashboard import DashboardSummary, calculate_dashboard
 from .corrections import (
+    CorrectionConflictError,
     CorrectionRecord,
     EffectiveEventMetadata,
     EffectiveEventStream,
+    RawEventNotFoundError,
+    TimeOnlyCorrectionError,
     build_effective_event_stream,
+    resolve_time_only_timestamp,
+    upsert_timestamp_correction,
 )
 from .models import (
     ApplicationSetting,
     CorrectionType,
     LocationDisplayName,
+    LocationTimezone,
     PayRate,
     WorkEvent,
     WorkEventCorrection,
@@ -48,6 +54,8 @@ from .schemas import (
     CorrectionResponse,
     DashboardResponse,
     EffectiveWorkEventResponse,
+    HomeAssistantCorrectionRequest,
+    HomeAssistantCorrectionResponse,
     HomeAssistantWebhook,
     ManualEventRequest,
     MonthlyPaySummaryResponse,
@@ -112,6 +120,7 @@ def _to_application_settings_response(
             LocationPresentationSetting(
                 location=item.location,
                 display_name=item.display_name,
+                timezone=item.timezone,
             )
             for item in settings_data.locations
         ],
@@ -169,14 +178,25 @@ def create_app(
         allow_headers=["Content-Type", "X-Webhook-Token"],
     )
 
+    def require_webhook_token(provided_token: str | None) -> None:
+        if provided_token is None or not hmac.compare_digest(
+            provided_token, settings.webhook_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing webhook token",
+            )
+
+    def integration_error(error: Exception, code: str) -> dict[str, str]:
+        return {"code": code, "message": str(error)}
+
     @app.post("/api/webhook/home-assistant", response_model=WebhookAccepted, status_code=status.HTTP_201_CREATED)
     def receive_home_assistant_webhook(
         payload: HomeAssistantWebhook,
         x_webhook_token: str | None = Header(default=None),
         session: Session = Depends(get_session),
     ) -> WebhookAccepted:
-        if x_webhook_token is None or not hmac.compare_digest(x_webhook_token, settings.webhook_token):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing webhook token")
+        require_webhook_token(x_webhook_token)
 
         event = WorkEvent(
             event_type=payload.event.value,
@@ -189,7 +209,79 @@ def create_app(
         session.add(event)
         session.commit()
         session.refresh(event)
-        return WebhookAccepted(id=event.id)
+        alias = session.get(LocationDisplayName, event.location)
+        return WebhookAccepted(
+            id=event.id,
+            event=event.event_type,
+            location=event.location,
+            location_display_name=(alias.display_name if alias is not None else event.location),
+            timestamp=event.event_timestamp,
+        )
+
+    @app.post(
+        "/api/webhook/home-assistant/correction",
+        response_model=HomeAssistantCorrectionResponse,
+    )
+    def receive_home_assistant_correction(
+        payload: HomeAssistantCorrectionRequest,
+        x_webhook_token: str | None = Header(default=None),
+        session: Session = Depends(get_session),
+    ) -> HomeAssistantCorrectionResponse:
+        require_webhook_token(x_webhook_token)
+        raw_event = session.get(WorkEvent, payload.raw_event_id)
+        if raw_event is None:
+            error = RawEventNotFoundError()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=integration_error(error, error.code),
+            )
+
+        timezone_setting = session.get(LocationTimezone, raw_event.location)
+        if timezone_setting is None:
+            error = TimeOnlyCorrectionError(
+                "location_timezone_missing",
+                "Location timezone is not configured",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=integration_error(error, error.code),
+            )
+        try:
+            effective_timestamp = resolve_time_only_timestamp(
+                raw_event.event_timestamp_utc,
+                timezone_setting.timezone,
+                payload.time,
+            )
+            _, correction = upsert_timestamp_correction(
+                session,
+                raw_event.id,
+                effective_timestamp,
+            )
+        except CorrectionConflictError as error:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=integration_error(error, error.code),
+            ) from error
+        except TimeOnlyCorrectionError as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=integration_error(error, error.code),
+            ) from error
+
+        session.commit()
+        session.refresh(correction)
+        alias = session.get(LocationDisplayName, raw_event.location)
+        return HomeAssistantCorrectionResponse(
+            raw_event_id=raw_event.id,
+            correction_id=correction.id,
+            event=raw_event.event_type,
+            location=raw_event.location,
+            location_display_name=(
+                alias.display_name if alias is not None else raw_event.location
+            ),
+            original_timestamp=raw_event.event_timestamp,
+            effective_timestamp=correction.event_timestamp,
+        )
 
     @app.get("/api/work-events", response_model=list[WorkEventResponse])
     def list_work_events(
@@ -216,33 +308,22 @@ def create_app(
         payload: TimestampCorrectionRequest,
         session: Session = Depends(get_session),
     ) -> WorkEventCorrection:
-        if session.get(WorkEvent, raw_event_id) is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Raw event not found")
-
-        correction = session.scalar(
-            select(WorkEventCorrection).where(WorkEventCorrection.raw_event_id == raw_event_id)
-        )
-        if correction and correction.correction_type != CorrectionType.TIMESTAMP_OVERRIDE.value:
+        try:
+            _, correction = upsert_timestamp_correction(
+                session,
+                raw_event_id,
+                payload.timestamp,
+            )
+        except RawEventNotFoundError as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Raw event not found",
+            ) from error
+        except CorrectionConflictError as error:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Raw event already has a conflicting correction",
-            )
-
-        now = datetime.now(timezone.utc)
-        if correction is None:
-            correction = WorkEventCorrection(
-                correction_type=CorrectionType.TIMESTAMP_OVERRIDE.value,
-                created_at=now,
-                updated_at=now,
-                raw_event_id=raw_event_id,
-                event_timestamp=payload.timestamp,
-                event_timestamp_utc=payload.timestamp.astimezone(timezone.utc),
-            )
-            session.add(correction)
-        else:
-            correction.event_timestamp = payload.timestamp
-            correction.event_timestamp_utc = payload.timestamp.astimezone(timezone.utc)
-            correction.updated_at = now
+            ) from error
         session.commit()
         session.refresh(correction)
         return correction
@@ -418,8 +499,7 @@ def create_app(
             if location_setting.display_name is None:
                 if stored_alias is not None:
                     session.delete(stored_alias)
-                continue
-            if stored_alias is None:
+            elif stored_alias is None:
                 session.add(
                     LocationDisplayName(
                         location=location_setting.location,
@@ -430,6 +510,24 @@ def create_app(
             else:
                 stored_alias.display_name = location_setting.display_name
                 stored_alias.updated_at = now
+
+            if "timezone" not in location_setting.model_fields_set:
+                continue
+            stored_timezone = session.get(LocationTimezone, location_setting.location)
+            if location_setting.timezone is None:
+                if stored_timezone is not None:
+                    session.delete(stored_timezone)
+            elif stored_timezone is None:
+                session.add(
+                    LocationTimezone(
+                        location=location_setting.location,
+                        timezone=location_setting.timezone,
+                        updated_at=now,
+                    )
+                )
+            else:
+                stored_timezone.timezone = location_setting.timezone
+                stored_timezone.updated_at = now
 
         session.commit()
         return _to_application_settings_response(load_application_settings(session))

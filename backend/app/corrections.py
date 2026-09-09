@@ -1,9 +1,42 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time, timedelta, timezone
+import re
 from typing import Iterable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .models import CorrectionType
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .models import CorrectionType, WorkEvent, WorkEventCorrection
 from .work_time import RawWorkEvent
+
+TIME_ONLY_PATTERN = re.compile(r"^(?P<hour>[0-9]{1,2})[:.](?P<minute>[0-9]{2})$")
+HA_CORRECTION_WINDOW = timedelta(hours=4)
+
+
+class CorrectionServiceError(Exception):
+    code: str
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+class RawEventNotFoundError(CorrectionServiceError):
+    def __init__(self):
+        super().__init__("raw_event_not_found", "Raw event not found")
+
+
+class CorrectionConflictError(CorrectionServiceError):
+    def __init__(self):
+        super().__init__(
+            "correction_conflict",
+            "Raw event already has a conflicting correction",
+        )
+
+
+class TimeOnlyCorrectionError(CorrectionServiceError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -42,6 +75,126 @@ class EffectiveEventStream:
     events: tuple[RawWorkEvent, ...]
     metadata_by_id: dict[int, EffectiveEventMetadata]
     ignored_events: tuple[EffectiveEventMetadata, ...]
+
+
+def parse_time_only(value: str) -> time:
+    match = TIME_ONLY_PATTERN.fullmatch(value.strip())
+    if match is None:
+        raise TimeOnlyCorrectionError(
+            "invalid_time",
+            "Time must use H:MM, HH:MM, H.MM, or HH.MM format",
+        )
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+    if hour > 23 or minute > 59:
+        raise TimeOnlyCorrectionError("invalid_time", "Time is outside the 00:00-23:59 range")
+    return time(hour=hour, minute=minute)
+
+
+def resolve_time_only_timestamp(
+    raw_instant: datetime,
+    timezone_name: str,
+    value: str,
+) -> datetime:
+    """Resolve a wall-clock time near one raw instant without guessing a DST fold."""
+    requested_time = parse_time_only(value)
+    if raw_instant.tzinfo is None or raw_instant.utcoffset() is None:
+        raise ValueError("Raw event timestamp must be timezone-aware")
+    try:
+        location_timezone = ZoneInfo(timezone_name)
+    except (ValueError, ZoneInfoNotFoundError) as error:
+        raise TimeOnlyCorrectionError(
+            "location_timezone_invalid",
+            "Location timezone is not a valid IANA timezone",
+        ) from error
+
+    raw_utc = raw_instant.astimezone(timezone.utc)
+    raw_date = raw_utc.astimezone(location_timezone).date()
+    candidates: dict[datetime, datetime] = {}
+    valid_on_raw_date = False
+    for day_offset in (-1, 0, 1):
+        candidate_date = raw_date + timedelta(days=day_offset)
+        naive_wall_time = datetime.combine(candidate_date, requested_time)
+        for fold in (0, 1):
+            tentative = naive_wall_time.replace(tzinfo=location_timezone, fold=fold)
+            candidate_utc = tentative.astimezone(timezone.utc)
+            round_trip = candidate_utc.astimezone(location_timezone)
+            if round_trip.replace(tzinfo=None) != naive_wall_time:
+                continue
+            candidates[candidate_utc] = round_trip
+            if day_offset == 0:
+                valid_on_raw_date = True
+
+    if not candidates:
+        raise TimeOnlyCorrectionError(
+            "time_not_resolvable",
+            "Time does not identify a real local instant",
+        )
+
+    eligible = {
+        candidate_utc: candidate_local
+        for candidate_utc, candidate_local in candidates.items()
+        if abs(candidate_utc - raw_utc) <= HA_CORRECTION_WINDOW
+    }
+    if not eligible:
+        code = "time_out_of_range" if valid_on_raw_date else "time_not_resolvable"
+        message = (
+            "Time is more than four hours from the raw event"
+            if code == "time_out_of_range"
+            else "Time does not identify a real local instant near the raw event"
+        )
+        raise TimeOnlyCorrectionError(code, message)
+
+    nearest_distance = min(abs(candidate_utc - raw_utc) for candidate_utc in eligible)
+    nearest = [
+        candidate_local
+        for candidate_utc, candidate_local in eligible.items()
+        if abs(candidate_utc - raw_utc) == nearest_distance
+    ]
+    if len(nearest) != 1:
+        raise TimeOnlyCorrectionError(
+            "time_not_resolvable",
+            "Time is ambiguous near the raw event",
+        )
+    return nearest[0].replace(second=0, microsecond=0)
+
+
+def upsert_timestamp_correction(
+    session: Session,
+    raw_event_id: int,
+    effective_timestamp: datetime,
+    *,
+    now: datetime | None = None,
+) -> tuple[WorkEvent, WorkEventCorrection]:
+    """Set the one auditable timestamp override without mutating its raw event."""
+    if effective_timestamp.tzinfo is None or effective_timestamp.utcoffset() is None:
+        raise ValueError("Correction timestamp must be timezone-aware")
+    raw_event = session.get(WorkEvent, raw_event_id)
+    if raw_event is None:
+        raise RawEventNotFoundError()
+
+    correction = session.scalar(
+        select(WorkEventCorrection).where(WorkEventCorrection.raw_event_id == raw_event_id)
+    )
+    if correction and correction.correction_type != CorrectionType.TIMESTAMP_OVERRIDE.value:
+        raise CorrectionConflictError()
+
+    changed_at = now or datetime.now(timezone.utc)
+    if correction is None:
+        correction = WorkEventCorrection(
+            correction_type=CorrectionType.TIMESTAMP_OVERRIDE.value,
+            created_at=changed_at,
+            updated_at=changed_at,
+            raw_event_id=raw_event_id,
+            event_timestamp=effective_timestamp,
+            event_timestamp_utc=effective_timestamp.astimezone(timezone.utc),
+        )
+        session.add(correction)
+    else:
+        correction.event_timestamp = effective_timestamp
+        correction.event_timestamp_utc = effective_timestamp.astimezone(timezone.utc)
+        correction.updated_at = changed_at
+    return raw_event, correction
 
 
 def build_effective_event_stream(
