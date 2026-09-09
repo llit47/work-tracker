@@ -203,9 +203,82 @@ Zakres nadal zakłada jedną lokalizację i jedną pracę.
 
 Eksport zachowuje historyczne reguły `work-summary` i `pay-summary`: sesja należy do daty wejścia zapisanej z oryginalnym/efektywnym offsetem, a czas trwania wynika z chwil UTC. Excel/XLSX pozostaje opcjonalnym, odłożonym rozszerzeniem.
 
-## Phase 7 — Authentication and hardening
+## Phase 7 — Interactive Home Assistant event confirmation
 
 **Status: NEXT**
+
+Cel: po poprawnym zapisaniu raw eventu `entry` lub `exit` umożliwić użytkownikowi potwierdzenie wykrytej godziny albo jej korektę bezpośrednio w interaktywnym powiadomieniu mobilnym Home Assistanta, bez otwierania Work Trackera lub innej aplikacji.
+
+Funkcja jest planowana i nie została jeszcze zaimplementowana.
+
+### Phase 7A — Backend integration
+
+**Status: NEXT**
+
+Planowany zakres:
+
+- Istniejący `POST /api/webhook/home-assistant` nadal zapisuje immutable raw event przed uruchomieniem opcjonalnej warstwy powiadomień.
+- Odpowiedź webhooka docelowo zwraca dane potrzebne Home Assistantowi do powiadomienia: `raw_event_id`, typ eventu, timestamp, technical location identifier oraz aktualny display alias lokalizacji.
+- Display alias pochodzi z istniejących application settings i ma fallback do technical location identifier; user-facing nazwa lokalizacji nie jest wpisana na sztywno w Home Assistant.
+- Osobny endpoint integracyjny Home Assistanta, zabezpieczony tokenem, umożliwia korektę godziny konkretnego raw eventu.
+- Endpoint integracyjny korzysta z istniejącego mechanizmu `timestamp_override`; logika ustawiania timestamp correction jest współdzielona z istniejącą korektą timestampu, a nie zduplikowana.
+- Korekta z Home Assistanta nigdy nie aktualizuje ani nie usuwa rekordu `work_events`.
+- Potwierdzenie poprawnej godziny nie tworzy korekty ani dodatkowego rekordu audytowego.
+- Brak reakcji na powiadomienie nie zmienia raw ani effective event stream.
+
+### Phase 7B — Correction input and live-domain behavior
+
+**Status: PLANNED**
+
+Planowany zakres:
+
+- Wejście godziny z powiadomienia jest przyjazne dla użytkownika i akceptuje co najmniej formaty `7:45`, `07:45`, `7.45` oraz `07.45`.
+- Backend normalizuje zaakceptowany input do poprawnego timezone-aware timestampu; data pochodzi z raw eventu, a nie z chwili odpowiedzi na powiadomienie.
+- Ręczna korekta do konkretnej minuty ustawia sekundy na `00`.
+- Nieprawidłowe godziny, w tym `24:00`, `7:72` i tekst niebędący godziną, są odrzucane bez utworzenia lub zmiany korekty.
+- Korekta z mobilnego powiadomienia może przesunąć timestamp najwyżej o 4 godziny wstecz lub w przyszłość względem raw timestampu; większa zmiana jest odrzucana i pozostaje do wykonania w normalnym interfejsie Work Trackera.
+- Istniejący konflikt korekty, na przykład `ignore_event`, nie jest automatycznie zastępowany przez timestamp correction.
+- Korekta raw `entry` na niedaleką przyszłość jest poprawnym przypadkiem biznesowym, na przykład raw `07:20`, effective `08:00`.
+- Przed effective future entry dashboard raportuje `outside`, nie nalicza bieżącego czasu i nie klasyfikuje samej przyszłej godziny jako `ambiguous`.
+- Po osiągnięciu effective entry timestamp normalnie powstaje bieżąca otwarta zmiana, bez tworzenia nowego persisted eventu ani syntetycznego `entry` lub `exit`.
+- Pozostałe rzeczywiste anomalie zachowują fail-safe behavior zgodny z istniejącymi zasadami dashboardu.
+
+### Phase 7C — Home Assistant integration and safe rollout
+
+**Status: PLANNED**
+
+Planowany zakres:
+
+- Home Assistant korzysta z odpowiedzi istniejącego webhooka, aby znać konkretny `raw_event_id`; interaktywne powiadomienie może zostać wysłane dopiero po udanym zapisaniu raw eventu.
+- User-facing nazwa lokalizacji w powiadomieniu pochodzi z backendowego display aliasu.
+- Powiadomienie udostępnia akcję potwierdzenia oraz akcję korekty korzystającą z inline text input, bez konieczności otwierania Work Trackera lub Home Assistanta.
+- Odpowiedzi z powiadomień obsługuje osobna automatyzacja lub handler, a nie długotrwałe `wait_for_trigger` w głównej automatyzacji strefowej.
+- Action identifiers jednoznacznie wskazują raw event.
+- Po odrzuceniu błędnego inputu użytkownik może ponowić próbę z kolejnego inline powiadomienia.
+- Notification UX pozostaje opcjonalną warstwą ponad istniejącym ingestion; błąd powiadomienia, brak telefonu, brak reakcji użytkownika lub błąd handlera nie blokuje, nie cofa ani nie modyfikuje prawidłowo zapisanego raw eventu.
+- Home Assistant posiada kill switch/helper umożliwiający natychmiastowe wyłączenie wyłącznie interaktywnych powiadomień, bez wyłączania istniejącego zone tracking i webhook ingestion.
+- Backend jest wdrażany i testowany przed zmianą produkcyjnej automatyzacji strefowej.
+- Inline text input jest ręcznie weryfikowany na docelowym telefonie przed podłączeniem realnego zone triggera.
+- Właściwy YAML Home Assistanta powstanie dopiero w zadaniu implementacyjnym i nie jest częścią przygotowania roadmapy.
+
+### Acceptance criteria
+
+- [ ] Raw Home Assistant events pozostają immutable.
+- [ ] Potwierdzenie wykrytej godziny nie tworzy timestamp correction.
+- [ ] Korekta z powiadomienia korzysta z istniejącego mechanizmu `timestamp_override` i współdzielonej logiki korekt.
+- [ ] Backend normalizuje akceptowany time input do timezone-aware timestampu opartego na dacie raw eventu i z sekundami ustawionymi na `00`.
+- [ ] Nieprawidłowy input nie tworzy ani nie zmienia danych.
+- [ ] Display alias lokalizacji pochodzi z application settings i ma fallback do canonical technical location identifier.
+- [ ] Zmiana display aliasu nie wymaga edycji automatyzacji Home Assistanta.
+- [ ] Future effective entry nie nalicza czasu przed swoim timestampem i nie powoduje samoistnie stanu `ambiguous`.
+- [ ] Notification failure, brak reakcji lub błąd handlera nie wpływa na zapis raw eventu.
+- [ ] Kill switch wyłącza wyłącznie warstwę interaktywnych powiadomień, zachowując zone tracking i webhook ingestion.
+- [ ] Funkcja jest pokryta testami backendowymi przed aktywacją integracji Home Assistanta.
+- [ ] Rollout backendu i jego weryfikacja następują przed zmianą produkcyjnej automatyzacji strefowej.
+
+## Phase 8 — Authentication and hardening
+
+**Status: PLANNED**
 
 - prosty login,
 - brak publicznej rejestracji,
