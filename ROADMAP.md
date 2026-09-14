@@ -305,12 +305,108 @@ Planowany zakres:
 
 **Status: PLANNED**
 
-- prosty login,
-- brak publicznej rejestracji,
-- jeden użytkownik na początek,
-- przygotowanie pod ewentualny późniejszy dostęp spoza LAN.
+Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia przez Internet. To warunek konieczny Phase 9, a nie samo uruchomienie publicznego dostępu. Produkcja do tego czasu pozostaje LAN-only.
 
-Ten etap nie oznacza decyzji o publicznym wystawieniu aplikacji. Obecnie Work Tracker pozostaje usługą LAN-only.
+### Phase 8A — Identity and protected application
+
+- Bezpieczne logowanie i sesje dla początkowo bardzo małej liczby jawnie dopuszczonych użytkowników; bez publicznej rejestracji i bez nadmiarowego RBAC.
+- Ochrona endpointów UI/API odczytujących lub zmieniających dane pracy, korekty, stawki, raporty i ustawienia. Istniejące integracje maszynowe muszą zachować odrębne, właściwe im uwierzytelnianie; nie należy zastępować tokenu HA interaktywną sesją użytkownika.
+- Bezpieczne cookies (`Secure`, `HttpOnly`, odpowiedni `SameSite`), wygaszanie/unieważnianie sesji i sensowna ochrona logowania przed brute force.
+- Sekrety i dane sesji poza repozytorium, minimalne uprawnienia oraz security-sensitive defaults.
+
+### Phase 8B — Internet-readiness review
+
+- Dostosowanie do rzeczywistej architektury reverse proxy: poprawne rozpoznawanie HTTPS, hosta i adresu klienta wyłącznie z zaufanego proxy; bez bezwarunkowego ufania `Forwarded`/`X-Forwarded-*` od klienta.
+- Sprawdzenie CSRF dla operacji opartych o cookies, polityki CORS, trusted hosts/proxies, bezpieczeństwa nagłówków i zasad dostępu do endpointów integracyjnych.
+- Testy logowania, sesji, odmowy dostępu, ochrony danych oraz poprawnego działania obecnego Home Assistant ingestion w LAN.
+
+### Acceptance criteria
+
+- [ ] Cały zwykły UI i jego API wymagają poprawnej sesji; brak anonimowego odczytu lub mutacji danych pracy i płac.
+- [ ] Nie istnieje publiczna rejestracja; liczba użytkowników jest mała i jawnie kontrolowana.
+- [ ] Cookies i obsługa sesji są bezpieczne w docelowym HTTPS/reverse-proxy układzie, a logowanie ma ochronę przed brute force.
+- [ ] CSRF/CORS/trusted proxy/forwarded headers są zweryfikowane względem docelowego przepływu, bez zaufania do niezweryfikowanych nagłówków klienta.
+- [ ] Sekrety pozostają poza checkoutem, a integracje maszynowe działają bez interaktywnego loginu i bez osłabienia własnego uwierzytelniania.
+- [ ] Dopiero po weryfikacji Phase 8 można rozpocząć publiczny rollout Phase 9.
+
+## Phase 9 — Cloudflare public deployment
+
+**Status: PLANNED**
+
+Cel: udostępnić **całą** aplikację Work Tracker przez HTTPS pod dedykowaną subdomeną domeny obsługiwanej przez Cloudflare. Nazwa subdomeny nie jest jeszcze ustalona. Phase 9 następuje po ukończeniu Phase 8; obecny origin pozostaje prywatny.
+
+```text
+Internet → Cloudflare (DNS/HTTPS) → Cloudflare Tunnel → prywatny origin Work Trackera w LAN
+```
+
+### Phase 9A — Private-origin routing and protection
+
+- Cloudflare Tunnel i DNS dla dedykowanego publicznego hostname; bez router port-forwardingu i bez bezpośredniego publicznego wystawiania LXC.
+- HTTPS dla użytkowników; poprawne przekazywanie informacji o schemacie, hoście i adresie klienta przez zaufany proxy path, tak by sesyjne cookies i logi zachowały właściwą semantykę.
+- Application authentication z Phase 8 chroni cały zwykły UI/API. Cloudflare Access może być dodatkową warstwą ochrony, a nie substytutem uwierzytelniania aplikacji.
+- Zachowanie prywatnej ścieżki LAN dla Home Assistant ingestion niezależnie od publicznego UI; sam publiczny hostname nie powinien automatycznie rozszerzać dostępu do token-protected endpointów integracyjnych. Decyzję o routingu i regułach dla nich trzeba zweryfikować przy wdrożeniu.
+- Projekt routingu powinien później dopuścić bardzo wąski, niezależnie uwierzytelniany Google webhook z Phase 10 bez interaktywnego loginu ani wyłączenia ochrony całej aplikacji.
+
+### Phase 9B — Safe rollout and rollback
+
+- Sekrety i tokeny Cloudflare Tunnel poza Git i poza checkoutem; jawne wymagania konfiguracyjne dopiero w implementacyjnym PR, zgodnie z istniejącym deployment manifest i regułami uprawnień.
+- Walidacja dostępu, sesji, HTTPS, ograniczenia originu i niezmienionego działania Home Assistant w LAN przed aktywacją publicznego hostname.
+- Stopniowa aktywacja z możliwością szybkiego wyłączenia publicznego routingu, zachowaniem backupów SQLite, czystego update/rollback i bez utraty danych.
+
+### Acceptance criteria
+
+- [ ] Phase 8 jest ukończona przed publicznym udostępnieniem całego UI/API.
+- [ ] Dedykowany hostname działa przez Cloudflare Tunnel i HTTPS; origin nie ma bezpośredniej publicznej ekspozycji ani router port-forwardingu.
+- [ ] Autoryzacja aplikacji, HTTPS-aware cookies, trusted proxy/client IP i ewentualna dodatkowa ochrona Access są sprawdzone end-to-end.
+- [ ] Istniejące Home Assistant ingestion i korekty w LAN działają bez zależności od publicznego UI.
+- [ ] Publiczny routing można wycofać bez zmiany lub utraty raw events, korekt, płac i konfiguracji.
+
+## Phase 10 — Google Calendar integration
+
+**Status: PLANNED**
+
+Cel: asymetryczna integracja dwukierunkowa po publicznym wdrożeniu HTTPS z Phase 9. Work Tracker pozostaje jedynym źródłem prawdy o czasie pracy: `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`. Google Calendar jest projekcją **valid finalized sessions** oraz ograniczonym interfejsem zmiany godzin zarządzanych wydarzeń, nie równoległą bazą czasu pracy. Nie tworzy ani nie przepisuje `work_events`.
+
+Docelowo właściciel tworzy dedykowany kalendarz na swoim zwykłym koncie Google i udostępnia go Google service account z prawem do zarządzania wydarzeniami. Może także udostępnić go osobom mającym oglądać lub edytować godziny. Nie zakładamy kalendarza należącego do service account. Credentials/private key service account, Cloudflare Tunnel credentials i sekrety kanałów/webhooków pozostają poza Git i checkoutem; przyszły deployment manifest ma jawnie obsługiwać wymagane sekrety.
+
+### Phase 10A — Stable identity and outbound projection
+
+- Jedna poprawna zakończona sesja `entry 07:58 → exit 16:12` odpowiada jednemu managed Google event `07:58–16:12`, nie dwóm osobnym eventom `entry`/`exit`. Otwarta zmiana bez istniejącej, kanonicznie poprawnej granicy `exit` (raw lub manualnej) nie tworzy sztucznego zakończonego wydarzenia ani syntetycznego `exit`.
+- Outbound korzysta z tego samego effective-event stream i canonical pairing co work-summary, pay, dashboard i raporty. Tylko sesje `valid` mogą być projektowane; manual events mogą być granicami takich sesji.
+- Zaprojektować trwałą tożsamość/link sesji z obiema granicami, niezależną od zmiennych start/end timestampów i uwzględniającą zarówno raw, jak i `manual_event` boundary. Obecny `WorkTimeItem` nie ma trwałego session ID, a manual effective event nie ma `raw_event_id`; nowy model relacji jest wymaganiem do rozstrzygnięcia, nie częścią obecnego schematu.
+- Po stronie Work Trackera zapisać `google_event_id` i stan synchronizacji; po stronie managed Google event umieścić prywatne, wersjonowane extended properties potwierdzające zarządzanie przez WT i pozwalające odtworzyć powiązanie. Nie identyfikować eventu jedynie po godzinach.
+- Create/update tego samego managed event po korekcie; undo przywraca aktualny effective stream. Ignore, manual event i zmiana parowania uruchamiają reconciliation do aktualnego zbioru valid sessions. Usunięcie/anomalia sesji nie upoważnia Calendar do zmiany raw danych.
+- Awaria Google API nigdy nie blokuje ani nie cofa HA ingestion, korekty, zapisu czasu pracy ani płac. Planować trwałą asynchroniczną warstwę sync (np. SQLite outbox/job queue z retry) oraz okresowe porównywanie valid WT sessions ↔ managed Google events.
+
+### Phase 10B — Narrow inbound time editing
+
+- Inbound dotyczy wyłącznie istniejącego, zweryfikowanego managed event: zmiana startu odpowiada korekcie jego `entry`, zmiana końca korekcie `exit`, zmiana obu wymaga atomowej walidacji i zapisu obu granic. Porównywać pełne timezone-aware UTC instants, nie stringi ani same minuty; po korektach ponownie zastosować canonical pairing/fail-safe rules.
+- Dla granicy powiązanej z raw eventem używać istniejącego audytowalnego `timestamp_override`, nigdy nie aktualizować `work_events`. Brak różnicy czasu to no-op; powrót dokładnie do raw instantu powinien usuwać istniejący timestamp override (undo), o ile nie ma konfliktującego typu korekty. Konflikty (np. `ignore_event`) nie są automatycznie zastępowane.
+- Pełny timezone-aware timestamp z Google nie podlega HA-specific oknu ±4 godzin, które dotyczy wyłącznie time-only correction UX. Nadal musi przejść walidację domenową. Jeśli zmiana zrywa powiązanie granic, zmienia canonical pairing albo nie daje valid session, początkowa bezpieczna polityka to odrzucenie/odwrócenie edycji Calendar bez zgadywania nowej sesji; szczegóły rozstrzygnąć przed implementacją.
+- Dla sesji z manual-event boundary outbound jest możliwy, lecz pierwsza wersja inbound może edytować tylko te granice, które wskazują raw event. Edycję manual boundary należy jawnie odrzucić/odwrócić albo pozostawić unsupported, dopóki nie powstanie niedestrukcyjna, audytowalna semantyka. Nie udawać, że `timestamp_override` działa na `manual_event`.
+- Zmiany title, description i color nie zmieniają danych pracy. Zwykły event utworzony w Calendar nie tworzy work session. Usunięcie managed event nie oznacza `ignore_event` ani usunięcia czasu pracy; reconciliation powinien móc go odtworzyć.
+- Zaprojektować wiarygodny audyt pochodzenia **nowych** korekt (`web`, `home_assistant`, `google_calendar`), z `legacy/unknown` dla historycznych rekordów bez danych o pochodzeniu. Przed implementacją ustalić, czy `origin` oznacza źródło ostatniej aktywnej wartości, czy potrzebny jest osobny append-only audit log zmian i undo. Nie przypisywać historycznym rekordom fikcyjnych autorów; Google API nie musi pozwolić ustalić konkretnej osoby edytującej event.
+
+### Phase 10C — Change detection, security and recovery
+
+- Google Calendar `events.watch` / push notifications przez bardzo wąski publiczny HTTPS callback (np. logicznie `/api/integrations/google-calendar/webhook`) dostępny przez Cloudflare Tunnel, następnie pobranie zmian przez Calendar API z incremental `syncToken`. Push jest tylko sygnałem zmiany, nie pełnym stanem eventu.
+- Trwale przechowywać wymagane channel ID, resource ID, token, wygaśnięcie i sync metadata; odnawiać wygasające watch channels, obsługiwać unieważnienie `syncToken` przez bezpieczny pełny sync i uruchamiać okresowe reconciliation po utraconych powiadomieniach.
+- Normalny UI/API pozostaje chroniony według Phase 8/9. Jeśli Cloudflare Access jest użyty, wyłącznie callback path może mieć ściśle ograniczony wyjątek od interaktywnego Access; nie wolno wyłączać ochrony całej aplikacji. Sam callback musi weryfikować własny zapisany channel/resource/token i odrzucać nieznane lub błędne powiadomienia; przejście przez Cloudflare nie jest autoryzacją.
+- Sync jest idempotentny i zapobiega pętli: po Google `16:12 → 15:45` i zapisaniu efektywnej korekty `15:45`, outbound porównuje aktualne UTC instants i wykonuje no-op, jeśli managed event już odpowiada WT.
+- Rollout/rollback bez utraty raw events lub korekt; failures, ponowienia, duplikaty i opóźnione powiadomienia nie mogą blokować domenowego zapisu ani powodować oscylacji danych.
+
+### Acceptance criteria
+
+- [ ] Właścicielem dedykowanego kalendarza jest zwykłe konto użytkownika; service account ma tylko wymagany dostęp, a jego credentials i pozostałe sekrety są poza checkoutem.
+- [ ] Po udanym sync każda valid finalized session ma dokładnie jedno trwałe powiązanie z managed Google event, również przy korekcie godzin; open shift i anomalie nie są publikowane jako zakończone sesje.
+- [ ] Outbound działa z effective stream/canonical pairing, obejmuje poprawne sesje z manual events i nie wpływa na zapis domenowy przy awarii Google API.
+- [ ] Edycja start/end wspieranych raw boundaries tworzy, aktualizuje lub cofa wyłącznie audytowalne korekty, atomowo przy zmianie obu; raw events pozostają immutable. Manual boundaries mają jawną bezpieczną politykę bez destrukcyjnego obejścia.
+- [ ] Zmiany nieczasowe i zwykłe eventy Calendar nie tworzą czasu pracy; delete managed event nie ignoruje raw eventu, a reconciliation potrafi odtworzyć projekcję.
+- [ ] Callback jest osiągalny przez HTTPS bez interaktywnego logowania Google, lecz wąsko routowany i samodzielnie uwierzytelniany; pełny UI/API pozostaje chroniony.
+- [ ] Watch renewal, incremental sync, reset po nieprawidłowym sync tokenie, retry, reconciliation, idempotencja i ochrona przed pętlą są pokryte testami.
+- [ ] Pochodzenie nowych korekt jest audytowalne bez fałszowania historii lub deklarowania nieznanej tożsamości edytora Google jako pewnej.
+
+Materiały do weryfikacji w implementacyjnym PR: [Google push notifications](https://developers.google.com/workspace/calendar/api/guides/push), [Google incremental sync](https://developers.google.com/workspace/calendar/api/guides/sync), [Google extended properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties), [Cloudflare Tunnel routing](https://developers.cloudflare.com/tunnel/routing/) i [Cloudflare Access policies](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/).
 
 ## Deferred / not planned now
 
@@ -318,8 +414,7 @@ Ten etap nie oznacza decyzji o publicznym wystawieniu aplikacji. Obecnie Work Tr
 
 - druga praca,
 - wiele miejsc pracy (`multiple workplaces`),
-- obsługa wielu użytkowników,
-- wdrożenie dostępne z publicznego Internetu,
+- obsługa wielu użytkowników poza małą, jawnie dopuszczoną grupą z Phase 8,
 - zaawansowane role i uprawnienia,
 - integracje payroll/accounting.
 

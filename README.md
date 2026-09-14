@@ -1,8 +1,12 @@
 # Work Tracker
 
-Prosta aplikacja działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i wylicza sesje pracy bez zmiany danych źródłowych. Frontend React pokazuje bieżący status pracy, miesięczne sesje i anomalie, korekty, wynagrodzenie oraz eksporty CSV/PDF.
+Prosta aplikacja obecnie działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i wylicza sesje pracy bez zmiany danych źródłowych. Frontend React pokazuje bieżący status pracy, miesięczne sesje i anomalie, korekty, wynagrodzenie oraz eksporty CSV/PDF.
 
-Nie konfiguruje publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
+Obecny instalator i obecne wdrożenie nie konfigurują publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
+
+## Planned direction (not implemented)
+
+Po ukończeniu authentication/hardening (Phase 8) planowany jest dostęp do całej aplikacji pod dedykowaną, jeszcze nieustaloną subdomeną: Internet → Cloudflare → Cloudflare Tunnel → prywatny origin Work Trackera w LAN (Phase 9), bez przekierowania portów routera i bez bezpośredniego wystawienia LXC. Następnie planowana jest integracja z dedykowanym Google Calendar (Phase 10): projekcja wyłącznie poprawnych zakończonych sesji oraz ograniczone korekty godzin zarządzanych wydarzeń z powrotem w Work Trackerze. Calendar nie będzie źródłem raw events. Szczegóły i kryteria etapów są w `ROADMAP.md`; poniższe instrukcje dotyczą wyłącznie aktualnego wdrożenia LAN-only.
 
 ## Quick install
 

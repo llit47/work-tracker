@@ -16,6 +16,8 @@
   - **Phase 7B — Correction input and live-domain behavior: DONE**
   - **Phase 7C — Home Assistant integration and safe rollout: NEXT**
 - **Phase 8 — Authentication and hardening: PLANNED**
+- **Phase 9 — Cloudflare public deployment: PLANNED**
+- **Phase 10 — Google Calendar integration: PLANNED**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
@@ -90,7 +92,7 @@ Aktualne endpointy:
 
 ## Production/deployment state
 
-- Środowisko: Debian 13 LXC na Proxmox, wyłącznie w sieci LAN.
+- Środowisko: Debian 13 LXC na Proxmox, obecnie wyłącznie w sieci LAN; brak publicznego UI, Cloudflare Tunnel i Google Calendar integration.
 - Proces: `work-tracker.service`; autostart po restarcie LXC i restart po awarii.
 - Instalacja: `install.sh`.
 - Aktualizacja: `update.sh` z backupem SQLite i rollbackiem.
@@ -145,7 +147,9 @@ Aktualne endpointy:
 
 Backend Phase 7A/7B jest gotowy. Następny etap obejmuje dopiero actionable notifications, handler odpowiedzi, kill switch, testowy push, YAML Home Assistanta i bezpieczną aktywację produkcyjną. Obecne automatyzacje Home Assistanta nie zostały zmienione.
 
-Dotychczasowy etap Authentication and hardening został przesunięty do Phase 8 i ma status `PLANNED`. Nie oznacza to decyzji o wystawieniu aplikacji do publicznego Internetu.
+Po Phase 7C planowane są kolejno Phase 8 (authentication/hardening), Phase 9 (publiczny HTTPS dostęp do całej aplikacji przez Cloudflare Tunnel pod dedykowaną, jeszcze nieustaloną subdomeną) i Phase 10 (asymetryczna, dwukierunkowa integracja z dedykowanym Google Calendar). To wyłącznie kierunek rozwoju, nie stan wdrożenia. Prywatny origin ma pozostać w LAN bez przekierowania portów; przed publicznym dostępem całego UI wymagane jest ukończenie Phase 8.
+
+Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfejsem korekt ich godzin, nie źródłem raw events ani niezależną bazą czasu pracy. Nadal obowiązuje `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`. Zmiana godzin managed Calendar event ma docelowo korzystać z audytowalnej warstwy korekt; szczegóły identyfikacji sesji i ręcznych granic pozostają do zaprojektowania w Phase 10.
 
 ## Known intentional limitations
 
@@ -156,7 +160,8 @@ Dotychczasowy etap Authentication and hardening został przesunięty do Phase 8 
 - brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
 - brak logowania użytkownika,
 - brak eksportu XLSX/Excel,
-- brak publicznego dostępu do aplikacji.
+- brak publicznego dostępu do aplikacji w obecnym wdrożeniu (plan: Phase 9 po Phase 8),
+- brak integracji Google Calendar w obecnym wdrożeniu (plan: Phase 10).
 
 ## Recent milestones
 
