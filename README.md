@@ -231,7 +231,8 @@ curl -X POST http://127.0.0.1:8000/api/webhook/home-assistant \
 ```
 
 Po poprawnym zapisie webhook zwraca nadal istniejące pola `id` i `status` oraz
-dodatkowy kontekst potrzebny przyszłej integracji interaktywnych powiadomień:
+dodatkowy kontekst wykorzystywany przez produkcyjną integrację interaktywnych
+powiadomień:
 
 ```json
 {
@@ -298,9 +299,12 @@ HTTP 422 bez zmiany danych. Błędy integracyjne mają stabilny kod w
 `location_timezone_invalid`, `time_not_resolvable`, `time_out_of_range`,
 `correction_conflict` i `raw_event_not_found`.
 
-Ten etap nie dodaje actionable notifications, handlera
-`mobile_app_notification_action`, kill switcha ani YAML Home Assistanta. Żadna
-produkcyjna automatyzacja Home Assistanta nie jest przez niego zmieniana ani
-aktywowana; to pozostaje zakresem Phase 7C.
+W produkcyjnym Home Assistant po prawidłowym zapisaniu odpowiedniego raw eventu
+wysyłane jest actionable notification. Odpowiedź użytkownika może wywołać korektę
+godziny przez powyższy endpoint; korekta korzysta z audytowalnego
+`timestamp_override`, a raw event pozostaje niezmieniony. Integracja została
+zweryfikowana end-to-end na rzeczywistym zone triggerze, również dla future
+effective entry, i ma niezależny kill switch dla warstwy powiadomień. Konfiguracja
+Home Assistanta jest utrzymywana ręcznie poza tym repozytorium.
 
 Frontend pokazuje `missing_exit` jako „Trwająca zmiana” tylko wtedy, gdy jego wejście odpowiada tej samej chwili UTC co jednoznaczna sesja zwrócona przez dashboard. Pierwszy snapshot i późniejsze istotne zmiany dashboardu odświeżają aktualnie wybrane podsumowanie czasu i płac; sam upływ czasu bieżącej zmiany nie powoduje dodatkowych żądań miesięcznych.

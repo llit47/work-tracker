@@ -11,11 +11,11 @@
   - **Phase 4B — frontend pay presentation and rate management: DONE**
 - **Phase 5 — Dashboard and live shift: DONE**
 - **Phase 6 — Export: DONE**
-- **Phase 7 — Interactive Home Assistant event confirmation: IN PROGRESS**
+- **Phase 7 — Interactive Home Assistant event confirmation: DONE**
   - **Phase 7A — Backend integration: DONE**
   - **Phase 7B — Correction input and live-domain behavior: DONE**
-  - **Phase 7C — Home Assistant integration and safe rollout: NEXT**
-- **Phase 8 — Authentication and hardening: PLANNED**
+  - **Phase 7C — Home Assistant integration and safe rollout: DONE**
+- **Phase 8 — Authentication and hardening: NEXT**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
@@ -66,7 +66,11 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Token-protected `POST /api/webhook/home-assistant/correction` przyjmuje time-only input dla konkretnego raw eventu i używa wspólnej audytowalnej korekty `timestamp_override`.
 - Time-only correction jest rozwiązywana w timezone canonical location względem raw UTC instantu, przez sąsiednie daty i jednoznaczny najbliższy kandydat w oknie ±4 godzin; nonexistent/ambiguous DST jest odrzucane bez zgadywania.
 - Pojedyncze future effective `entry` pozostaje oczekującym startem: przed godziną dashboard pokazuje `outside`, od wskazanej chwili zwykłe `working`; future `exit` i konflikty nadal fail-safe dają stan niejednoznaczny.
-- Actionable notifications, handler akcji i YAML Home Assistanta nie są jeszcze wdrożone ani aktywowane; to zakres Phase 7C.
+- Po prawidłowym zapisaniu odpowiedniego raw eventu produkcyjny Home Assistant wysyła użytkownikowi interaktywne powiadomienie Work Trackera.
+- Korektę godziny można wykonać bezpośrednio z powiadomienia; korzysta ona z istniejącej warstwy `timestamp_override`, a raw event pozostaje immutable.
+- Future effective entry zachowuje semantykę zaprojektowaną w Phase 7B: przed effective startem nie rozpoczyna naliczania czasu, a od effective startu staje się aktywnym wejściem.
+- Warstwa powiadomień Home Assistanta ma skonfigurowany kill switch niezależny od podstawowego ingestion raw events.
+- Produkcyjny test end-to-end z rzeczywistego zone triggera zakończył się powodzeniem: raw event został zapisany, interaktywne powiadomienie dotarło na telefon, korekta została przyjęta jako `timestamp_override`, a poprawiony effective state był widoczny w Work Tracker UI.
 - Ręczny test Home Assistant → API → baza → frontend zakończył się powodzeniem.
 
 Aktualne endpointy:
@@ -143,11 +147,11 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 7C — Home Assistant integration and safe rollout**
+**Phase 8 — Authentication and hardening**
 
-Backend Phase 7A/7B jest gotowy. Następny etap obejmuje dopiero actionable notifications, handler odpowiedzi, kill switch, testowy push, YAML Home Assistanta i bezpieczną aktywację produkcyjną. Obecne automatyzacje Home Assistanta nie zostały zmienione.
+Phase 7 wraz z produkcyjną integracją Home Assistanta jest ukończony. Następny krok to zabezpieczenie logowania, sesji i endpointów aplikacji przed planowanym publicznym udostępnieniem.
 
-Po Phase 7C planowane są kolejno Phase 8 (authentication/hardening), Phase 9 (publiczny HTTPS dostęp do całej aplikacji przez Cloudflare Tunnel pod dedykowaną, jeszcze nieustaloną subdomeną) i Phase 10 (asymetryczna, dwukierunkowa integracja z dedykowanym Google Calendar). To wyłącznie kierunek rozwoju, nie stan wdrożenia. Prywatny origin ma pozostać w LAN bez przekierowania portów; przed publicznym dostępem całego UI wymagane jest ukończenie Phase 8.
+Po Phase 8 planowane są kolejno Phase 9 (publiczny HTTPS dostęp do całej aplikacji przez Cloudflare Tunnel pod dedykowaną, jeszcze nieustaloną subdomeną) i Phase 10 (asymetryczna, dwukierunkowa integracja z dedykowanym Google Calendar). To wyłącznie kierunek rozwoju, nie stan wdrożenia. Prywatny origin ma pozostać w LAN bez przekierowania portów; przed publicznym dostępem całego UI wymagane jest ukończenie Phase 8.
 
 Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfejsem korekt ich godzin, nie źródłem raw events ani niezależną bazą czasu pracy. Nadal obowiązuje `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`. Zmiana godzin managed Calendar event ma docelowo korzystać z audytowalnej warstwy korekt; szczegóły identyfikacji sesji i ręcznych granic pozostają do zaprojektowania w Phase 10.
 
