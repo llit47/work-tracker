@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Work Tracker is a LAN-only application for recording work entry/exit events received from Home Assistant, deriving work sessions, calculating pay, allowing auditable corrections, and presenting/exporting monthly data.
+Work Tracker currently runs as a LAN-only application for recording work entry/exit events received from Home Assistant, deriving work sessions, calculating pay, allowing auditable corrections, and presenting/exporting monthly data. Public access is a planned, separate roadmap stage, not a current capability.
 
 Backend:
 - Python
@@ -136,6 +136,8 @@ Manual events must remain distinguishable from Home Assistant source events.
 
 After corrections, calculations must use the effective event stream and the same canonical pairing rules as uncorrected data.
 
+Any future Google Calendar integration must treat Work Tracker as the source of truth: project only valid finalized sessions and apply supported inbound time edits through auditable corrections. Calendar must never create or rewrite raw Home Assistant events or bypass canonical pairing.
+
 ## Interactive Home Assistant integration
 
 Interactive notifications are an optional layer that may run only after a raw Home Assistant event has been ingested successfully. Notification delivery, user actions, or action-handler failures must never block, roll back, or otherwise affect raw event ingestion.
@@ -233,7 +235,7 @@ Required deployment configuration belongs in `deploy/config.manifest`.
 
 Never commit or print real secrets or webhook tokens.
 
-Work Tracker remains LAN-only unless an explicit task changes that decision. Do not introduce public exposure, tunnels, reverse proxies, or HTTPS deployment architecture as part of unrelated work.
+Current production remains LAN-only. Public access may be introduced only in its explicit roadmap stage, after authentication and hardening are complete; it must not expose the private origin directly. Do not introduce public exposure, tunnels, reverse proxies, or HTTPS deployment architecture as part of unrelated work.
 
 ## Validation
 
