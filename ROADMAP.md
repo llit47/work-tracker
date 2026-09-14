@@ -285,7 +285,7 @@ effective entry.
 ### Acceptance criteria
 
 - [x] Raw Home Assistant events pozostają immutable.
-- [x] Potwierdzenie wykrytej godziny nie tworzy timestamp correction.
+- [x] Backendowa semantyka no-op używana przez akcję potwierdzenia nie tworzy timestamp correction.
 - [x] Korekta z powiadomienia korzysta z istniejącego mechanizmu `timestamp_override` i współdzielonej logiki korekt.
 - [x] Istniejący webhook zachowuje backward-compatible pole `id`, którego Home Assistant używa jako identyfikatora raw eventu; rozszerzenie odpowiedzi nie wprowadza breaking rename ani redundantnego identyfikatora.
 - [x] Location timezone jest trwałą backendową konfiguracją przypisaną do canonical technical location, oddzielną od display aliasu, i może być odczytana oraz skonfigurowana przez application settings.
@@ -301,12 +301,23 @@ effective entry.
 - [x] Display alias lokalizacji pochodzi z application settings i ma fallback do canonical technical location identifier.
 - [x] Zmiana display aliasu nie wymaga edycji automatyzacji Home Assistanta.
 - [x] Future effective entry nie nalicza czasu przed swoim timestampem i nie powoduje samoistnie stanu `ambiguous`.
-- [x] Notification failure, brak reakcji lub błąd handlera nie wpływa na zapis raw eventu.
-- [x] Kill switch wyłącza wyłącznie warstwę interaktywnych powiadomień, zachowując zone tracking i webhook ingestion.
+- [x] Warstwa notification pozostaje oddzielona od wcześniejszego zapisu raw eventu i nie zmienia jego semantyki ingestion.
+- [x] Kill switch/helper jest skonfigurowany niezależnie od raw ingestion, a notification działa przy konfiguracji pozwalającej na jego wysłanie.
 - [x] Poprawna IANA timezone jest zweryfikowana dla lokalizacji przed aktywacją Phase 7C.
 - [x] Brak location timezone nie wpływa na podstawowe Home Assistant raw ingestion ani zwykłe zone tracking.
 - [x] Funkcja jest pokryta testami backendowymi przed aktywacją integracji Home Assistanta.
 - [x] Rollout backendu i jego weryfikacja następują przed zmianą produkcyjnej automatyzacji strefowej.
+
+### Post-Phase-7 validation follow-up
+
+Poniższe dodatkowe ręczne testy regresyjne i operacyjne nie zostały jeszcze
+potwierdzone w produkcji. Nie blokują rozpoczęcia Phase 8 i nie zmieniają statusu
+wdrożonego Phase 7C; mogą zostać wykonane przy kolejnych naturalnych eventach
+produkcyjnych:
+
+- [ ] Kliknąć akcję „Potwierdź” i sprawdzić, że nie powstaje `timestamp_override`.
+- [ ] Ustawić kill switch na OFF i sprawdzić, że notification nie przychodzi, podczas gdy raw ingestion nadal działa.
+- [ ] Celowo wywołać notification/handler failure albo pozostawić powiadomienie bez reakcji i ręcznie potwierdzić, że raw ingestion pozostaje nienaruszone.
 
 ## Phase 8 — Authentication and hardening
 
