@@ -205,12 +205,12 @@ Eksport zachowuje historyczne reguły `work-summary` i `pay-summary`: sesja nale
 
 ## Phase 7 — Interactive Home Assistant event confirmation
 
-**Status: IN PROGRESS**
+**Status: DONE**
 
 Cel: po poprawnym zapisaniu raw eventu `entry` lub `exit` umożliwić użytkownikowi potwierdzenie wykrytej godziny albo jej korektę bezpośrednio w interaktywnym powiadomieniu mobilnym Home Assistanta, bez otwierania Work Trackera lub innej aplikacji.
 
-Backend oraz konfiguracja timezone są gotowe. Interaktywne powiadomienia i
-automatyzacja Home Assistanta pozostają do wykonania w Phase 7C.
+Backend, konfiguracja timezone oraz produkcyjna integracja interaktywnych
+powiadomień po stronie Home Assistanta są gotowe.
 
 ### Phase 7A — Backend integration
 
@@ -257,9 +257,9 @@ Zrealizowany zakres:
 
 ### Phase 7C — Home Assistant integration and safe rollout
 
-**Status: NEXT**
+**Status: DONE**
 
-Planowany zakres:
+Zrealizowany zakres:
 
 - Home Assistant korzysta z istniejącego pola `id` w odpowiedzi webhooka, aby znać konkretny zapisany raw event; interaktywne powiadomienie może zostać wysłane dopiero po udanym zapisaniu raw eventu.
 - User-facing nazwa lokalizacji w powiadomieniu pochodzi z backendowego display aliasu.
@@ -271,14 +271,21 @@ Planowany zakres:
 - Home Assistant posiada kill switch/helper umożliwiający natychmiastowe wyłączenie wyłącznie interaktywnych powiadomień, bez wyłączania istniejącego zone tracking i webhook ingestion.
 - Przed włączeniem interaktywnych powiadomień dla lokalizacji należy zweryfikować, że ma ona poprawnie skonfigurowaną IANA timezone.
 - Brak poprawnej location timezone uniemożliwia wyłącznie wymagającą jej time-only correction; nie wyłącza istniejącego raw webhook ingestion ani zwykłego zone tracking.
-- Backend jest wdrażany i testowany przed zmianą produkcyjnej automatyzacji strefowej.
-- Inline text input jest ręcznie weryfikowany na docelowym telefonie przed podłączeniem realnego zone triggera.
-- Właściwy YAML Home Assistanta powstanie dopiero w zadaniu implementacyjnym i nie jest częścią przygotowania roadmapy.
+- Backend został wdrożony i przetestowany przed zmianą produkcyjnej automatyzacji strefowej.
+- Inline text input został ręcznie zweryfikowany na docelowym telefonie podczas rzeczywistego zone triggera.
+- Konfiguracja Home Assistanta, handler `mobile_app_notification_action`, `rest_command` i kill switch są utrzymywane ręcznie poza tym repozytorium.
+
+Produkcyjna weryfikacja end-to-end objęła rzeczywisty zone trigger:
+
+`Home Assistant zone event → Work Tracker ingestion → actionable notification → korekta godziny → istniejący timestamp_override → poprawiony effective state widoczny w Work Tracker UI`
+
+W tym przebiegu potwierdzono również zaprojektowane w Phase 7B zachowanie future
+effective entry.
 
 ### Acceptance criteria
 
 - [x] Raw Home Assistant events pozostają immutable.
-- [ ] Potwierdzenie wykrytej godziny nie tworzy timestamp correction.
+- [x] Backendowa semantyka no-op używana przez akcję potwierdzenia nie tworzy timestamp correction.
 - [x] Korekta z powiadomienia korzysta z istniejącego mechanizmu `timestamp_override` i współdzielonej logiki korekt.
 - [x] Istniejący webhook zachowuje backward-compatible pole `id`, którego Home Assistant używa jako identyfikatora raw eventu; rozszerzenie odpowiedzi nie wprowadza breaking rename ani redundantnego identyfikatora.
 - [x] Location timezone jest trwałą backendową konfiguracją przypisaną do canonical technical location, oddzielną od display aliasu, i może być odczytana oraz skonfigurowana przez application settings.
@@ -294,16 +301,27 @@ Planowany zakres:
 - [x] Display alias lokalizacji pochodzi z application settings i ma fallback do canonical technical location identifier.
 - [x] Zmiana display aliasu nie wymaga edycji automatyzacji Home Assistanta.
 - [x] Future effective entry nie nalicza czasu przed swoim timestampem i nie powoduje samoistnie stanu `ambiguous`.
-- [ ] Notification failure, brak reakcji lub błąd handlera nie wpływa na zapis raw eventu.
-- [ ] Kill switch wyłącza wyłącznie warstwę interaktywnych powiadomień, zachowując zone tracking i webhook ingestion.
-- [ ] Poprawna IANA timezone jest zweryfikowana dla lokalizacji przed aktywacją Phase 7C.
+- [x] Warstwa notification pozostaje oddzielona od wcześniejszego zapisu raw eventu i nie zmienia jego semantyki ingestion.
+- [x] Kill switch/helper jest skonfigurowany niezależnie od raw ingestion, a notification działa przy konfiguracji pozwalającej na jego wysłanie.
+- [x] Poprawna IANA timezone jest zweryfikowana dla lokalizacji przed aktywacją Phase 7C.
 - [x] Brak location timezone nie wpływa na podstawowe Home Assistant raw ingestion ani zwykłe zone tracking.
 - [x] Funkcja jest pokryta testami backendowymi przed aktywacją integracji Home Assistanta.
 - [x] Rollout backendu i jego weryfikacja następują przed zmianą produkcyjnej automatyzacji strefowej.
 
+### Post-Phase-7 validation follow-up
+
+Poniższe dodatkowe ręczne testy regresyjne i operacyjne nie zostały jeszcze
+potwierdzone w produkcji. Nie blokują rozpoczęcia Phase 8 i nie zmieniają statusu
+wdrożonego Phase 7C; mogą zostać wykonane przy kolejnych naturalnych eventach
+produkcyjnych:
+
+- [ ] Kliknąć akcję „Potwierdź” i sprawdzić, że nie powstaje `timestamp_override`.
+- [ ] Ustawić kill switch na OFF i sprawdzić, że notification nie przychodzi, podczas gdy raw ingestion nadal działa.
+- [ ] Celowo wywołać notification/handler failure albo pozostawić powiadomienie bez reakcji i ręcznie potwierdzić, że raw ingestion pozostaje nienaruszone.
+
 ## Phase 8 — Authentication and hardening
 
-**Status: PLANNED**
+**Status: NEXT**
 
 Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia przez Internet. To warunek konieczny Phase 9, a nie samo uruchomienie publicznego dostępu. Produkcja do tego czasu pozostaje LAN-only.
 
