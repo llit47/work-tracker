@@ -159,7 +159,7 @@ Interactive user authentication and machine integrations are separate security d
 
 Browser sessions must never replace or weaken Home Assistant authentication. The Home Assistant ingestion and correction endpoints keep their dedicated `X-Webhook-Token` contract and must remain usable without a browser session or user cookie.
 
-When browser authentication enforcement is activated, protect ordinary UI/API access with a default-deny design and keep the unauthenticated exception surface explicit and minimal. Adding a new browser-facing endpoint must not make it anonymously accessible by omission.
+When browser authentication enforcement is activated, protect ordinary UI/API access with a default-deny design and keep the unauthenticated exception surface explicit and minimal. Exceptions may include only what is necessary to establish a session, required machine integrations, and a minimal health check; public registration is not an exception. Adding a new browser-facing endpoint must not make it anonymously accessible by omission.
 
 Use server-side, revocable user sessions. The browser should hold only an unpredictable session identifier in an `HttpOnly` cookie; do not use a long-lived bearer JWT or authentication token in `localStorage` as the primary session mechanism.
 
