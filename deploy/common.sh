@@ -105,6 +105,9 @@ validate_config_value() {
         nonempty)
             [[ -n "${value}" ]]
             ;;
+        boolean)
+            [[ "${value}" == true || "${value}" == false ]]
+            ;;
         *) return 1 ;;
     esac
 }
@@ -163,7 +166,7 @@ validate_manifest_row() {
     [[ "${visibility}" == plain || "${visibility}" == secret ]] || fail "Invalid visibility for ${key}."
     [[ "${visibility}" != secret || -z "${default_value}" ]] || fail "Secret ${key} cannot define a displayed default."
     case "${validator}" in
-        token|port|host|database_url|cors|nonempty) ;;
+        token|port|host|database_url|cors|nonempty|boolean) ;;
         *) fail "Invalid validator for ${key}." ;;
     esac
 }

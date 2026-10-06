@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 
@@ -202,3 +202,41 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)
+
+
+class UTCDateTime(AwareDateTime):
+    """Fixed-width UTC text for exact SQLite session deadline comparisons."""
+
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Timestamp must include a timezone offset")
+        return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),
+        Index("ix_user_sessions_user_id", "user_id"),
+        CheckConstraint(
+            "length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'",
+            name="ck_user_sessions_token_hash",
+        ),
+        CheckConstraint(
+            "created_at <= last_seen_at AND last_seen_at < expires_at "
+            "AND (revoked_at IS NULL OR revoked_at >= created_at)",
+            name="ck_user_sessions_dates",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

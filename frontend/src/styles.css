@@ -252,3 +252,6 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
   .summary { grid-template-columns: 1fr; }
   .summary .pay-total { grid-column: auto; }
 }
+.auth-form { display: grid; gap: 0.75rem; max-width: 28rem; }
+.auth-form label { display: grid; gap: 0.3rem; }
+.auth-form input { min-width: 0; width: 100%; }

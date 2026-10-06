@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 def build_engine(database_url: str):
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    engine = create_engine(database_url, connect_args=connect_args)
+    # SQL failures must not expose credential hashes/session digests in logs.
+    engine = create_engine(database_url, connect_args=connect_args, hide_parameters=True)
     if database_url.startswith("sqlite"):
         @event.listens_for(engine, "connect")
         def enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:

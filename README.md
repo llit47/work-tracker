@@ -42,7 +42,8 @@ Instalator pyta interaktywnie o:
 - adres nasłuchu, domyślnie `0.0.0.0`,
 - port backendu, domyślnie `8000`,
 - token webhooka (minimum 32 znaki) lub zgodę przez pozostawienie pustej wartości na jego bezpieczne wygenerowanie,
-- originy CORS, jeśli frontend ma działać z innego originu.
+- originy CORS, jeśli frontend ma działać z innego originu,
+- `SESSION_COOKIE_SECURE`: `false` wyłącznie dla obecnego zaufanego LAN HTTP; `true` obowiązkowo dla HTTPS.
 
 Wygenerowany token nie jest wyświetlany. Zostaje zapisany w `/etc/work-tracker/work-tracker.env`, dostępnym tylko dla roota i grupy usługi. Baza zawsze znajduje się poza repozytorium pod `/var/lib/work-tracker/work_tracker.db`.
 
@@ -87,8 +88,7 @@ Brak terminala, różne hasła lub nieprawidłowy input przerywają operację.
 Nazwa użytkownika ma 3–64 znaki ASCII: litery, cyfry, `.`, `_`, `-`, zaczyna się
 literą lub cyfrą. Otaczające spacje ASCII są usuwane, litery są zamieniane na
 małe. `Wlasciciel` i `wlasciciel` oznaczają ten sam unikalny login. Inne białe
-znaki oraz znaki spoza ASCII są odrzucane. Te same reguły są dostępne dla
-przyszłego logowania w `normalize_username`.
+znaki oraz znaki spoza ASCII są odrzucane. Te same reguły obowiązują przy logowaniu przez `normalize_username`.
 
 Moduł czyta `DATABASE_URL` wyłącznie z `/etc/work-tracker/work-tracker.env` i
 wymaga wspieranej przez obecny manifest wartości
@@ -108,14 +108,27 @@ W bazie `users` są tylko ID, kanoniczny login, hash i czas utworzenia UTC;
 nie ma roli administratora ani powiązań z danymi pracy. Hasła są hashowane
 przez `argon2-cffi` (Argon2id, profil RFC 9106 low-memory: 64 MiB, 3 iteracje,
 4 lanes). Biblioteka tworzy losowy salt i zapisuje parametry w hashu;
-`password_needs_rehash` służy przyszłej aktualizacji parametrów po poprawnej
-weryfikacji. Zależność jest instalowana przez zwykłe `pip install backend`
+`password_needs_rehash` umożliwia aktualizację parametrów po poprawnej
+weryfikacji podczas loginu; warunkowy zapis nie nadpisuje równoległej zmiany hasha. Zależność jest instalowana przez zwykłe `pip install backend`
 w instalatorze/updaterze. Nie potrzeba nowego sekretu ani peppera.
 
-**8A1 nie dodaje logowania, sesji ani ochrony UI/API.** Aplikacja nadal działa
-w zaufanym LAN, a oba webhooki Home Assistanta wymagają własnego
-`X-Webhook-Token`, niezależnie od kont użytkowników. Sesje i ekran logowania
-należą do 8A2, a obowiązkowy login do 8A3.
+## Opcjonalne logowanie i sesje (Phase 8A2)
+
+W `Ustawienia → Konto` można zalogować się istniejącym loginem i hasłem, sprawdzić nazwę zalogowanego użytkownika oraz wylogować bieżące urządzenie. Nie ma rejestracji ani opcji „zapamiętaj mnie”: każdy poprawny login tworzy trwałą sesję zaufanego urządzenia. Reload przywraca sesję z cookie przez `/api/auth/me`; widoczna karta sprawdza ją co 5 minut i po odzyskaniu focus. Błąd sieci pozostawia wcześniejszy stan do ponowienia, a HTTP 401 przywraca formularz bez ukrywania danych aplikacji.
+
+**8A2 nie chroni zwykłego UI/API.** Dashboard, dane pracy, korekty, stawki, ustawienia i raporty nadal działają anonimowo. Obowiązkowe logowanie i default-deny enforcement są następnym, osobnym etapem 8A3. Oba webhooki HA zachowują wyłącznie własny `X-Webhook-Token` i nie sprawdzają ani nie akceptują sesji jako jego zamiennika.
+
+Sesja wygasa dokładnie po **30 dniach od zapisanego `last_seen_at`** albo po **180 dniach od początkowego loginu**, zależnie od tego, co nastąpi wcześniej; na samej granicy jest już nieważna. Activity update nie przedłuża 180 dni. Udany `/auth/me` zapisuje activity najwyżej raz na godzinę; warunkowy UPDATE nie cofa czasu i nie wskrzesza expired/revoked sesji. Coalescing oznacza, że ostatnie żądanie przed zamknięciem karty może być późniejsze od `last_seen_at` o mniej niż godzinę. Zwykłe domain API oraz HA nie zapisują activity. Ukryta karta nie wykonuje okresowych sprawdzeń.
+
+Token ma 256 bitów CSPRNG entropy (`secrets.token_urlsafe(32)`); `user_sessions` przechowuje tylko SHA-256, ID, FK do użytkownika i UTC created_at/last_seen_at/expires_at/revoked_at. Nie potrzeba sekretu podpisującego cookie. Każdy poprawny login tworzy nowy token i osobną sesję. Token jest stabilny do logout/expiry; brak okresowej rotacji to świadoma, kompletna polityka 8A2. Transparentna rotacja z race-safe recovery będzie projektowana w 8B1. Logout zapisuje revocation i usuwa cookie; inne urządzenia pozostają zalogowane. Indeks user_id umożliwia późniejsze bulk revocation. Nie ma background cleanup; nieważne rekordy pozostają w bazie i nie dają dostępu.
+
+Host-only cookie `work_tracker_session` ma `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age=15552000` i `Expires` odpowiadające absolute expiry. Cookie może pozostać w przeglądarce po wcześniejszym idle expiry/revocation, ale serwer go nie akceptuje. `/auth/me` nie usuwa cookie, aby spóźniona odpowiedź nie skasowała świeżego loginu. Login ma ten sam błąd dla błędnego hasła i nieistniejącego konta; brak konta wykonuje dummy Argon2 verification. Hasła/tokens nie trafiają do browser storage, URL-i ani logów aplikacji.
+
+Kod domyślnie używa `SESSION_COOKIE_SECURE=true`. Instalator i updater wymagają jawnej wartości w `/etc/work-tracker/work-tracker.env`: podczas obecnego LAN-only HTTP rollout wybierz `false` (domyślna propozycja manifestu dla tego wdrożenia). Updater dopisuje wyłącznie brakujący klucz i zachowuje istniejącą wartość. Developerski `.env.example` również jawnie ustawia `false`. **Każde przyszłe HTTPS/Internet wdrożenie musi ustawić `true` przed udostępnieniem.** Aplikacja nie wyznacza Secure z `X-Forwarded-*`; trusted proxy handling należy do 8B2. Ten etap nie włącza proxy, tunelu ani publicznego routingu.
+
+Produkcja używa same-origin FastAPI/frontend. Istniejący Vite z `VITE_API_BASE_URL=http://localhost:8000` używa auth requests z `credentials: include` i jawnych `CORS_ORIGINS`; wildcard i origin `null` są odrzucane. Używaj tego samego hostname dla Vite i API (np. `localhost` po obu stronach, albo `127.0.0.1` po obu stronach), ponieważ SameSite=Lax nie służy do cross-site cookies. Przy frontendzie LAN ustaw oba adresy na ten sam hostname/IP, różniący się portem, i dodaj dokładny origin Vite do CORS. Zbudowany frontend production pozostawia `VITE_API_BASE_URL` puste.
+
+Migracja `20261006_07` jest addytywna: dodaje pustą tabelę sesji, bez zmiany istniejących użytkowników lub danych domenowych. Updater zachowuje backup/rollback; starszy kod nie potrzebuje tabeli sesji. Full CSRF, rate limiting i dalsze browser hardening są zakresem 8B1, a trusted proxy review — 8B2.
 
 ## Logs/status/restart
 
@@ -250,6 +263,10 @@ npm run build
 ```
 
 ## Endpointy
+
+- `POST /api/auth/login` — JSON username/password, nowa trwała sesja i HttpOnly cookie; ogólny błąd HTTP 401 dla nieprawidłowych credentials.
+- `GET /api/auth/me` — username i absolute expires_at bieżącej sesji; invalid/expired/revoked cookie zwraca HTTP 401. Nie chroni pozostałych endpointów.
+- `POST /api/auth/logout` — HTTP 204, server-side revocation i usunięcie cookie; bez ważnej sesji również bezpieczny no-op.
 
 - `POST /api/webhook/home-assistant` — przyjmuje JSON webhooka, zapisuje immutable raw event i zwraca jego `id`, status oraz dane prezentacyjne; wymaga nagłówka `X-Webhook-Token`.
 - `POST /api/webhook/home-assistant/correction` — ustawia audytowalną korektę godziny konkretnego raw eventu na podstawie time-only inputu; wymaga nagłówka `X-Webhook-Token`.

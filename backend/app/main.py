@@ -17,6 +17,7 @@ from .application_settings import (
     load_application_settings,
 )
 from .config import Settings, get_settings
+from .auth import build_auth_router
 from .database import build_session_factory, get_session
 from .dashboard import DashboardSummary, calculate_dashboard
 from .corrections import (
@@ -173,10 +174,11 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["Content-Type", "X-Webhook-Token"],
     )
+    app.include_router(build_auth_router(settings, dashboard_now_provider))
 
     def require_webhook_token(provided_token: str | None) -> None:
         if provided_token is None or not hmac.compare_digest(
