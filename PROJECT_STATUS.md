@@ -55,6 +55,7 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Frontend odświeża dashboard co 30 sekund, a czas bieżącej zmiany aktualizuje lokalnie bez ciągłego odpytywania API; użytkownik widzi ukończone minuty.
 - Frontend pokazuje `missing_exit` jako `Trwająca zmiana` wyłącznie dla pojedynczego wejścia odpowiadającego tej samej chwili UTC co autorytatywna bieżąca sesja dashboardu. Pozostałe otwarte lub niejednoznaczne wpisy pozostają problemami.
 - Pierwszy snapshot oraz istotne zmiany dashboardu odświeżają aktualnie wybrane podsumowanie czasu i płac, także przy zamknięciu sesji na granicy miesięcy; sam postęp timera nie wywołuje tych żądań.
+- Włączenie widoku audytowego i każdy udany poll dashboardu przy włączonym audycie odświeżają dodatkowo tylko `work-summary`, aby pokazać krótkie wizyty zakończone pomiędzy pollami mimo niezmienionego statusu i sum. `pay-summary` oraz zwykły widok zachowują ograniczenie do istotnych zmian dashboardu.
 - Stan niejednoznaczny jest pokazywany jawnie dla duplikatów, sprzecznych eventów, wielu otwartych zmian oraz wejścia starszego niż 16 godzin.
 - Otwarta zmiana nie tworzy syntetycznego eventu, nie modyfikuje raw events i nie zwiększa wynagrodzenia przed poprawnym zakończeniem.
 - Wybrany miesiąc można pobrać jako CSV lub raport PDF bez ponownego wybierania daty.

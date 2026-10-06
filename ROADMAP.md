@@ -328,6 +328,7 @@ produkcyjnych:
 - [x] Oba eventy i dokładne `duration_seconds` pozostają do audytu, bez zmian raw events, automatycznych `ignore_event`, migracji lub backfillu; polityka działa także dla historii.
 - [x] Krótka wizyta nie zwiększa czasu pracy, dni, liczby problemów ani płacy; dashboard po rzeczywistym wyjściu wraca do `outside`, a CSV/PDF pomijają ją jako pracę i jako problem.
 - [x] Domyślny widok ukrywa wizyty oraz dni zawierające tylko takie wizyty. Zachowana preferencja `Pokaż ignorowane i automatycznie ukryte wydarzenia` przywraca neutralny audyt z eventami, zakresem godzin i czasem w minutach oraz sekundach.
+- [x] Włączony audyt odświeża `work-summary` przy kolejnych udanych pollach również dla `outside → outside` z niezmienionym fingerprintem; nie wymusza dodatkowego odświeżenia płac, a zwykły tryb zachowuje dotychczasowe ograniczanie refetches.
 - [x] Ingestion i interaktywne powiadomienia nie zmieniają zachowania; otwarte wejście nadal może być trwającą zmianą.
 - [x] Testy obejmują progi 299/300/301 s, dokładne sekundy, korekty/manual events, anomalie, eventy poza kolejnością oraz wszystkich odbiorców klasyfikacji.
 

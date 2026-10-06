@@ -9,6 +9,7 @@ import {
   formatLiveTimer,
   loadDashboard,
   shouldRefreshMonthlyData,
+  shouldRefreshWorkSummary,
   type DashboardSummary,
 } from '../src/dashboard.js'
 import type { FetchLike } from '../src/pay.js'
@@ -136,6 +137,52 @@ const outsideSnapshot: DashboardSummary = {
     effective_duration_seconds: 0,
   },
 }
+// An entry at 10:00:05 and exit at 10:00:17 between polls produces
+// a suppressed visit while the dashboard remains outside with identical totals.
+const outsideAfterShortVisit: DashboardSummary = {
+  ...outsideSnapshot,
+  generated_at: '2026-09-08T10:00:30Z',
+}
+assertEqual(
+  dashboardDataFingerprint(outsideAfterShortVisit),
+  dashboardDataFingerprint(outsideSnapshot),
+  'a short visit completed between polls leaves the dashboard fingerprint unchanged',
+)
+assertEqual(
+  shouldRefreshWorkSummary(outsideSnapshot, outsideAfterShortVisit, true),
+  true,
+  'enabled audit refreshes work-summary for outside to outside with an unchanged fingerprint',
+)
+assertEqual(
+  shouldRefreshMonthlyData(outsideSnapshot, outsideAfterShortVisit),
+  false,
+  'the fingerprint-neutral audit refresh does not refetch pay-summary',
+)
+assertEqual(
+  shouldRefreshWorkSummary(outsideSnapshot, outsideAfterShortVisit, false),
+  false,
+  'normal view skips the extra work-summary fetch for an unchanged outside dashboard',
+)
+assertEqual(
+  shouldRefreshWorkSummary(outsideAfterShortVisit, outsideAfterShortVisit, true),
+  true,
+  'enabling the audit also refreshes cached work-summary immediately',
+)
+assertEqual(
+  shouldRefreshWorkSummary(workingSnapshot, sameWorkingSessionLater, false),
+  false,
+  'normal live-timer progression still skips work-summary refreshes',
+)
+assertEqual(
+  shouldRefreshWorkSummary(null, outsideSnapshot, false),
+  true,
+  'normal view still refreshes work-summary for the first dashboard snapshot',
+)
+assertEqual(
+  shouldRefreshWorkSummary(workingSnapshot, outsideSnapshot, false),
+  true,
+  'normal view still refreshes work-summary for semantic dashboard changes',
+)
 assertEqual(
   shouldRefreshMonthlyData(workingSnapshot, outsideSnapshot),
   true,

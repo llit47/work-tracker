@@ -317,4 +317,6 @@ Taka wizyta zachowuje oba eventy i `duration_seconds` w `work-summary`, lecz nie
 
 W normalnym widoku miesiąca wizyty i dni zawierające wyłącznie pominięte wpisy są ukryte. `Ustawienia → Widok → Pokaż ignorowane i automatycznie ukryte wydarzenia` przywraca neutralny audyt: oba eventy, zakres godzin oraz dokładny czas w minutach i sekundach (wyjątek od zwykłej prezentacji bez sekund). Istniejąca preferencja przeglądarki pozostaje zachowana.
 
+Włączenie audytu oraz każdy udany poll dashboardu przy włączonym audycie odświeżają `work-summary`, także gdy status i sumy pozostają bez zmian po krótkiej wizycie między pollami. Ten dodatkowy refresh nie pobiera `pay-summary`. Zwykły widok nadal ogranicza odświeżenia miesięczne do istotnych zmian dashboardu; polling pozostaje co 30 sekund.
+
 Ingestion i interaktywne powiadomienia Home Assistanta działają bez opóźnień i zmian. Po `entry` dashboard nadal może raportować `working`; dopiero rzeczywisty `exit` kończy wizytę i pozwala ją pominąć, ze statusem `outside`. Planowana integracja Google Calendar będzie projektować tylko `valid` finalized sessions, więc nie obejmie tych wizyt.

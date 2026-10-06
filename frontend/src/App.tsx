@@ -12,6 +12,7 @@ import {
 import DashboardPanel from './DashboardPanel'
 import {
   shouldRefreshMonthlyData,
+  shouldRefreshWorkSummary,
   type DashboardSummary,
 } from './dashboard'
 import {
@@ -530,11 +531,13 @@ function App() {
 
     const previousDashboard = previousDashboardSummary.current
     previousDashboardSummary.current = dashboardSummary
-    if (!shouldRefreshMonthlyData(previousDashboard, dashboardSummary)) return
-
-    setRetryRequest((request) => request + 1)
-    setPayRetryRequest((request) => request + 1)
-  }, [dashboardSummary])
+    if (shouldRefreshWorkSummary(previousDashboard, dashboardSummary, showIgnoredEvents)) {
+      setRetryRequest((request) => request + 1)
+    }
+    if (shouldRefreshMonthlyData(previousDashboard, dashboardSummary)) {
+      setPayRetryRequest((request) => request + 1)
+    }
+  }, [dashboardSummary, showIgnoredEvents])
 
   useEffect(() => {
     const handlePopState = () => {
