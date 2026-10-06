@@ -43,12 +43,15 @@ namei -l "${APP_DIR}/backend/.venv/bin/alembic"
 namei -l "${APP_DIR}/backend/.venv/bin/uvicorn"
 runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/alembic" --version
 runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/uvicorn" --version
-runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/python" -c 'import app'
-runuser -u "${SERVICE_USER}" -- env \
-    WEBHOOK_TOKEN='service-user-test-token-at-least-32-characters' \
-    DATABASE_URL='sqlite:///:memory:' \
-    "${APP_DIR}/backend/.venv/bin/python" \
-    -c 'from app.main import app; assert app.title == "Work Tracker API"'
+(
+    cd "${APP_DIR}/backend"
+    runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/python" -c 'import app'
+    runuser -u "${SERVICE_USER}" -- env \
+        WEBHOOK_TOKEN='service-user-test-token-at-least-32-characters' \
+        DATABASE_URL='sqlite:///:memory:' \
+        "${APP_DIR}/backend/.venv/bin/python" \
+        -c 'from app.main import app; assert app.title == "Work Tracker API"'
+)
 
 (
     cd "${APP_DIR}/backend"
