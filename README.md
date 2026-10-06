@@ -68,6 +68,55 @@ Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Przed zmiana
 
 Nowe wymagane ustawienia są definiowane w `deploy/config.manifest`. Updater dopisuje wyłącznie brakujące wymagane klucze, pyta o ich wartości i pokazuje bezpieczne wartości domyślne. Nie zmienia istniejących wartości, nie usuwa starszych lub nieznanych wpisów i nigdy nie wypisuje sekretów. Jeśli nie ma nowych wymaganych kluczy, aktualizacja nie zadaje pytań konfiguracyjnych.
 
+## Utworzenie pierwszego użytkownika (Phase 8A1)
+
+Po instalacji lub aktualizacji, która wykonała migrację `20261006_06`, uruchom
+na serwerze w interaktywnym terminalu:
+
+```bash
+sudo /opt/work-tracker/deploy/create_user.sh wlasciciel
+```
+
+Polecenie uruchamia zainstalowany moduł `app.manage create-user` jako użytkownik
+systemowy `work-tracker`, również gdy wywołuje je root. Wyświetla docelową bazę
+i dwukrotnie prosi o hasło z ukrytym wpisywaniem. Hasło musi mieć 15–1024 znaki;
+nie jest przycinane ani normalizowane, może zawierać spacje i Unicode, ale nie
+znak NUL. Nie podawaj hasła w argumentach, zmiennych środowiskowych ani pliku.
+Brak terminala, różne hasła lub nieprawidłowy input przerywają operację.
+
+Nazwa użytkownika ma 3–64 znaki ASCII: litery, cyfry, `.`, `_`, `-`, zaczyna się
+literą lub cyfrą. Otaczające spacje ASCII są usuwane, litery są zamieniane na
+małe. `Wlasciciel` i `wlasciciel` oznaczają ten sam unikalny login. Inne białe
+znaki oraz znaki spoza ASCII są odrzucane. Te same reguły są dostępne dla
+przyszłego logowania w `normalize_username`.
+
+Moduł czyta `DATABASE_URL` wyłącznie z `/etc/work-tracker/work-tracker.env` i
+wymaga wspieranej przez obecny manifest wartości
+`sqlite:////var/lib/work-tracker/work_tracker.db`. Ignoruje odziedziczony
+`DATABASE_URL` i developerski `.env`; nie korzysta z domyślnej lokalnej bazy.
+Otwiera SQLite w trybie `mode=rw`: brak istniejącego pliku kończy się błędem,
+bez utworzenia innej bazy. Wymaga właściciela i grupy `work-tracker` dla bazy
+oraz katalogu danych, bez zapisu grupy i bez dostępu innych użytkowników
+(standardowo katalog `0750`, baza `0640`). Nie naprawia uprawnień automatycznie;
+przy błędzie operator powinien sprawdzić je przed ponowieniem. Zapis odbywa się
+z `umask 0027` jako użytkownik usługi, więc root nie tworzy sidecarów SQLite.
+
+Kolejnego użytkownika tworzysz tą samą komendą z inną nazwą. Ponowienie dla
+istniejącego loginu zwraca błąd i nie zmienia hasła ani rekordu użytkownika.
+Instalator, updater i start aplikacji nie tworzą kont ani nie pytają o hasła.
+W bazie `users` są tylko ID, kanoniczny login, hash i czas utworzenia UTC;
+nie ma roli administratora ani powiązań z danymi pracy. Hasła są hashowane
+przez `argon2-cffi` (Argon2id, profil RFC 9106 low-memory: 64 MiB, 3 iteracje,
+4 lanes). Biblioteka tworzy losowy salt i zapisuje parametry w hashu;
+`password_needs_rehash` służy przyszłej aktualizacji parametrów po poprawnej
+weryfikacji. Zależność jest instalowana przez zwykłe `pip install backend`
+w instalatorze/updaterze. Nie potrzeba nowego sekretu ani peppera.
+
+**8A1 nie dodaje logowania, sesji ani ochrony UI/API.** Aplikacja nadal działa
+w zaufanym LAN, a oba webhooki Home Assistanta wymagają własnego
+`X-Webhook-Token`, niezależnie od kont użytkowników. Sesje i ekran logowania
+należą do 8A2, a obowiązkowy login do 8A3.
+
 ## Logs/status/restart
 
 ```bash

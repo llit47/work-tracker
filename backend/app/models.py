@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -182,3 +182,23 @@ class LocationTimezone(Base):
     location: Mapped[str] = mapped_column(String(100), primary_key=True)
     timezone: Mapped[str] = mapped_column(String(100), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "length(username) BETWEEN 3 AND 64 "
+            "AND instr(username, char(0)) = 0 "
+            "AND username NOT GLOB '*[^a-z0-9._-]*' "
+            "AND substr(username, 1, 1) GLOB '[a-z0-9]'",
+            name="ck_users_username",
+        ),
+        CheckConstraint("length(password_hash) > 0", name="ck_users_password_hash"),
+        UniqueConstraint("username", name="uq_users_username"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(AwareDateTime(), nullable=False)

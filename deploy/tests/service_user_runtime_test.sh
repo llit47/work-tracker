@@ -55,7 +55,7 @@ runuser -u "${SERVICE_USER}" -- env \
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="sqlite:///${DATABASE_FILE}" \
         .venv/bin/alembic upgrade head
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="sqlite:///${DATABASE_FILE}" \
-        .venv/bin/alembic current | grep -q '20260906_01'
+        .venv/bin/alembic current | grep -q '20261006_06 (head)'
 )
 
 PORT="$("${APP_DIR}/backend/.venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
@@ -84,4 +84,6 @@ fi
 kill "${SERVER_PID}"
 wait "${SERVER_PID}" || true
 SERVER_PID=""
+"${APP_DIR}/backend/.venv/bin/python" "${REPOSITORY_DIR}/deploy/tests/identity_management_test.py" \
+    "${APP_DIR}/backend/.venv/bin/python" "${TEST_DIR}" "${SERVICE_USER}"
 printf 'Service-user migration and runtime test passed.\n'
