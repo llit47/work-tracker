@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from conftest import authenticated_client
 import pytest
 
 from app.config import Settings
@@ -34,7 +34,7 @@ def payload(event_type: str, timestamp: str) -> dict[str, str]:
 
 @pytest.mark.anyio
 async def test_work_summary_handles_out_of_order_cross_month_session_without_changing_raw_events(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         headers = {"X-Webhook-Token": TOKEN}
         exit_response = await client.post(
             "/api/webhook/home-assistant",
@@ -71,6 +71,6 @@ async def test_work_summary_handles_out_of_order_cross_month_session_without_cha
 
 @pytest.mark.anyio
 async def test_work_summary_validates_year_and_month(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         assert (await client.get("/api/work-summary?year=1999&month=9")).status_code == 422
         assert (await client.get("/api/work-summary?year=2026&month=13")).status_code == 422

@@ -1,4 +1,4 @@
-"""Optional browser authentication. Never participates in Home Assistant auth."""
+"""Browser sessions and default-deny API access, independent of HA auth."""
 
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -6,11 +6,13 @@ import re
 import secrets
 from typing import Callable
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, SecretStr
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import Settings
 from .database import get_session
@@ -48,6 +50,78 @@ def valid_session_statement(digest: str, now: datetime):
 
 def session_response(username: str, expires_at: datetime) -> dict:
     return {"username": username, "expires_at": expires_at.isoformat()}
+
+
+SESSION_ERROR = "Sesja wygasła lub jest nieprawidłowa."
+# Exact method/path pairs, never prefixes: HA routes keep their own token check.
+SESSION_INDEPENDENT_ENDPOINTS = frozenset({
+    ("POST", "/api/auth/login"),
+    ("GET", "/api/auth/me"),
+    ("POST", "/api/auth/logout"),
+    ("GET", "/api/health"),
+    ("POST", "/api/webhook/home-assistant"),
+    ("POST", "/api/webhook/home-assistant/correction"),
+})
+
+
+def current_session(request: Request, session: Session, now: datetime) -> dict:
+    digest = token_hash(request.cookies.get(COOKIE_NAME))
+    instant = now.astimezone(timezone.utc)
+    found = session.execute(valid_session_statement(digest, instant)).first() if digest else None
+    if found is not None:
+        stored, username = found
+        expires_at = stored.expires_at
+        last_seen_at = stored.last_seen_at
+        session.rollback()
+        if last_seen_at <= instant - ACTIVITY_WRITE_INTERVAL:
+            # One conditional update coalesces concurrent touches, never revives
+            # expired/revoked sessions, and never moves last_seen backwards.
+            session.execute(update(UserSession).where(
+                UserSession.token_hash == digest,
+                UserSession.revoked_at.is_(None),
+                UserSession.expires_at > instant,
+                UserSession.last_seen_at > instant - IDLE_TIMEOUT,
+                UserSession.last_seen_at <= instant - ACTIVITY_WRITE_INTERVAL,
+            ).values(last_seen_at=instant))
+            session.commit()
+            if session.execute(valid_session_statement(digest, instant)).first() is None:
+                found = None
+        if found is not None:
+            return session_response(username, expires_at)
+    # Do not clear cookies on reads: delayed failures must not erase a new login.
+    raise HTTPException(status_code=401, detail=SESSION_ERROR,
+                        headers={"Cache-Control": "no-store"})
+
+
+class BrowserSessionMiddleware:
+    """Guard the API namespace before routing, including future routes/mounts.
+
+    Pure ASGI: never reads request bodies or holds a DB session across handlers.
+    CORSMiddleware must wrap this guard so real preflights terminate there.
+    """
+
+    def __init__(self, app: ASGIApp, now_provider: Callable[[], datetime]):
+        self.app = app
+        self.now_provider = now_provider
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path = scope.get("path", "")
+        if (scope["type"] == "http" and (path == "/api" or path.startswith("/api/"))
+                and (scope["method"], path) not in SESSION_INDEPENDENT_ENDPOINTS):
+            request = Request(scope)
+
+            def validate() -> None:
+                with request.app.state.session_factory() as session:
+                    current_session(request, session, self.now_provider())
+
+            try:
+                await run_in_threadpool(validate)
+            except HTTPException as error:
+                response = JSONResponse(status_code=error.status_code,
+                                        content={"detail": error.detail}, headers=error.headers)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) -> APIRouter:
@@ -116,35 +190,8 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
 
     @router.get("/me")
     def me(request: Request, response: Response, session: Session = Depends(get_session)):
-        digest = token_hash(request.cookies.get(COOKIE_NAME))
-        instant = now()
-        found = session.execute(valid_session_statement(digest, instant)).first() if digest else None
-        if found is not None:
-            stored, username = found
-            expires_at = stored.expires_at
-            last_seen_at = stored.last_seen_at
-            session.rollback()
-            if last_seen_at <= instant - ACTIVITY_WRITE_INTERVAL:
-                # One conditional update coalesces concurrent touches, never revives
-                # expired/revoked sessions, and never moves last_seen backwards.
-                session.execute(update(UserSession).where(
-                    UserSession.token_hash == digest,
-                    UserSession.revoked_at.is_(None),
-                    UserSession.expires_at > instant,
-                    UserSession.last_seen_at > instant - IDLE_TIMEOUT,
-                    UserSession.last_seen_at <= instant - ACTIVITY_WRITE_INTERVAL,
-                ).values(last_seen_at=instant))
-                session.commit()
-                if session.execute(valid_session_statement(digest, instant)).first() is None:
-                    found = None
-            if found is not None:
-                response.headers["Cache-Control"] = "no-store"
-                return session_response(username, expires_at)
-        invalid = JSONResponse(status_code=401, content={"detail": "Sesja wygasła lub jest nieprawidłowa."})
-        # Never clear cookies on a read: a delayed anonymous /me response
-        # must not erase a cookie issued by a concurrent successful login.
-        invalid.headers["Cache-Control"] = "no-store"
-        return invalid
+        response.headers["Cache-Control"] = "no-store"
+        return current_session(request, session, now())
 
     @router.post("/logout", status_code=204)
     def logout(request: Request, session: Session = Depends(get_session)):

@@ -2,7 +2,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
+from conftest import authenticated_client
 import pytest
 from sqlalchemy import select
 
@@ -55,7 +56,7 @@ async def add_raw_event(client: AsyncClient, event_type: str, timestamp: str) ->
 @pytest.mark.anyio
 async def test_pay_rate_api_lists_chronologically_and_creates_normalized_rate(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         created = await client.post(
             "/api/pay-rates",
             json={"effective_from": "2027-01-01", "hourly_rate": "55.00", "currency": "pln"},
@@ -72,7 +73,7 @@ async def test_pay_rate_api_lists_chronologically_and_creates_normalized_rate(tm
 @pytest.mark.anyio
 async def test_pay_rate_api_rejects_duplicate_and_invalid_values(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         duplicate = await client.post(
             "/api/pay-rates",
             json={"effective_from": "1970-01-01", "hourly_rate": "55.00", "currency": "PLN"},
@@ -113,7 +114,7 @@ async def test_pay_rate_api_rejects_duplicate_and_invalid_values(tmp_path: Path)
 @pytest.mark.anyio
 async def test_pay_summary_rejects_mixed_currencies(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         await client.post(
             "/api/pay-rates",
             json={"effective_from": "2026-09-15", "hourly_rate": "50.00", "currency": "EUR"},
@@ -131,7 +132,7 @@ async def test_pay_summary_rejects_mixed_currencies(tmp_path: Path):
 @pytest.mark.anyio
 async def test_pay_summary_returns_decimal_strings_and_rate_explanation(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         await add_raw_event(client, "entry", "2026-09-06T08:00:00+02:00")
         await add_raw_event(client, "exit", "2026-09-06T16:30:00+02:00")
         response = await client.get("/api/pay-summary?year=2026&month=9")
@@ -159,7 +160,7 @@ async def test_pay_summary_returns_decimal_strings_and_rate_explanation(tmp_path
 @pytest.mark.anyio
 async def test_pay_summary_uses_effective_events_from_manual_corrections(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         await add_raw_event(client, "entry", "2026-09-07T08:00:00+02:00")
         exit_id = await add_raw_event(client, "exit", "2026-09-07T17:00:00+02:00")
         initial = await client.get("/api/pay-summary?year=2026&month=9")

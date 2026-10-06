@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import StringIO
 
-from httpx import ASGITransport, AsyncClient
+from conftest import authenticated_client
 import pytest
 
 from app.config import Settings
@@ -227,7 +227,7 @@ async def test_http_ingestion_preserves_raw_history_and_all_consumers(tmp_path, 
                 ))
         session.commit()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         events = [] if delivery == "existing_history" else pair(299)
         for boundary in reversed(events) if delivery == "exit_first" else events:
             response = await client.post("/api/webhook/home-assistant", headers={"X-Webhook-Token": TOKEN}, json={

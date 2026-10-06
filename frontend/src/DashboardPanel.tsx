@@ -12,9 +12,10 @@ import {
   loadDashboard,
   type DashboardSummary,
 } from './dashboard'
-import { formatMoney } from './pay'
+import { formatMoney, type FetchLike } from './pay'
 
 type DashboardPanelProps = {
+  fetcher: FetchLike
   apiBase: string
   refreshRequest: number
   onSummaryChange: (summary: DashboardSummary | null) => void
@@ -32,6 +33,7 @@ function formatShiftStart(timestamp: string): string {
 
 export default function DashboardPanel({
   apiBase,
+  fetcher,
   refreshRequest,
   onSummaryChange,
 }: DashboardPanelProps) {
@@ -56,7 +58,7 @@ export default function DashboardPanel({
 
       try {
         const loaded = await loadDashboard(
-          fetch,
+          fetcher,
           apiBase,
           browserTimezone(),
           controller.signal,
@@ -97,7 +99,7 @@ export default function DashboardPanel({
       window.removeEventListener('focus', refreshWhenVisible)
       document.removeEventListener('visibilitychange', refreshWhenVisible)
     }
-  }, [apiBase, onSummaryChange, refreshRequest, retryRequest])
+  }, [fetcher, apiBase, onSummaryChange, refreshRequest, retryRequest])
 
   useEffect(() => {
     if (dashboard?.status !== 'working' || !dashboard.current_session) return undefined

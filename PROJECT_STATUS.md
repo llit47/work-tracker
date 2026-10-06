@@ -19,8 +19,8 @@
 - **Phase 8 — Authentication and hardening: IN PROGRESS**
   - **Phase 8A1 — Identity foundation: DONE**
   - **Phase 8A2 — Server-side sessions and login UX: DONE**
-  - **Phase 8A3 — Protect browser UI and API: NEXT**
-  - **Phase 8B1 — Browser security hardening: PLANNED**
+  - **Phase 8A3 — Protect browser UI and API: DONE**
+  - **Phase 8B1 — Browser security hardening: NEXT**
   - **Phase 8B2 — Reverse-proxy and Internet-readiness review: PLANNED**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
@@ -29,9 +29,13 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 
 ## What currently works
 
-- 8A2: opcjonalne login/logout i przywracanie sesji w `Ustawienia → Konto`; zwykły UI/API nadal dostępny anonimowo. HA wymaga wyłącznie własnego `X-Webhook-Token`.
+- 8A3: ordinary browser UI/API wymaga loginu. Centralny pure-ASGI guard chroni wszystkie HTTP `/api` i `/api/...`, również nowe trasy/mounty, przed routingiem i walidacją body; invalid/missing/expired/revoked cookie daje spójny JSON HTTP 401.
+- Dokładne session-independent wyjątki: `POST /api/auth/login`, `GET /api/auth/me` (własna walidacja 200/401), `POST /api/auth/logout`, `GET /api/health`, `POST /api/webhook/home-assistant` i `POST /api/webhook/home-assistant/correction`. HA wymaga wyłącznie własnego `X-Webhook-Token`, niezależnie od browser cookie. CORS pozostaje zewnętrzną warstwą z jawnymi origins i preflight bez sesji.
+- Publiczny statyczny HTML/JS/CSS/assets umożliwia render loginu; dokumentacja/schema FastAPI jest chroniona w `/api/docs`, `/api/redoc`, `/api/openapi.json`. Frontend sprawdza sesję przed montowaniem domain UI i przed ordinary requests.
+- Globalny 401 lub logout odmontowuje aplikację, usuwa lokalny stan chronionych danych i zatrzymuje domain polling. Expiry pokazuje „Sesja wygasła. Zaloguj się ponownie.”; nowe logowanie ponownie otwiera aplikację. Wersjonowanie odpowiedzi i dekodowania JSON/blob odrzuca stare dane i stare 401 po nowym loginie. Błąd logout nie przywraca lokalnych danych.
+- 8A3 nie zmienia schematu ani konfiguracji wdrożenia; Alembic head pozostaje `20261006_07`. Dane raw events/corrections/pay pozostają bez zmian.
 - `user_sessions`: ID, user_id, unikalny SHA-256 tokenu, created_at/last_seen_at/expires_at/revoked_at UTC. Każdy login tworzy nowy token (256 bitów CSPRNG), przechowywany tylko w host-only HttpOnly cookie. Brak transparentnej rotacji to zamierzona polityka 8A2; rotacja/recovery należy do 8B1.
-- Sesje: dokładnie 30 dni idle od ostatniego zapisanego `last_seen_at`, maksymalnie 180 dni od początkowego loginu. `/auth/me` aktualizuje aktywność najwyżej raz na godzinę; niezapisana końcowa aktywność może być późniejsza o mniej niż godzinę. Widoczna karta sprawdza sesję co 5 minut i po odzyskaniu focus; zwykłe domain API i HA nie dotykają sesji.
+- Sesje: dokładnie 30 dni idle od ostatniego zapisanego `last_seen_at`, maksymalnie 180 dni od początkowego loginu. Wspólny walidator `/auth/me` i ordinary API aktualizuje aktywność najwyżej raz na godzinę; niezapisana końcowa aktywność może być późniejsza o mniej niż godzinę. Zalogowana widoczna karta sprawdza sesję co 5 minut i po odzyskaniu focus; HA nie dotyka sesji. Anonimowy gate nie wykonuje background domain requests.
 - Logout odwołuje sesję w bazie i usuwa cookie; expired/revoked/invalid token jest odrzucany. Rehash Argon2 po poprawnym loginie ma warunek zachowania poprzedniego hasha.
 - Persistent cookie: HttpOnly, SameSite=Lax, Path=/, lifetime 180 dni, Secure domyślnie true w kodzie. Instalator/updater wymagają jawnego `SESSION_COOKIE_SECURE`: false wyłącznie dla obecnego LAN HTTP, true obowiązkowo dla HTTPS. Migracja `20261006_07` dodaje wyłącznie pustą tabelę sesji.
 
@@ -39,7 +43,7 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Login ma 3–64 znaki ASCII (pierwszy alfanumeryczny, dalej litery/cyfry/`._-`); otaczające spacje ASCII są usuwane, litery zamieniane na małe. Wspólny helper i ograniczenia SQLite chronią jednoznaczność loginu.
 - Jawne `sudo /opt/work-tracker/deploy/create_user.sh NAZWA` tworzy konto z ukrytym dwukrotnym hasłem jako service user, wyłącznie w istniejącej bazie wskazanej przez produkcyjny env/manifest; kontroluje właściciela i uprawnienia. Powtórzenie nie nadpisuje konta.
 - `argon2-cffi` zapewnia Argon2id (64 MiB, 3 iteracje, 4 lanes), weryfikację i możliwość późniejszego rehash. Migracja `20261006_06` dodaje tylko pustą tabelę `users`, bez zmiany danych domenowych i bez default credentials.
-- 8A1 nie wymusza logowania, nie tworzy sesji ani login UI/API; Home Assistant i zwykły UI/API zachowują wcześniejsze działanie LAN-only.
+- Sam 8A1 tworzył wyłącznie fundament identity; obowiązkowe sesje UI/API są teraz aktywowane przez 8A3.
 - Backend FastAPI odbiera zabezpieczone tokenem webhooki Home Assistant.
 - Eventy `entry` i `exit` są walidowane i zapisywane w SQLite.
 - API udostępnia eventy wskazanego miesiąca oraz endpoint health check.
@@ -171,9 +175,9 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 8A3 — Protect browser UI and API**
+**Phase 8B1 — Browser security hardening**
 
-8A1 i 8A2 są ukończone. Następny krok to osobne włączenie default-deny enforcementu zwykłego UI/browser API, z jawnymi minimalnymi wyjątkami. Obecne logowanie 8A2 nie chroni jeszcze danych pracy, korekt, płac, ustawień ani raportów.
+8A1, 8A2 i 8A3 są ukończone. Login jest obowiązkowy dla ordinary UI/API, z centralną default-deny ochroną i sześcioma dokładnymi wyjątkami. Następne prace obejmują full CSRF, rate limiting, response/cache hardening i race-safe transparentną rotację/recovery; żadne z nich nie zostało dodane w 8A3.
 
 Home Assistant pozostaje niezależny: ingestion i korekty wymagają `X-Webhook-Token`, nigdy browser cookie. 8B1 obejmie CSRF, brute-force protection i race-safe transparentną rotację/recovery; 8B2 przygotuje zaufany reverse proxy/HTTPS. Przez cały Phase 8 produkcja pozostaje LAN-only.
 
@@ -188,7 +192,7 @@ Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfej
 - brak nadgodzin, dodatków, podatków i przeliczeń walut,
 - brak live estymacji wynagrodzenia dla niezakończonej zmiany,
 - brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
-- brak obowiązkowego logowania i ochrony zwykłego UI/API (cutover dopiero w 8A3),
+- full CSRF, login rate limiting i transparentna rotacja/recovery sesji pozostają odłożone do 8B1,
 - brak eksportu XLSX/Excel,
 - brak publicznego dostępu do aplikacji w obecnym wdrożeniu (plan: Phase 9 po Phase 8),
 - brak integracji Google Calendar w obecnym wdrożeniu (plan: Phase 10).

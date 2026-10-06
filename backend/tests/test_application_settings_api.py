@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from conftest import authenticated_client
 import pytest
 
 from app.config import Settings
@@ -26,7 +26,7 @@ def make_app(database_url: str):
 async def test_default_settings_and_unconfigured_location_fallback(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'settings.db'}"
     app = make_app(database_url)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         response = await client.get("/api/application-settings")
         await client.post(
             "/api/webhook/home-assistant",
@@ -69,7 +69,7 @@ async def test_default_settings_and_unconfigured_location_fallback(tmp_path: Pat
 async def test_global_title_and_location_alias_persist_without_changing_raw_key(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'settings.db'}"
     app = make_app(database_url)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         await client.post(
             "/api/webhook/home-assistant",
             headers=HEADERS,
@@ -95,9 +95,7 @@ async def test_global_title_and_location_alias_persist_without_changing_raw_key(
         )
 
     reloaded_app = create_app(Settings(webhook_token=TOKEN, database_url=database_url))
-    async with AsyncClient(
-        transport=ASGITransport(app=reloaded_app), base_url="http://test"
-    ) as client:
+    async with authenticated_client(reloaded_app, base_url="http://test") as client:
         persisted = await client.get("/api/application-settings")
         raw_events = await client.get("/api/work-events?year=2026&month=9")
 
@@ -119,7 +117,7 @@ async def test_global_title_and_location_alias_persist_without_changing_raw_key(
 async def test_settings_validation_and_alias_removal(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'settings.db'}"
     app = make_app(database_url)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         empty_title = await client.put(
             "/api/application-settings",
             json={"application_title": "   ", "locations": []},
@@ -173,7 +171,7 @@ async def test_settings_validation_and_alias_removal(tmp_path: Path):
 async def test_timezone_update_removal_and_legacy_payload_preservation(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'timezone-settings.db'}"
     app = make_app(database_url)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         configured = await client.put(
             "/api/application-settings",
             json={
@@ -228,7 +226,7 @@ async def test_timezone_update_removal_and_legacy_payload_preservation(tmp_path:
 async def test_invalid_timezone_rejects_the_whole_settings_transaction(tmp_path: Path):
     database_url = f"sqlite:///{tmp_path / 'invalid-timezone.db'}"
     app = make_app(database_url)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         await client.put(
             "/api/application-settings",
             json={

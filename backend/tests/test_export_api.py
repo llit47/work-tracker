@@ -4,7 +4,8 @@ from decimal import Decimal
 from io import StringIO
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
+from conftest import authenticated_client
 import pytest
 
 from app.config import Settings
@@ -56,7 +57,7 @@ async def add_event(client: AsyncClient, event_type: str, timestamp: str):
 @pytest.mark.anyio
 async def test_csv_and_pdf_export_endpoints_return_downloadable_monthly_reports(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         await add_event(client, "entry", "2026-09-06T08:00:00+02:00")
         await add_event(client, "exit", "2026-09-06T16:30:00+02:00")
         csv_response = await client.get("/api/export/monthly.csv?year=2026&month=9")
@@ -104,7 +105,7 @@ async def test_csv_and_pdf_export_endpoints_return_downloadable_monthly_reports(
 @pytest.mark.anyio
 async def test_exports_use_latest_location_alias_without_changing_raw_history(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         await add_event(client, "entry", "2026-09-06T08:00:00+02:00")
         await add_event(client, "exit", "2026-09-06T16:00:00+02:00")
         first_settings = await client.put(
@@ -144,7 +145,7 @@ async def test_exports_use_latest_location_alias_without_changing_raw_history(tm
 @pytest.mark.anyio
 async def test_empty_month_exports_header_only_csv_and_valid_pdf(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         csv_response = await client.get("/api/export/monthly.csv?year=2026&month=8")
         pdf_response = await client.get("/api/export/monthly.pdf?year=2026&month=8")
 
@@ -157,7 +158,7 @@ async def test_empty_month_exports_header_only_csv_and_valid_pdf(tmp_path: Path)
 @pytest.mark.anyio
 async def test_export_endpoints_validate_month_parameters(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         invalid_year = await client.get("/api/export/monthly.csv?year=1999&month=9")
         invalid_month = await client.get("/api/export/monthly.pdf?year=2026&month=13")
 

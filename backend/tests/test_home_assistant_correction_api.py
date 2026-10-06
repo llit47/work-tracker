@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
+from conftest import authenticated_client
 import pytest
 
 from app.config import Settings
@@ -76,9 +77,7 @@ async def correct(client: AsyncClient, raw_event_id: int, value: str, headers=HE
 
 @pytest.mark.anyio
 async def test_correction_endpoint_requires_the_webhook_token(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(client)
 
@@ -98,9 +97,7 @@ async def test_correction_endpoint_requires_the_webhook_token(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_exact_raw_instant_is_a_no_op_without_a_correction_record(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(
             client, timestamp="2026-09-09T07:20:00+02:00"
@@ -120,9 +117,7 @@ async def test_exact_raw_instant_is_a_no_op_without_a_correction_record(tmp_path
 
 @pytest.mark.anyio
 async def test_no_op_comparison_uses_utc_instants_not_timestamp_strings(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(
             client, timestamp="2026-09-09T05:20:00+00:00"
@@ -141,9 +136,7 @@ async def test_no_op_comparison_uses_utc_instants_not_timestamp_strings(tmp_path
 async def test_returning_to_raw_instant_removes_existing_timestamp_override(
     tmp_path: Path,
 ):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(
             client, timestamp="2026-09-09T07:20:00+02:00"
@@ -171,9 +164,7 @@ async def test_returning_to_raw_instant_removes_existing_timestamp_override(
 
 @pytest.mark.anyio
 async def test_same_minute_with_different_seconds_still_creates_an_override(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(
             client, timestamp="2026-09-09T07:20:14+02:00"
@@ -196,9 +187,7 @@ async def test_same_minute_with_different_seconds_still_creates_an_override(tmp_
 async def test_correction_creates_and_updates_one_override_without_mutating_raw_event(
     tmp_path: Path,
 ):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(client)
         raw_before = (await client.get("/api/work-events?year=2026&month=9")).json()[0]
@@ -232,9 +221,7 @@ async def test_correction_creates_and_updates_one_override_without_mutating_raw_
 
 @pytest.mark.anyio
 async def test_correction_uses_canonical_location_fallback_without_alias(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client, display_name=None)
         raw_event_id = await add_raw_event(client)
         response = await correct(client, raw_event_id, "7:45")
@@ -245,9 +232,7 @@ async def test_correction_uses_canonical_location_fallback_without_alias(tmp_pat
 
 @pytest.mark.anyio
 async def test_missing_timezone_and_invalid_time_do_not_create_a_correction(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         raw_event_id = await add_raw_event(client)
         missing_timezone = await correct(client, raw_event_id, "7:45")
         await configure_location(client)
@@ -263,9 +248,7 @@ async def test_missing_timezone_and_invalid_time_do_not_create_a_correction(tmp_
 
 @pytest.mark.anyio
 async def test_unknown_raw_event_returns_stable_not_found_error(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         response = await correct(client, 999, "7:45")
 
     assert response.status_code == 404
@@ -274,9 +257,7 @@ async def test_unknown_raw_event_returns_stable_not_found_error(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_ignore_conflict_is_preserved_and_returns_stable_conflict_error(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(
             client, timestamp="2026-09-09T07:20:00+02:00"
@@ -292,9 +273,7 @@ async def test_ignore_conflict_is_preserved_and_returns_stable_conflict_error(tm
 
 @pytest.mark.anyio
 async def test_out_of_range_time_returns_stable_error_without_mutation(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(client, timestamp="2026-09-09T14:00:00+02:00")
         response = await correct(client, raw_event_id, "18:01")
@@ -307,9 +286,7 @@ async def test_out_of_range_time_returns_stable_error_without_mutation(tmp_path:
 
 @pytest.mark.anyio
 async def test_invalid_replacement_leaves_existing_override_unchanged(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://test"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://test") as client:
         await configure_location(client)
         raw_event_id = await add_raw_event(client)
         accepted = await correct(client, raw_event_id, "07:45")
@@ -336,7 +313,7 @@ async def test_corrupted_persisted_timezone_fails_safe(tmp_path: Path):
         )
         session.commit()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with authenticated_client(app, base_url="http://test") as client:
         raw_event_id = await add_raw_event(client)
         response = await correct(client, raw_event_id, "7:45")
         corrections = (await client.get("/api/corrections")).json()
