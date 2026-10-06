@@ -13,6 +13,7 @@ import {
   type DashboardSummary,
 } from '../src/dashboard.js'
 import type { FetchLike } from '../src/pay.js'
+import { createBackgroundRefresh } from '../src/backgroundRefresh.js'
 
 function assertEqual<T>(actual: T, expected: T, message: string) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -407,5 +408,90 @@ try {
 }
 assertEqual(dashboardFailed, true, 'dashboard API failure is isolated')
 assertEqual(workAndPayState, { work: { total: 14400 }, pay: { total: '200.00' } }, 'dashboard failure preserves work and pay data')
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const cachedSummary = { days: [{ date: '2026-09-08', items: [] as string[] }] }
+const updatedSummary = {
+  days: [{ date: '2026-09-08', items: ['suppressed_short_visit'] }],
+}
+const renderedMonth = {
+  summary: cachedSummary,
+  state: 'ready',
+  expandedDays: ['2026-09-08'],
+}
+let backgroundRequests = 0
+let summaryUpdates = 0
+const backgroundSignals: AbortSignal[] = []
+let pendingSummary = deferred<typeof cachedSummary>()
+const backgroundRefresh = createBackgroundRefresh(
+  (signal) => {
+    backgroundRequests += 1
+    backgroundSignals.push(signal)
+    return pendingSummary.promise
+  },
+  (summary) => {
+    renderedMonth.summary = summary
+    summaryUpdates += 1
+  },
+)
+
+if (shouldRefreshWorkSummary(outsideSnapshot, outsideAfterShortVisit, false)) {
+  void backgroundRefresh.refresh()
+}
+await Promise.resolve()
+assertEqual(backgroundRequests, 0, 'unchanged dashboard in normal mode starts no background request')
+
+const firstBackgroundPoll = backgroundRefresh.refresh()
+await Promise.resolve()
+assertEqual(
+  renderedMonth,
+  { summary: cachedSummary, state: 'ready', expandedDays: ['2026-09-08'] },
+  'background audit refresh keeps the current summary, ready state, and expanded days rendered',
+)
+assertEqual(summaryUpdates, 0, 'background refresh does not clear summary before receiving data')
+const secondBackgroundPoll = backgroundRefresh.refresh()
+const thirdBackgroundPoll = backgroundRefresh.refresh()
+assertEqual(secondBackgroundPoll === firstBackgroundPoll, true, 'next poll shares the in-flight request')
+assertEqual(thirdBackgroundPoll === firstBackgroundPoll, true, 'repeated polls keep waiting for the same request')
+assertEqual(backgroundRequests, 1, 'polls during a slow request do not start replacement requests')
+assertEqual(backgroundSignals[0].aborted, false, 'polls never abort the slow background request')
+
+pendingSummary.resolve(updatedSummary)
+await firstBackgroundPoll
+assertEqual(renderedMonth.summary === updatedSummary, true, 'successful response atomically replaces cached summary')
+assertEqual(summaryUpdates, 1, 'shared request publishes the response exactly once')
+assertEqual(renderedMonth.state, 'ready', 'successful background refresh never toggles loading')
+assertEqual(renderedMonth.expandedDays, ['2026-09-08'], 'successful refresh retains expanded day state')
+
+pendingSummary = deferred<typeof cachedSummary>()
+const failedBackgroundPoll = backgroundRefresh.refresh()
+await Promise.resolve()
+assertEqual(backgroundRequests, 2, 'a later poll can refresh again after the slow request succeeds')
+pendingSummary.reject(new Error('temporary API failure'))
+await failedBackgroundPoll
+assertEqual(renderedMonth.summary === updatedSummary, true, 'background failure preserves the last successful data')
+assertEqual(renderedMonth.state, 'ready', 'background failure does not unmount the rendered month')
+
+pendingSummary = deferred<typeof cachedSummary>()
+const obsoleteBackgroundPoll = backgroundRefresh.refresh()
+await Promise.resolve()
+assertEqual(backgroundRequests, 3, 'a later poll retries after background failure')
+backgroundRefresh.dispose()
+assertEqual(backgroundSignals[2].aborted, true, 'leaving the month cancels its background request')
+pendingSummary.resolve(cachedSummary)
+await obsoleteBackgroundPoll
+assertEqual(renderedMonth.summary === updatedSummary, true, 'late response from an obsolete month cannot replace data')
+assertEqual(summaryUpdates, 1, 'disposed refresh never publishes stale data')
+await backgroundRefresh.refresh()
+assertEqual(backgroundRequests, 3, 'disposed month cannot start another background request')
 
 console.log('Dashboard helper tests passed.')

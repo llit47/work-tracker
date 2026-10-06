@@ -10,6 +10,7 @@ import {
   type ApplicationSettingsFormErrors,
 } from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
+import { createBackgroundRefresh, type BackgroundRefresh } from './backgroundRefresh'
 import {
   shouldRefreshMonthlyData,
   shouldRefreshWorkSummary,
@@ -395,6 +396,7 @@ function App() {
   const [initialUrlMonth] = useState(() => readMonthFromSearch(window.location.search, today))
   const [selectedMonth, setSelectedMonth] = useState(initialUrlMonth.selection)
   const [summary, setSummary] = useState<WorkSummary | null>(null)
+  const backgroundWorkSummaryRefresh = useRef<BackgroundRefresh | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [retryRequest, setRetryRequest] = useState(0)
   const [dashboardRefreshRequest, setDashboardRefreshRequest] = useState(0)
@@ -532,7 +534,11 @@ function App() {
     const previousDashboard = previousDashboardSummary.current
     previousDashboardSummary.current = dashboardSummary
     if (shouldRefreshWorkSummary(previousDashboard, dashboardSummary, showIgnoredEvents)) {
-      setRetryRequest((request) => request + 1)
+      if (showIgnoredEvents) {
+        void backgroundWorkSummaryRefresh.current?.refresh()
+      } else {
+        setRetryRequest((request) => request + 1)
+      }
     }
     if (shouldRefreshMonthlyData(previousDashboard, dashboardSummary)) {
       setPayRetryRequest((request) => request + 1)
@@ -558,20 +564,26 @@ function App() {
     const controller = new AbortController()
     let ignoreResponse = false
 
+    const fetchSummary = async (signal: AbortSignal): Promise<WorkSummary> => {
+      const response = await fetch(
+        `${apiBase}/api/work-summary?year=${selectedMonth.year}&month=${selectedMonth.month}`,
+        { signal },
+      )
+      if (!response.ok) throw new Error('API request failed')
+      return await response.json() as WorkSummary
+    }
+    const backgroundRefresh = createBackgroundRefresh(fetchSummary, setSummary)
+
     setSummary(null)
     setState('loading')
 
     const load = async () => {
       try {
-        const response = await fetch(
-          `${apiBase}/api/work-summary?year=${selectedMonth.year}&month=${selectedMonth.month}`,
-          { signal: controller.signal },
-        )
-        if (!response.ok) throw new Error('API request failed')
-        const loadedSummary: WorkSummary = await response.json()
+        const loadedSummary = await fetchSummary(controller.signal)
         if (!ignoreResponse) {
           setSummary(loadedSummary)
           setState('ready')
+          backgroundWorkSummaryRefresh.current = backgroundRefresh
         }
       } catch {
         if (!ignoreResponse) setState('error')
@@ -582,6 +594,10 @@ function App() {
     return () => {
       ignoreResponse = true
       controller.abort()
+      backgroundRefresh.dispose()
+      if (backgroundWorkSummaryRefresh.current === backgroundRefresh) {
+        backgroundWorkSummaryRefresh.current = null
+      }
     }
   }, [selectedMonth.year, selectedMonth.month, retryRequest])
 
