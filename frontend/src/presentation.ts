@@ -9,6 +9,13 @@ export function formatDuration(totalSeconds: number | null): string {
   return parts.length > 0 ? parts.join(' ') : '0m'
 }
 
+// Seconds are shown only in the explicit short-visit audit view.
+export function formatAuditDuration(totalSeconds: number | null): string {
+  if (totalSeconds === null) return '—'
+  const seconds = Math.max(0, Math.floor(totalSeconds))
+  return `${Math.floor(seconds / 60)} min ${seconds % 60} s`
+}
+
 const TIMESTAMP_OFFSET_PATTERN = /(Z|[+-]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/
 
 export function timestampOffset(timestamp: string): string {
@@ -53,6 +60,7 @@ export function formatSessionRange(
 
 export type WorkItemPresentationStatus =
   | 'valid'
+  | 'suppressed_short_visit'
   | 'missing_exit'
   | 'duplicate_entry'
   | 'orphan_exit'
@@ -74,6 +82,7 @@ export type ActiveSessionContext = {
 }
 
 export const workItemStatusLabels: Record<Exclude<WorkItemPresentationStatus, 'valid'>, string> = {
+  suppressed_short_visit: 'Automatycznie ukryta krótka wizyta',
   missing_exit: 'Brak wyjścia',
   duplicate_entry: 'Niejednoznaczne wejście',
   orphan_exit: 'Wyjście bez wejścia',
@@ -120,7 +129,9 @@ export function isActionableProblem(
   item: WorkItemPresentation,
   context: ActiveSessionContext,
 ): boolean {
-  return item.status !== 'valid' && !isPendingCurrentSession(item, context)
+  return item.status !== 'valid'
+    && item.status !== 'suppressed_short_visit'
+    && !isPendingCurrentSession(item, context)
 }
 
 export function countActionableProblems(
@@ -140,7 +151,9 @@ export function dayOverviewPresentation(
   statusLabel: string | null
 } {
   const pending = isPendingCurrentSession(item, context)
-  const hasCompleteInterval = item.status === 'valid' || item.status === 'unusually_long_session'
+  const hasCompleteInterval = item.status === 'valid'
+    || item.status === 'suppressed_short_visit'
+    || item.status === 'unusually_long_session'
   return {
     showRange: hasCompleteInterval || pending,
     showDuration: hasCompleteInterval,

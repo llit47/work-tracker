@@ -205,7 +205,7 @@ npm run build
 - `POST /api/webhook/home-assistant` — przyjmuje JSON webhooka, zapisuje immutable raw event i zwraca jego `id`, status oraz dane prezentacyjne; wymaga nagłówka `X-Webhook-Token`.
 - `POST /api/webhook/home-assistant/correction` — ustawia audytowalną korektę godziny konkretnego raw eventu na podstawie time-only inputu; wymaga nagłówka `X-Webhook-Token`.
 - `GET /api/work-events?year=2026&month=9` — zwraca chronologicznie zdarzenia dla wskazanego miesiąca kalendarzowego w offsetcie przekazanym przez Home Assistanta.
-- `GET /api/work-summary?year=2026&month=9` — wylicza sesje, dni, miesięczny czas pracy i anomalie na podstawie effective events oraz zwraca metadane audytowe korekt.
+- `GET /api/work-summary?year=2026&month=9` — wylicza sesje, dni, miesięczny czas pracy i anomalie na podstawie effective events oraz zwraca metadane audytowe korekt i automatycznie pominięte krótkie wizyty (`suppressed_short_visit`).
 - `PUT /api/work-events/{raw_event_id}/timestamp-correction` — tworzy lub aktualizuje korektę timestampu raw eventu.
 - `PUT /api/work-events/{raw_event_id}/ignore` — wyłącza raw event z effective event stream bez modyfikowania źródłowego rekordu.
 - `POST /api/manual-events` — dodaje ręczne `entry` albo `exit` jako rekord korekty.
@@ -308,3 +308,13 @@ effective entry, i ma niezależny kill switch dla warstwy powiadomień. Konfigur
 Home Assistanta jest utrzymywana ręcznie poza tym repozytorium.
 
 Frontend pokazuje `missing_exit` jako „Trwająca zmiana” tylko wtedy, gdy jego wejście odpowiada tej samej chwili UTC co jednoznaczna sesja zwrócona przez dashboard. Pierwszy snapshot i późniejsze istotne zmiany dashboardu odświeżają aktualnie wybrane podsumowanie czasu i płac; sam upływ czasu bieżącej zmiany nie powoduje dodatkowych żądań miesięcznych.
+
+### Automatyczne pomijanie krótkich wizyt
+
+Jednoznaczna zakończona para `entry → exit`, która byłaby `valid`, jest klasyfikowana jako `suppressed_short_visit`, jeśli obie granice pochodzą z nietkniętych eventów Home Assistant, a dokładna różnica chwil UTC wynosi **≤ 5 minut**. Dokładnie 5:00 jest pomijane, a każdy czas powyżej 5 minut pozostaje zwykłą sesją; próg nie korzysta z zaokrąglonych minut. Manualny event lub aktywna korekta timestampu dowolnej granicy wyłącza automatyczne pomijanie. Anomalie zawsze pozostają widoczne.
+
+Taka wizyta zachowuje oba eventy i `duration_seconds` w `work-summary`, lecz nie jest pracą ani anomalią: nie zwiększa sum czasu, `work_days`, `anomaly_count` ani wynagrodzenia. CSV/PDF pomijają ją zarówno w sesjach, jak i problemach. Reguła działa przy odczycie także istniejącej historii, bez migracji, backfillu, automatycznych `ignore_event` lub zmiany raw events. Cofnięcie ręcznej korekty przywraca klasyfikację aktualnego strumienia raw events.
+
+W normalnym widoku miesiąca wizyty i dni zawierające wyłącznie pominięte wpisy są ukryte. `Ustawienia → Widok → Pokaż ignorowane i automatycznie ukryte wydarzenia` przywraca neutralny audyt: oba eventy, zakres godzin oraz dokładny czas w minutach i sekundach (wyjątek od zwykłej prezentacji bez sekund). Istniejąca preferencja przeglądarki pozostaje zachowana.
+
+Ingestion i interaktywne powiadomienia Home Assistanta działają bez opóźnień i zmian. Po `entry` dashboard nadal może raportować `working`; dopiero rzeczywisty `exit` kończy wizytę i pozwala ją pominąć, ze statusem `outside`. Planowana integracja Google Calendar będzie projektować tylko `valid` finalized sessions, więc nie obejmie tych wizyt.

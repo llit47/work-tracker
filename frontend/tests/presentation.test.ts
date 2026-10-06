@@ -3,6 +3,7 @@ import {
   countActionableProblems,
   dayOverviewPresentation,
   formatDuration,
+  formatAuditDuration,
   formatEventDateTime,
   formatEventTime,
   formatSessionRange,
@@ -225,6 +226,25 @@ assertEqual(
 )
 
 const orphanExit: WorkItemPresentation = { status: 'orphan_exit', events: [] }
+const suppressedVisit: WorkItemPresentation = { status: 'suppressed_short_visit', events: [] }
+assertEqual(formatAuditDuration(37), '0 min 37 s', 'short-visit audit preserves seconds')
+assertEqual(formatAuditDuration(299), '4 min 59 s', 'short-visit audit does not round duration')
+assertEqual(formatAuditDuration(300), '5 min 0 s', 'threshold audit shows exact duration')
+assertEqual(
+  dayOverviewPresentation(suppressedVisit, inactiveContext),
+  {
+    showRange: true,
+    showDuration: true,
+    showWarning: false,
+    statusLabel: 'Automatycznie ukryta krótka wizyta',
+  },
+  'short-visit audit shows the interval and a neutral label',
+)
+assertEqual(
+  countActionableProblems([suppressedVisit, orphanExit], inactiveContext),
+  1,
+  'short visits do not increase the displayed problem count',
+)
 assertEqual(
   countActionableProblems([activeMissingExit, orphanExit], activeContext),
   1,

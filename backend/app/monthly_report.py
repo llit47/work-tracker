@@ -165,6 +165,9 @@ def build_monthly_report(
                 )
                 continue
 
+            if not item.status.is_anomaly:
+                continue
+
             anomalies.append(
                 ReportAnomaly(
                     date=item.local_date,

@@ -3,6 +3,7 @@ import {
   getVisibleDays,
   hasStandaloneUndoAction,
   isEventVisible,
+  isWorkItemVisible,
   readShowIgnoredEventsPreference,
   writeShowIgnoredEventsPreference,
 } from '../src/viewSettings.js'
@@ -37,8 +38,9 @@ assertEqual(isEventVisible(manualEvent, false), true, 'manual events remain visi
 assertEqual(isEventVisible(correctedEvent, false), true, 'timestamp-corrected events remain visible')
 assertEqual(hasStandaloneUndoAction(ignoredEvent), true, 'revealed ignored events retain their undo control')
 
-const oldestDay = { date: '2026-09-01', items: [normalEvent], ignored_events: [] }
-const newestDay = { date: '2026-09-08', items: [normalEvent], ignored_events: [] }
+const normalItem = { status: 'valid', events: [normalEvent] }
+const oldestDay = { date: '2026-09-01', items: [normalItem], ignored_events: [] }
+const newestDay = { date: '2026-09-08', items: [normalItem], ignored_events: [] }
 const ignoredOnlyDay = { date: '2026-09-07', items: [], ignored_events: [ignoredEvent] }
 const apiDays = [oldestDay, ignoredOnlyDay, newestDay]
 assertEqual(
@@ -52,6 +54,31 @@ assertEqual(
   'ignored-only days are restored in newest-first order',
 )
 assertEqual(apiDays, [oldestDay, ignoredOnlyDay, newestDay], 'the fetched day array is not mutated')
+
+const suppressedItem = {
+  status: 'suppressed_short_visit',
+  duration_seconds: 37,
+  events: [normalEvent, { ...normalEvent, id: 5 }],
+}
+const suppressedOnlyDay = { date: '2026-09-09', items: [suppressedItem], ignored_events: [] }
+const mixedDay = { ...newestDay, items: [suppressedItem, normalItem] }
+const auditDays = [suppressedOnlyDay, mixedDay, ignoredOnlyDay]
+assertEqual(isWorkItemVisible(suppressedItem, false), false, 'short visits are hidden by default')
+assertEqual(isWorkItemVisible(suppressedItem, true), true, 'audit preference reveals short visits')
+assertEqual(
+  getVisibleDays(auditDays, false),
+  [{ ...mixedDay, items: [normalItem] }],
+  'short visits disappear from mixed days and short-visit-only days disappear entirely',
+)
+assertEqual(
+  getVisibleDays(auditDays, true),
+  auditDays,
+  'audit view retains both raw events, exact duration, and manually ignored events',
+)
+assertEqual(mixedDay.items, [suppressedItem, normalItem], 'visibility never mutates backend items')
+for (const status of ['missing_exit', 'duplicate_entry', 'orphan_exit', 'ambiguous_timestamp', 'unusually_long_session']) {
+  assertEqual(isWorkItemVisible({ status }, false), true, `${status} remains visible`)
+}
 
 const storage = memoryStorage()
 assertEqual(readShowIgnoredEventsPreference(storage), false, 'the first visit defaults to hidden ignored events')

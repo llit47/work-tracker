@@ -59,6 +59,7 @@ import {
 import {
   countActionableProblems,
   dayOverviewPresentation,
+  formatAuditDuration,
   formatDuration,
   formatEventDateTime,
   formatEventTime,
@@ -101,6 +102,7 @@ type WorkEvent = {
 
 type SessionStatus =
   | 'valid'
+  | 'suppressed_short_visit'
   | 'missing_exit'
   | 'duplicate_entry'
   | 'orphan_exit'
@@ -259,10 +261,11 @@ function SessionItem({
   const entry = item.events.find((event) => event.event_type === 'entry')
   const exit = item.events.find((event) => event.event_type === 'exit')
   const showEventOffsets = new Set(item.events.map((event) => timestampOffset(event.event_timestamp))).size > 1
+  const suppressed = item.status === 'suppressed_short_visit'
 
-  if (item.status === 'valid' || item.status === 'unusually_long_session') {
+  if (item.status === 'valid' || item.status === 'unusually_long_session' || suppressed) {
     return (
-      <article className={`session ${item.status === 'valid' ? 'valid' : 'warning'}`}>
+      <article className={`session ${suppressed ? 'ignored-session' : item.status === 'valid' ? 'valid' : 'warning'}`}>
         <div className="session-details">
           <strong className="session-range">{formatSessionRange(entry?.event_timestamp ?? null, exit?.event_timestamp ?? null)}</strong>
           <span className="location">{locationName}</span>
@@ -273,8 +276,9 @@ function SessionItem({
           </div>
         </div>
         <div className="session-result">
-          <strong>{formatDuration(item.duration_seconds)}</strong>
-          {item.status !== 'valid' && <span className="anomaly">⚠ {workItemStatusLabels[item.status]}</span>}
+          <strong>{suppressed ? formatAuditDuration(item.duration_seconds) : formatDuration(item.duration_seconds)}</strong>
+          {item.status === 'suppressed_short_visit' && <span className="audit-status">{workItemStatusLabels[item.status]}</span>}
+          {item.status === 'unusually_long_session' && <span className="anomaly">⚠ {workItemStatusLabels[item.status]}</span>}
         </div>
       </article>
     )
@@ -335,15 +339,20 @@ function DayOverview({
           const entry = item.events.find((event) => event.event_type === 'entry')
           const exit = item.events.find((event) => event.event_type === 'exit')
           const presentation = dayOverviewPresentation(item, activeSessionContext)
+          const overviewClass = presentation.showWarning
+            ? ' warning'
+            : item.status === 'suppressed_short_visit'
+              ? ' ignored-note'
+              : presentation.statusLabel ? ' pending' : ''
           return (
             <span
-              className={`day-overview-item${presentation.showWarning ? ' warning' : presentation.statusLabel ? ' pending' : ''}`}
+              className={`day-overview-item${overviewClass}`}
               key={`${item.status}-${item.events.map((event) => event.id).join('-')}`}
             >
               {presentation.showRange && (
                 <strong>{formatSessionRange(entry?.event_timestamp ?? null, exit?.event_timestamp ?? null)}</strong>
               )}
-              {presentation.showDuration && <span>{formatDuration(item.duration_seconds)}</span>}
+              {presentation.showDuration && <span>{item.status === 'suppressed_short_visit' ? formatAuditDuration(item.duration_seconds) : formatDuration(item.duration_seconds)}</span>}
               {presentation.statusLabel && (
                 <strong>{presentation.showWarning ? '⚠ ' : ''}{presentation.statusLabel}</strong>
               )}
@@ -1094,7 +1103,7 @@ function App() {
                   checked={showIgnoredEvents}
                   onChange={(event) => setShowIgnoredEvents(event.target.checked)}
                 />
-                <span>Pokaż ignorowane wydarzenia</span>
+                <span>Pokaż ignorowane i automatycznie ukryte wydarzenia</span>
               </label>
             </section>
             <section className="settings-section pay-settings" aria-labelledby="pay-settings-heading">

@@ -6,15 +6,21 @@ from itertools import groupby
 from typing import Iterable
 
 MAX_SESSION_DURATION = timedelta(hours=16)
+SHORT_VISIT_DURATION = timedelta(minutes=5)
 
 
 class SessionStatus(str, Enum):
     VALID = "valid"
+    SUPPRESSED_SHORT_VISIT = "suppressed_short_visit"
     MISSING_EXIT = "missing_exit"
     DUPLICATE_ENTRY = "duplicate_entry"
     ORPHAN_EXIT = "orphan_exit"
     UNUSUALLY_LONG_SESSION = "unusually_long_session"
     AMBIGUOUS_TIMESTAMP = "ambiguous_timestamp"
+
+    @property
+    def is_anomaly(self) -> bool:
+        return self not in {SessionStatus.VALID, SessionStatus.SUPPRESSED_SHORT_VISIT}
 
 
 @dataclass(frozen=True)
@@ -26,6 +32,7 @@ class RawWorkEvent:
     event_timestamp_utc: datetime
     received_at: datetime
     source: str
+    is_timestamp_corrected: bool = False
 
 
 @dataclass(frozen=True)
@@ -82,7 +89,7 @@ def summarize_work_time_items(
         total = sum(
             item.duration_seconds or 0 for item in items if item.status is SessionStatus.VALID
         )
-        anomaly_count = sum(item.status is not SessionStatus.VALID for item in items)
+        anomaly_count = sum(item.status.is_anomaly for item in items)
         days.append(
             WorkDay(
                 date=local_date,
@@ -168,6 +175,18 @@ def _pair_location_events(events: list[RawWorkEvent]) -> list[WorkTimeItem]:
                     if duration > MAX_SESSION_DURATION
                     else SessionStatus.VALID
                 )
+                # Classify only an otherwise valid, untouched HA pair. Compare
+                # the exact UTC delta, not the truncated number of seconds.
+                if (
+                    status is SessionStatus.VALID
+                    and duration <= SHORT_VISIT_DURATION
+                    and all(
+                        boundary.source == "home_assistant"
+                        and not boundary.is_timestamp_corrected
+                        for boundary in (entry, event)
+                    )
+                ):
+                    status = SessionStatus.SUPPRESSED_SHORT_VISIT
                 items.append(
                     WorkTimeItem(
                         status=status,
