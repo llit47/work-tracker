@@ -16,9 +16,9 @@
   - **Phase 7B — Correction input and live-domain behavior: DONE**
   - **Phase 7C — Home Assistant integration and safe rollout: DONE**
 - **Post-Phase-7 — Short-visit suppression: DONE**
-- **Phase 8 — Authentication and hardening: NEXT**
-  - **Phase 8A1 — Identity foundation: NEXT**
-  - **Phase 8A2 — Server-side sessions and login UX: PLANNED**
+- **Phase 8 — Authentication and hardening: IN PROGRESS**
+  - **Phase 8A1 — Identity foundation: DONE**
+  - **Phase 8A2 — Server-side sessions and login UX: NEXT**
   - **Phase 8A3 — Protect browser UI and API: PLANNED**
   - **Phase 8B1 — Browser security hardening: PLANNED**
   - **Phase 8B2 — Reverse-proxy and Internet-readiness review: PLANNED**
@@ -29,6 +29,11 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 
 ## What currently works
 
+- Fundament tożsamości: izolowane `users` (ID, unikalny kanoniczny username, Argon2id hash, created_at UTC), bez ról, publicznej rejestracji i bez powiązań z danymi pracy.
+- Login ma 3–64 znaki ASCII (pierwszy alfanumeryczny, dalej litery/cyfry/`._-`); otaczające spacje ASCII są usuwane, litery zamieniane na małe. Wspólny helper i ograniczenia SQLite chronią jednoznaczność loginu.
+- Jawne `sudo /opt/work-tracker/deploy/create_user.sh NAZWA` tworzy konto z ukrytym dwukrotnym hasłem jako service user, wyłącznie w istniejącej bazie wskazanej przez produkcyjny env/manifest; kontroluje właściciela i uprawnienia. Powtórzenie nie nadpisuje konta.
+- `argon2-cffi` zapewnia Argon2id (64 MiB, 3 iteracje, 4 lanes), weryfikację i możliwość późniejszego rehash. Migracja `20261006_06` dodaje tylko pustą tabelę `users`, bez zmiany danych domenowych i bez default credentials.
+- 8A1 nie wymusza logowania, nie tworzy sesji ani login UI/API; Home Assistant i zwykły UI/API zachowują wcześniejsze działanie LAN-only.
 - Backend FastAPI odbiera zabezpieczone tokenem webhooki Home Assistant.
 - Eventy `entry` i `exit` są walidowane i zapisywane w SQLite.
 - API udostępnia eventy wskazanego miesiąca oraz endpoint health check.
@@ -157,9 +162,9 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 8 — Authentication and hardening**
+**Phase 8A2 — Server-side sessions and login UX**
 
-Phase 7 wraz z produkcyjną integracją Home Assistanta jest ukończony. Phase 8 ma teraz jawnie zaplanowany etapowy rollout: 8A1 tworzy wyłącznie fundament tożsamości użytkowników, 8A2 dodaje server-side sessions i login UX bez wymuszania logowania na istniejącym API, a dopiero 8A3 przełącza zwykły UI/browser API na wymaganie sesji. Następnie 8B1 i 8B2 domykają browser security oraz gotowość do zaufanego reverse proxy/HTTPS.
+Phase 7 i 8A1 są ukończone. Następny krok to 8A2: server-side sessions i login UX bez wymuszania logowania na istniejącym API. Dopiero 8A3 przełącza zwykły UI/browser API na wymaganie sesji. Następnie 8B1 i 8B2 domykają browser security oraz gotowość do zaufanego reverse proxy/HTTPS.
 
 Docelowy auth człowieka pozostaje oddzielony od integracji maszynowych. Home Assistant zachowuje własny `X-Webhook-Token` dla ingestion i korekt i nie może wymagać sesji użytkownika. Sesje przeglądarkowe mają być server-side, odwoływalne i zaprojektowane pod długowieczne zaufane urządzenia, tak aby normalne korzystanie nie wymagało częstego ponownego logowania. Dokładna polityka lifetime/idle timeout zostanie ustalona w 8A2.
 

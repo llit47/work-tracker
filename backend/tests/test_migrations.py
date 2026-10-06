@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 import pytest
 
 from app.database import build_engine
-from app.models import ApplicationSetting, LocationDisplayName, LocationTimezone, PayRate
+from app.models import ApplicationSetting, LocationDisplayName, LocationTimezone, PayRate, User
 
 
 def alembic_config(backend_dir: Path, database_url: str) -> Config:
@@ -258,3 +258,68 @@ def test_location_timezone_migration_is_additive_and_preserves_existing_data(
 def connection_event_count(engine) -> int:
     with engine.connect() as connection:
         return connection.execute(text("SELECT count(*) FROM work_events")).scalar_one()
+
+
+def test_identity_upgrade_preserves_all_preexisting_tables(tmp_path, monkeypatch):
+    backend_dir = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'identity-upgrade.db'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    config = alembic_config(backend_dir, database_url)
+    command.upgrade(config, "20260909_05")
+    engine = build_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO work_events VALUES (1, 'entry', 'gabinet_zabki', "
+            "'2026-10-06T08:00:17+02:00', '2026-10-06T06:00:17+00:00', "
+            "'2026-10-06T06:00:18+00:00', 'home_assistant')"
+        ))
+        connection.execute(text(
+            "INSERT INTO work_event_corrections VALUES (1, 'timestamp_override', "
+            "'2026-10-06T06:01:00+00:00', '2026-10-06T06:01:00+00:00', 1, NULL, "
+            "'2026-10-06T08:02:00+02:00', '2026-10-06T06:02:00+00:00', NULL)"
+        ))
+        connection.execute(text(
+            "INSERT INTO pay_rates VALUES (2, '2026-10-01', '73.29', 'PLN', '2026-10-01T00:00:00+00:00')"
+        ))
+        connection.execute(text("UPDATE application_settings SET application_title = 'Praca'"))
+        connection.execute(text(
+            "INSERT INTO location_display_names VALUES ('gabinet_zabki', 'ARTE', '2026-10-06T00:00:00+00:00')"
+        ))
+        connection.execute(text(
+            "INSERT INTO location_timezones VALUES ('gabinet_zabki', 'Europe/Warsaw', '2026-10-06T00:00:00+00:00')"
+        ))
+    tables = set(inspect(engine).get_table_names()) - {"alembic_version"}
+    def snapshot():
+        with engine.connect() as connection:
+            return {table: list(connection.execute(text(f"SELECT * FROM {table} ORDER BY 1"))) for table in tables}
+    before = snapshot()
+    command.upgrade(config, "head")
+    assert snapshot() == before
+    assert set(inspect(engine).get_table_names()) == tables | {"alembic_version", "users"}
+    with Session(engine) as session:
+        assert list(session.scalars(select(User))) == []
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20261006_06"
+    command.upgrade(config, "head")
+    assert snapshot() == before
+    command.downgrade(config, "20260909_05")
+    assert snapshot() == before
+    assert "users" not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_fresh_identity_schema_matches_model_and_has_no_seed_users(tmp_path, monkeypatch):
+    backend_dir = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'fresh-identity.db'}"
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    command.upgrade(alembic_config(backend_dir, database_url), "head")
+    engine = build_engine(database_url)
+    schema = inspect(engine)
+    assert {column["name"] for column in schema.get_columns("users")} == set(User.__table__.columns.keys())
+    assert {c["name"] for c in schema.get_check_constraints("users")} == {"ck_users_username", "ck_users_password_hash"}
+    assert schema.get_unique_constraints("users")[0]["column_names"] == ["username"]
+    with Session(engine) as session:
+        assert list(session.scalars(select(User))) == []
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(text("INSERT INTO users VALUES (1, 'UPPER', 'hash', '2026-10-06T00:00:00+00:00')"))
+    engine.dispose()

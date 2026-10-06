@@ -337,7 +337,7 @@ Przyszła projekcja Google Calendar nadal obejmuje tylko `valid` finalized sessi
 
 ## Phase 8 — Authentication and hardening
 
-**Status: NEXT**
+**Status: IN PROGRESS**
 
 Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia przez Internet. To warunek konieczny Phase 9, a nie samo uruchomienie publicznego dostępu. Produkcja pozostaje LAN-only przez cały Phase 8.
 
@@ -355,20 +355,30 @@ Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia pr
 
 ### Phase 8A1 — Identity foundation
 
-**Status: NEXT**
+**Status: DONE**
 
 Zakres:
 
 - Minimalny model użytkownika dla małej, jawnie dopuszczonej grupy; bez publicznej rejestracji i bez rozbudowanego RBAC.
 - Bezpieczne hashowanie haseł algorytmem przeznaczonym do password hashing; plaintext passwords ani odwracalne hasła nie mogą trafić do bazy, logów lub repozytorium.
-- Kontrolowany bootstrap pierwszego użytkownika/administratora odpowiedni dla obecnego self-hosted deploymentu; sekrety poza Git i checkoutem.
+- Kontrolowany bootstrap pierwszego użytkownika odpowiedni dla obecnego self-hosted deploymentu; sekrety poza Git i checkoutem. Brak roli administratora bez konkretnego wymagania autoryzacji.
 - Migracja wyłącznie addytywna i niedestrukcyjna względem istniejących danych czasu pracy, korekt, stawek i ustawień.
 - Testy modelu, walidacji credentials i bootstrapu.
 - **Brak enforcementu logowania na istniejącym UI/API w tym kroku.** Produkcyjne zachowanie Work Trackera i Home Assistant ingestion pozostaje takie jak przed 8A1.
 
+Acceptance scope ukończonego 8A1:
+
+- [x] Izolowana tabela `users`: ID, unikalny kanoniczny username, password hash, created_at UTC; bez ról i bez powiązań z domeną czasu pracy.
+- [x] Username: 3–64 znaki ASCII, pierwszy alfanumeryczny, dalej litery/cyfry/`._-`; usunięcie otaczających spacji ASCII i lowercase, wspólny helper dla tworzenia i przyszłego loginu. Unikalność i kanoniczny zapis chronione w SQLite.
+- [x] Argon2id przez `argon2-cffi`, losowy salt, parametry w zakodowanym hashu, verification fail-closed oraz helper wykrywania potrzeby rehash po poprawnej weryfikacji; bez peppera i dodatkowej konfiguracji.
+- [x] Jawne `deploy/create_user.sh` / `app.manage`: ukryte dwukrotne hasło z terminala, odczyt produkcyjnego DATABASE_URL, tylko istniejąca baza, zapis jako service user i kontrola uprawnień. Duplicate/invalid input nie zmienia istniejących kont.
+- [x] Migracja `20261006_06` dodaje wyłącznie pustą tabelę users. Testy świeżej bazy i upgrade z poprzedniego head potwierdzają zachowanie wszystkich istniejących tabel/danych.
+- [x] Testy identity, bootstrapu, instalowanego pakietu i ukrytego terminala; dokładna procedura operatora w README. Root-only test runtime obejmuje też bootstrap jako service user.
+- [x] Brak runtime bootstrap, default credentials, sessions, login UI/API i enforcementu; oba kontrakty HA pozostają niezmienione.
+
 ### Phase 8A2 — Server-side sessions and login UX
 
-**Status: PLANNED**
+**Status: NEXT**
 
 Zakres:
 
