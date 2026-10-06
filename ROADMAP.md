@@ -339,29 +339,99 @@ Przyszła projekcja Google Calendar nadal obejmuje tylko `valid` finalized sessi
 
 **Status: NEXT**
 
-Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia przez Internet. To warunek konieczny Phase 9, a nie samo uruchomienie publicznego dostępu. Produkcja do tego czasu pozostaje LAN-only.
+Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia przez Internet. To warunek konieczny Phase 9, a nie samo uruchomienie publicznego dostępu. Produkcja pozostaje LAN-only przez cały Phase 8.
 
-### Phase 8A — Identity and protected application
+### Architecture and rollout invariants
 
-- Bezpieczne logowanie i sesje dla początkowo bardzo małej liczby jawnie dopuszczonych użytkowników; bez publicznej rejestracji i bez nadmiarowego RBAC.
-- Ochrona endpointów UI/API odczytujących lub zmieniających dane pracy, korekty, stawki, raporty i ustawienia. Istniejące integracje maszynowe muszą zachować odrębne, właściwe im uwierzytelnianie; nie należy zastępować tokenu HA interaktywną sesją użytkownika.
-- Bezpieczne cookies (`Secure`, `HttpOnly`, odpowiedni `SameSite`), wygaszanie/unieważnianie sesji i sensowna ochrona logowania przed brute force.
-- Sekrety i dane sesji poza repozytorium, minimalne uprawnienia oraz security-sensitive defaults.
+- Uwierzytelnianie człowieka i integracji maszynowych pozostaje rozdzielone. Sesja użytkownika chroni zwykły UI/browser API, natomiast Home Assistant zachowuje własny `X-Webhook-Token` i nie może wymagać interaktywnego logowania ani cookie użytkownika.
+- Phase 8 nie zmienia domenowego pipeline'u czasu pracy: `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`.
+- Ochrona browser API ma być domyślnie zamknięta po aktywacji, z małą jawną listą wyjątków dla endpointów integracyjnych oraz minimalnego health checku. Nie utrzymywać rozproszonej listy "chronionych endpointów", którą łatwo pominąć przy dodawaniu nowych tras.
+- Sesje użytkowników mają być server-side i odwoływalne. Przeglądarka przechowuje wyłącznie nieprzewidywalny identyfikator w `HttpOnly` cookie; nie używać długowiecznego bearer JWT ani tokenu auth w `localStorage` jako podstawowego mechanizmu sesji.
+- UX ma preferować długowieczne zaufane urządzenia: prawidłowo zalogowany telefon lub komputer powinien pozostawać zalogowany przez okres liczony w miesiącach, z bezpiecznym odnawianiem/rotacją i możliwością unieważnienia sesji po stronie serwera. Dokładne limity idle/absolute lifetime należy ustalić i udokumentować w Phase 8A2 zamiast przypadkowo przyjmować krótki timeout.
+- Publiczny tryb musi używać cookies `Secure`; LAN-only development/rollout przed Phase 9 musi mieć jawny, kontrolowany sposób testowania bez obniżania docelowych internetowych defaults.
+- Phase 8 jest wdrażany etapowo. 8A1 i 8A2 mają nie przełączać istniejącego browser API na obowiązkowy login. Dopiero osobny 8A3 aktywuje enforcement po przygotowaniu użytkowników, sesji, UI i testów.
+- Każda zmiana routingu/authentication musi regresyjnie potwierdzić, że Home Assistant nadal może bez sesji użytkownika zapisać raw `entry`/`exit` oraz wykonać token-protected timestamp correction.
+- Nie uruchamiać Cloudflare Tunnel, publicznego DNS ani publicznego hosta w Phase 8. Public exposure jest wyłącznie zakresem Phase 9 po końcowym hardening review.
 
-### Phase 8B — Internet-readiness review
+### Phase 8A1 — Identity foundation
 
-- Dostosowanie do rzeczywistej architektury reverse proxy: poprawne rozpoznawanie HTTPS, hosta i adresu klienta wyłącznie z zaufanego proxy; bez bezwarunkowego ufania `Forwarded`/`X-Forwarded-*` od klienta.
-- Sprawdzenie CSRF dla operacji opartych o cookies, polityki CORS, trusted hosts/proxies, bezpieczeństwa nagłówków i zasad dostępu do endpointów integracyjnych.
-- Testy logowania, sesji, odmowy dostępu, ochrony danych oraz poprawnego działania obecnego Home Assistant ingestion w LAN.
+**Status: NEXT**
+
+Zakres:
+
+- Minimalny model użytkownika dla małej, jawnie dopuszczonej grupy; bez publicznej rejestracji i bez rozbudowanego RBAC.
+- Bezpieczne hashowanie haseł algorytmem przeznaczonym do password hashing; plaintext passwords ani odwracalne hasła nie mogą trafić do bazy, logów lub repozytorium.
+- Kontrolowany bootstrap pierwszego użytkownika/administratora odpowiedni dla obecnego self-hosted deploymentu; sekrety poza Git i checkoutem.
+- Migracja wyłącznie addytywna i niedestrukcyjna względem istniejących danych czasu pracy, korekt, stawek i ustawień.
+- Testy modelu, walidacji credentials i bootstrapu.
+- **Brak enforcementu logowania na istniejącym UI/API w tym kroku.** Produkcyjne zachowanie Work Trackera i Home Assistant ingestion pozostaje takie jak przed 8A1.
+
+### Phase 8A2 — Server-side sessions and login UX
+
+**Status: PLANNED**
+
+Zakres:
+
+- Backendowy login/logout i server-side session store powiązany z użytkownikiem.
+- Wysokoentropijny losowy session token; w trwałym store przechowywać reprezentację, która nie ujawnia używalnego bearer tokenu przy samym odczycie bazy.
+- Cookie `HttpOnly`, odpowiednie `SameSite`, ścieżka i pozostałe atrybuty sesyjne; docelowo `Secure` w HTTPS.
+- Długowieczna sesja dla zaufanego urządzenia, z bezpiecznym odnawianiem/rotacją oraz jawnymi idle/absolute limits dobranymi pod UX "zaloguj raz, używaj miesiącami".
+- Możliwość unieważnienia bieżącej sesji i konstrukcja pozwalająca później unieważnić wszystkie sesje użytkownika.
+- Minimalny polski ekran logowania i poprawna obsługa stanu unauthenticated/expired session.
+- Testy obejmujące utworzenie, odnowienie/rotację, wylogowanie, expiry i odrzucenie nieprawidłowego/revoked tokenu.
+- **Nadal bez globalnego enforcementu na istniejącym browser API.** Ten cutover należy do 8A3.
+
+### Phase 8A3 — Protect browser UI and API
+
+**Status: PLANNED**
+
+Zakres:
+
+- Włączenie wymagania poprawnej sesji dla zwykłego UI oraz API odczytującego lub zmieniającego dane pracy, korekty, stawki, raporty i ustawienia.
+- Ochrona ma działać default-deny dla browser-facing API, tak aby nowy endpoint nie stał się anonimowy tylko dlatego, że autor zapomniał dopisać osobną dependency.
+- Jawna mała lista wyjątków obejmuje wyłącznie wymagane machine endpoints oraz minimalny health check. Home Assistant `POST /api/webhook/home-assistant` i `POST /api/webhook/home-assistant/correction` zachowują własny token i nie akceptują sesji użytkownika jako zamiennika.
+- Frontend po `401` przechodzi do login UX bez utraty domenowych danych; zalogowanie przywraca zwykłe działanie dashboardu, miesięcy, korekt, płac, ustawień i eksportów.
+- Regresja HA musi być przetestowana bez browser cookie: raw ingestion oraz HA correction nadal działają z prawidłowym `X-Webhook-Token`; brak/nieprawidłowy token nadal jest odrzucany.
+- Rollout ma zachować możliwość szybkiego wycofania zmian przez istniejący updater/rollback bez utraty danych.
+
+### Phase 8B1 — Browser security hardening
+
+**Status: PLANNED**
+
+Zakres:
+
+- Ochrona CSRF dla cookie-authenticated operacji zmieniających stan; nie polegać wyłącznie na CORS.
+- Spójna polityka CORS dla rzeczywistych originów oraz brak przypadkowego szerokiego credentialed CORS.
+- Ochrona logowania przed brute force / credential stuffing z limitem, który nie blokuje normalnego domowego użycia.
+- Security-sensitive response headers i sensowne cache policy dla danych prywatnych oraz ekranu logowania.
+- Regeneracja/rotacja identyfikatora sesji w odpowiednich punktach, brak session fixation oraz bezpieczne zachowanie logout/expiry.
+- Testy negatywne dla nieautoryzowanego odczytu, mutacji, CSRF i prób logowania.
+
+### Phase 8B2 — Reverse-proxy and Internet-readiness review
+
+**Status: PLANNED**
+
+Zakres:
+
+- Dostosowanie do docelowej architektury reverse proxy: poprawne rozpoznawanie HTTPS, hosta i adresu klienta wyłącznie z zaufanej ścieżki proxy; bez bezwarunkowego ufania klientowskim `Forwarded` / `X-Forwarded-*`.
+- Weryfikacja trusted hosts/proxies, generowania redirectów/URL-i, `Secure` cookies i semantyki client IP w planowanym przepływie Cloudflare Tunnel.
+- Sprawdzenie, że endpointy integracyjne zachowują oddzielne uwierzytelnianie i nie stają się publicznie użyteczne przez sam fakt dodania reverse proxy.
+- Końcowy security-focused review całego Phase 8 i regresja pełnego UI/API oraz Home Assistant ingestion przed rozpoczęciem Phase 9.
+- Produkcja nadal pozostaje LAN-only do czasu jawnego rollout Phase 9.
 
 ### Acceptance criteria
 
-- [ ] Cały zwykły UI i jego API wymagają poprawnej sesji; brak anonimowego odczytu lub mutacji danych pracy i płac.
-- [ ] Nie istnieje publiczna rejestracja; liczba użytkowników jest mała i jawnie kontrolowana.
-- [ ] Cookies i obsługa sesji są bezpieczne w docelowym HTTPS/reverse-proxy układzie, a logowanie ma ochronę przed brute force.
-- [ ] CSRF/CORS/trusted proxy/forwarded headers są zweryfikowane względem docelowego przepływu, bez zaufania do niezweryfikowanych nagłówków klienta.
-- [ ] Sekrety pozostają poza checkoutem, a integracje maszynowe działają bez interaktywnego loginu i bez osłabienia własnego uwierzytelniania.
-- [ ] Dopiero po weryfikacji Phase 8 można rozpocząć publiczny rollout Phase 9.
+- [ ] Istnieje mała, jawnie kontrolowana baza użytkowników bez publicznej rejestracji i bez zbędnego RBAC.
+- [ ] Hasła są przechowywane wyłącznie jako bezpieczne password hashes; sekrety i dane sesyjne nie trafiają do repozytorium ani logów.
+- [ ] Sesje są server-side, losowe i odwoływalne; przeglądarka nie przechowuje podstawowego auth tokenu w `localStorage`.
+- [ ] Zaufane urządzenie może pozostawać zalogowane przez długi okres zgodnie z udokumentowaną polityką sesji, bez częstego wymuszania ponownego loginu, przy zachowaniu możliwości revocation i bezpiecznej rotacji.
+- [ ] Cały zwykły UI i browser API wymagają poprawnej sesji; brak anonimowego odczytu lub mutacji danych pracy i płac.
+- [ ] Ochrona browser API jest default-deny, a machine-auth exceptions są jawne i minimalne.
+- [ ] Home Assistant ingestion i HA correction pozostają niezależne od sesji użytkownika, nadal wymagają własnego `X-Webhook-Token` i są pokryte testami regresyjnymi po aktywacji auth.
+- [ ] CSRF, CORS, brute-force protection, session fixation/rotation, logout/expiry i security headers są zweryfikowane testami.
+- [ ] Cookies i obsługa sesji mają bezpieczną semantykę w docelowym HTTPS/reverse-proxy układzie; klient nie może sam spoofować zaufanych forwarded headers.
+- [ ] Migracje Phase 8 są addytywne/niedestrukcyjne dla istniejących raw events, korekt, stawek, ustawień i historii.
+- [ ] Publiczny Tunnel/DNS nie jest aktywowany w Phase 8. Dopiero po końcowym security review i spełnieniu acceptance criteria można rozpocząć Phase 9.
 
 ## Phase 9 — Cloudflare public deployment
 
