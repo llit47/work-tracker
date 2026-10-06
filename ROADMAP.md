@@ -345,7 +345,7 @@ Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia pr
 
 - Uwierzytelnianie człowieka i integracji maszynowych pozostaje rozdzielone. Sesja użytkownika chroni zwykły UI/browser API, natomiast Home Assistant zachowuje własny `X-Webhook-Token` i nie może wymagać interaktywnego logowania ani cookie użytkownika.
 - Phase 8 nie zmienia domenowego pipeline'u czasu pracy: `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`.
-- Ochrona browser API ma być domyślnie zamknięta po aktywacji, z małą jawną listą wyjątków dla endpointów integracyjnych oraz minimalnego health checku. Nie utrzymywać rozproszonej listy "chronionych endpointów", którą łatwo pominąć przy dodawaniu nowych tras.
+- Ochrona browser API ma być domyślnie zamknięta po aktywacji, z małą jawną listą wyjątków wyłącznie dla endpointów koniecznych do ustanowienia sesji, integracji maszynowych oraz minimalnego health checku. Nie utrzymywać rozproszonej listy "chronionych endpointów", którą łatwo pominąć przy dodawaniu nowych tras.
 - Sesje użytkowników mają być server-side i odwoływalne. Przeglądarka przechowuje wyłącznie nieprzewidywalny identyfikator w `HttpOnly` cookie; nie używać długowiecznego bearer JWT ani tokenu auth w `localStorage` jako podstawowego mechanizmu sesji.
 - UX ma preferować długowieczne zaufane urządzenia: prawidłowo zalogowany telefon lub komputer powinien pozostawać zalogowany przez okres liczony w miesiącach, z bezpiecznym odnawianiem/rotacją i możliwością unieważnienia sesji po stronie serwera. Dokładne limity idle/absolute lifetime należy ustalić i udokumentować w Phase 8A2 zamiast przypadkowo przyjmować krótki timeout.
 - Publiczny tryb musi używać cookies `Secure`; LAN-only development/rollout przed Phase 9 musi mieć jawny, kontrolowany sposób testowania bez obniżania docelowych internetowych defaults.
@@ -389,7 +389,7 @@ Zakres:
 
 - Włączenie wymagania poprawnej sesji dla zwykłego UI oraz API odczytującego lub zmieniającego dane pracy, korekty, stawki, raporty i ustawienia.
 - Ochrona ma działać default-deny dla browser-facing API, tak aby nowy endpoint nie stał się anonimowy tylko dlatego, że autor zapomniał dopisać osobną dependency.
-- Jawna mała lista wyjątków obejmuje wyłącznie wymagane machine endpoints oraz minimalny health check. Home Assistant `POST /api/webhook/home-assistant` i `POST /api/webhook/home-assistant/correction` zachowują własny token i nie akceptują sesji użytkownika jako zamiennika.
+- Jawna mała lista wyjątków obejmuje tylko endpointy konieczne do ustanowienia sesji (np. login), wymagane machine endpoints oraz minimalny health check. Home Assistant `POST /api/webhook/home-assistant` i `POST /api/webhook/home-assistant/correction` zachowują własny token i nie akceptują sesji użytkownika jako zamiennika. Publiczna rejestracja nie jest takim wyjątkiem i nie powstaje.
 - Frontend po `401` przechodzi do login UX bez utraty domenowych danych; zalogowanie przywraca zwykłe działanie dashboardu, miesięcy, korekt, płac, ustawień i eksportów.
 - Regresja HA musi być przetestowana bez browser cookie: raw ingestion oraz HA correction nadal działają z prawidłowym `X-Webhook-Token`; brak/nieprawidłowy token nadal jest odrzucany.
 - Rollout ma zachować możliwość szybkiego wycofania zmian przez istniejący updater/rollback bez utraty danych.
