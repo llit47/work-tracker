@@ -293,14 +293,14 @@ def test_identity_upgrade_preserves_all_preexisting_tables(tmp_path, monkeypatch
         with engine.connect() as connection:
             return {table: list(connection.execute(text(f"SELECT * FROM {table} ORDER BY 1"))) for table in tables}
     before = snapshot()
-    command.upgrade(config, "head")
+    command.upgrade(config, "20261006_06")
     assert snapshot() == before
     assert set(inspect(engine).get_table_names()) == tables | {"alembic_version", "users"}
     with Session(engine) as session:
         assert list(session.scalars(select(User))) == []
     with engine.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "20261006_06"
-    command.upgrade(config, "head")
+    command.upgrade(config, "20261006_06")
     assert snapshot() == before
     command.downgrade(config, "20260909_05")
     assert snapshot() == before
@@ -322,4 +322,81 @@ def test_fresh_identity_schema_matches_model_and_has_no_seed_users(tmp_path, mon
         assert list(session.scalars(select(User))) == []
     with pytest.raises(IntegrityError), engine.begin() as connection:
         connection.execute(text("INSERT INTO users VALUES (1, 'UPPER', 'hash', '2026-10-06T00:00:00+00:00')"))
+    engine.dispose()
+
+
+def test_sessions_upgrade_preserves_existing_user_and_domain_data(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from app.identity import create_user
+    from app.models import UserSession
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    database_url = f"sqlite:///{tmp_path / 'sessions-upgrade.db'}"
+    monkeypatch.setenv('DATABASE_URL', database_url)
+    config = alembic_config(backend_dir, database_url)
+    command.upgrade(config, '20261006_06')
+    engine = build_engine(database_url)
+    with Session(engine) as session:
+        create_user(session, 'przemek', 'public-migration-test-only-password')
+        session.commit()
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO work_events VALUES (1, 'entry', 'gabinet_zabki', "
+            "'2026-10-06T08:00:17+02:00', '2026-10-06T06:00:17+00:00', "
+            "'2026-10-06T06:00:18+00:00', 'home_assistant')"
+        ))
+        connection.execute(text(
+            "INSERT INTO work_event_corrections VALUES (1, 'timestamp_override', "
+            "'2026-10-06T06:01:00+00:00', '2026-10-06T06:01:00+00:00', 1, NULL, "
+            "'2026-10-06T08:02:00+02:00', '2026-10-06T06:02:00+00:00', NULL)"
+        ))
+        connection.execute(text("UPDATE application_settings SET application_title = 'Praca'"))
+        connection.execute(text(
+            "INSERT INTO pay_rates VALUES (2, '2026-10-01', '73.29', 'PLN', '2026-10-01T00:00:00+00:00')"
+        ))
+        connection.execute(text(
+            "INSERT INTO location_display_names VALUES ('gabinet_zabki', 'ARTE', '2026-10-06T00:00:00+00:00')"
+        ))
+        connection.execute(text(
+            "INSERT INTO location_timezones VALUES ('gabinet_zabki', 'Europe/Warsaw', '2026-10-06T00:00:00+00:00')"
+        ))
+    tables = set(inspect(engine).get_table_names()) - {'alembic_version'}
+    def snapshot():
+        with engine.connect() as connection:
+            return {table: list(connection.execute(text(f'SELECT * FROM {table} ORDER BY 1'))) for table in tables}
+    before = snapshot()
+    command.upgrade(config, 'head')
+    schema = inspect(engine)
+    assert set(schema.get_table_names()) == tables | {'alembic_version', 'user_sessions'}
+    assert snapshot() == before
+    assert {column['name'] for column in schema.get_columns('user_sessions')} == set(UserSession.__table__.columns.keys())
+    assert {c['name'] for c in schema.get_check_constraints('user_sessions')} == {
+        'ck_user_sessions_token_hash', 'ck_user_sessions_dates'}
+    assert schema.get_unique_constraints('user_sessions')[0]['column_names'] == ['token_hash']
+    assert schema.get_indexes('user_sessions')[0]['column_names'] == ['user_id']
+    assert schema.get_foreign_keys('user_sessions')[0]['referred_table'] == 'users'
+    with Session(engine) as session:
+        assert list(session.scalars(select(UserSession))) == []
+        assert session.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '20261006_07'
+        session.add(UserSession(user_id=1, token_hash='a' * 64,
+                    created_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+                    last_seen_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+                    expires_at=datetime(2030, 6, 30, tzinfo=timezone.utc)))
+        session.commit()
+    command.upgrade(config, 'head')
+    assert snapshot() == before
+    for invalid in [
+        {'user_id': 999}, {'token_hash': 'raw-token'}, {'token_hash': 'g' * 64},
+        {'expires_at': '2029-01-01T00:00:00.000000+00:00'},
+        {'token_hash': 'a' * 64},  # Unique constraint.
+    ]:
+        params = dict(user_id=1, token_hash='b' * 64, created_at='2030-01-01T00:00:00.000000+00:00',
+                      last_seen_at='2030-01-01T00:00:00.000000+00:00', expires_at='2030-06-30T00:00:00.000000+00:00')
+        params.update(invalid)
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text('INSERT INTO user_sessions (user_id, token_hash, created_at, last_seen_at, expires_at) '
+                                    'VALUES (:user_id, :token_hash, :created_at, :last_seen_at, :expires_at)'), params)
+    command.downgrade(config, '20261006_06')
+    assert snapshot() == before
+    assert 'user_sessions' not in inspect(engine).get_table_names()
     engine.dispose()

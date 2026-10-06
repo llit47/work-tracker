@@ -347,7 +347,7 @@ Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia pr
 - Phase 8 nie zmienia domenowego pipeline'u czasu pracy: `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`.
 - Ochrona browser API ma być domyślnie zamknięta po aktywacji, z małą jawną listą wyjątków wyłącznie dla endpointów koniecznych do ustanowienia sesji, integracji maszynowych oraz minimalnego health checku. Nie utrzymywać rozproszonej listy "chronionych endpointów", którą łatwo pominąć przy dodawaniu nowych tras.
 - Sesje użytkowników mają być server-side i odwoływalne. Przeglądarka przechowuje wyłącznie nieprzewidywalny identyfikator w `HttpOnly` cookie; nie używać długowiecznego bearer JWT ani tokenu auth w `localStorage` jako podstawowego mechanizmu sesji.
-- UX ma preferować długowieczne zaufane urządzenia: prawidłowo zalogowany telefon lub komputer powinien pozostawać zalogowany przez okres liczony w miesiącach, z bezpiecznym odnawianiem/rotacją i możliwością unieważnienia sesji po stronie serwera. Dokładne limity idle/absolute lifetime należy ustalić i udokumentować w Phase 8A2 zamiast przypadkowo przyjmować krótki timeout.
+- UX ma preferować długowieczne zaufane urządzenia: prawidłowo zalogowany telefon lub komputer powinien pozostawać zalogowany przez okres liczony w miesiącach, z bezpiecznym odnawianiem idle i możliwością unieważnienia sesji po stronie serwera; transparentna okresowa rotacja należy do 8B1. Dokładne limity idle/absolute lifetime należy ustalić i udokumentować w Phase 8A2 zamiast przypadkowo przyjmować krótki timeout.
 - Publiczny tryb musi używać cookies `Secure`; LAN-only development/rollout przed Phase 9 musi mieć jawny, kontrolowany sposób testowania bez obniżania docelowych internetowych defaults.
 - Phase 8 jest wdrażany etapowo. 8A1 i 8A2 mają nie przełączać istniejącego browser API na obowiązkowy login. Dopiero osobny 8A3 aktywuje enforcement po przygotowaniu użytkowników, sesji, UI i testów.
 - Każda zmiana routingu/authentication musi regresyjnie potwierdzić, że Home Assistant nadal może bez sesji użytkownika zapisać raw `entry`/`exit` oraz wykonać token-protected timestamp correction.
@@ -378,22 +378,25 @@ Acceptance scope ukończonego 8A1:
 
 ### Phase 8A2 — Server-side sessions and login UX
 
-**Status: NEXT**
+**Status: DONE**
 
-Zakres:
+Ukończony zakres:
 
-- Backendowy login/logout i server-side session store powiązany z użytkownikiem.
-- Wysokoentropijny losowy session token; w trwałym store przechowywać reprezentację, która nie ujawnia używalnego bearer tokenu przy samym odczycie bazy.
-- Cookie `HttpOnly`, odpowiednie `SameSite`, ścieżka i pozostałe atrybuty sesyjne; docelowo `Secure` w HTTPS.
-- Długowieczna sesja dla zaufanego urządzenia, z bezpiecznym odnawianiem/rotacją oraz jawnymi idle/absolute limits dobranymi pod UX "zaloguj raz, używaj miesiącami".
-- Możliwość unieważnienia bieżącej sesji i konstrukcja pozwalająca później unieważnić wszystkie sesje użytkownika.
-- Minimalny polski ekran logowania i poprawna obsługa stanu unauthenticated/expired session.
-- Testy obejmujące utworzenie, odnowienie/rotację, wylogowanie, expiry i odrzucenie nieprawidłowego/revoked tokenu.
-- **Nadal bez globalnego enforcementu na istniejącym browser API.** Ten cutover należy do 8A3.
+- [x] `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` oraz izolowana tabela `user_sessions` powiązana z `users`.
+- [x] Każdy poprawny login tworzy nowy stabilny token z 256 bitami CSPRNG entropy; baza przechowuje wyłącznie SHA-256. Token nie zmienia się podczas zwykłych żądań.
+- [x] Dokładnie 30 dni idle od `last_seen_at` oraz nieprzedłużalne 180 dni absolute od loginu. Aktywność jest zapisywana najwyżej raz na godzinę, warunkowym UPDATE odpornym na równoległe żądania; coalescing może pozostawić ostatnią aktywność niezapisaną przez mniej niż godzinę.
+- [x] Persistent host-only cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, expiry 180 dni. Kod domyślnie wymaga `Secure`; jawne `SESSION_COOKIE_SECURE=false` jest wyjątkiem wyłącznie dla zaufanego LAN HTTP. HTTPS musi używać `true`.
+- [x] Logout unieważnia bieżącą sesję w bazie i usuwa cookie. Indeks `user_id` umożliwia przyszłe unieważnienie wszystkich sesji użytkownika.
+- [x] Wspólna normalizacja loginu, ogólny błąd credentials, dummy Argon2 verification dla nieistniejącego użytkownika i warunkowy rehash po poprawnej weryfikacji.
+- [x] Polski, opcjonalny panel `Ustawienia → Konto`, przywracanie sesji po reload oraz obsługa expiry bez ukrywania aplikacji.
+- [x] Testy persistence, hash-only storage, expiry boundaries, revocation/logout, concurrent sessions, coarse activity writes, cookie/CORS oraz niezależności HA i anonimowego browser API. Addytywna migracja `20261006_07` zachowuje wszystkie istniejące dane i użytkowników.
+- [x] **Nadal bez globalnego enforcementu na istniejącym UI/browser API.** Ten cutover należy do 8A3.
+
+Stabilny token przez czas życia pojedynczej sesji jest świadomą, kompletną polityką 8A2. Transparentna okresowa rotacja jest odłożona do 8B1, gdzie należy zaprojektować protokół odporny na concurrent requests, kolejność odpowiedzi i utracone odpowiedzi z nowym cookie. Odnowienie idle nie przedłuża absolute expiry.
 
 ### Phase 8A3 — Protect browser UI and API
 
-**Status: PLANNED**
+**Status: NEXT**
 
 Zakres:
 
@@ -414,7 +417,7 @@ Zakres:
 - Spójna polityka CORS dla rzeczywistych originów oraz brak przypadkowego szerokiego credentialed CORS.
 - Ochrona logowania przed brute force / credential stuffing z limitem, który nie blokuje normalnego domowego użycia.
 - Security-sensitive response headers i sensowne cache policy dla danych prywatnych oraz ekranu logowania.
-- Regeneracja/rotacja identyfikatora sesji w odpowiednich punktach, brak session fixation oraz bezpieczne zachowanie logout/expiry.
+- Transparentna okresowa rotacja tokenu sesji odłożona z 8A2: protokół acknowledgement/recovery odporny na concurrent requests, spóźnione i utracone odpowiedzi, bez przechowywania używalnych tokenów w bazie. Każdy login już w 8A2 tworzy nowy token; idle/absolute expiry i revocation pozostają obowiązujące.
 - Testy negatywne dla nieautoryzowanego odczytu, mutacji, CSRF i prób logowania.
 
 ### Phase 8B2 — Reverse-proxy and Internet-readiness review

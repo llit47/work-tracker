@@ -55,7 +55,7 @@ runuser -u "${SERVICE_USER}" -- env \
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="sqlite:///${DATABASE_FILE}" \
         .venv/bin/alembic upgrade head
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="sqlite:///${DATABASE_FILE}" \
-        .venv/bin/alembic current | grep -q '20261006_06 (head)'
+        .venv/bin/alembic current | grep -q '20261006_07 (head)'
 )
 
 PORT="$("${APP_DIR}/backend/.venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"

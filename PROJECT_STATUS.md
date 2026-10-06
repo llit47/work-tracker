@@ -18,8 +18,8 @@
 - **Post-Phase-7 — Short-visit suppression: DONE**
 - **Phase 8 — Authentication and hardening: IN PROGRESS**
   - **Phase 8A1 — Identity foundation: DONE**
-  - **Phase 8A2 — Server-side sessions and login UX: NEXT**
-  - **Phase 8A3 — Protect browser UI and API: PLANNED**
+  - **Phase 8A2 — Server-side sessions and login UX: DONE**
+  - **Phase 8A3 — Protect browser UI and API: NEXT**
   - **Phase 8B1 — Browser security hardening: PLANNED**
   - **Phase 8B2 — Reverse-proxy and Internet-readiness review: PLANNED**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
@@ -28,6 +28,12 @@
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
 
 ## What currently works
+
+- 8A2: opcjonalne login/logout i przywracanie sesji w `Ustawienia → Konto`; zwykły UI/API nadal dostępny anonimowo. HA wymaga wyłącznie własnego `X-Webhook-Token`.
+- `user_sessions`: ID, user_id, unikalny SHA-256 tokenu, created_at/last_seen_at/expires_at/revoked_at UTC. Każdy login tworzy nowy token (256 bitów CSPRNG), przechowywany tylko w host-only HttpOnly cookie. Brak transparentnej rotacji to zamierzona polityka 8A2; rotacja/recovery należy do 8B1.
+- Sesje: dokładnie 30 dni idle od ostatniego zapisanego `last_seen_at`, maksymalnie 180 dni od początkowego loginu. `/auth/me` aktualizuje aktywność najwyżej raz na godzinę; niezapisana końcowa aktywność może być późniejsza o mniej niż godzinę. Widoczna karta sprawdza sesję co 5 minut i po odzyskaniu focus; zwykłe domain API i HA nie dotykają sesji.
+- Logout odwołuje sesję w bazie i usuwa cookie; expired/revoked/invalid token jest odrzucany. Rehash Argon2 po poprawnym loginie ma warunek zachowania poprzedniego hasha.
+- Persistent cookie: HttpOnly, SameSite=Lax, Path=/, lifetime 180 dni, Secure domyślnie true w kodzie. Instalator/updater wymagają jawnego `SESSION_COOKIE_SECURE`: false wyłącznie dla obecnego LAN HTTP, true obowiązkowo dla HTTPS. Migracja `20261006_07` dodaje wyłącznie pustą tabelę sesji.
 
 - Fundament tożsamości: izolowane `users` (ID, unikalny kanoniczny username, Argon2id hash, created_at UTC), bez ról, publicznej rejestracji i bez powiązań z danymi pracy.
 - Login ma 3–64 znaki ASCII (pierwszy alfanumeryczny, dalej litery/cyfry/`._-`); otaczające spacje ASCII są usuwane, litery zamieniane na małe. Wspólny helper i ograniczenia SQLite chronią jednoznaczność loginu.
@@ -90,6 +96,9 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 
 Aktualne endpointy:
 
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
 - `POST /api/webhook/home-assistant`
 - `POST /api/webhook/home-assistant/correction`
 - `GET /api/work-events?year=YYYY&month=MM`
@@ -162,11 +171,11 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 8A2 — Server-side sessions and login UX**
+**Phase 8A3 — Protect browser UI and API**
 
-Phase 7 i 8A1 są ukończone. Następny krok to 8A2: server-side sessions i login UX bez wymuszania logowania na istniejącym API. Dopiero 8A3 przełącza zwykły UI/browser API na wymaganie sesji. Następnie 8B1 i 8B2 domykają browser security oraz gotowość do zaufanego reverse proxy/HTTPS.
+8A1 i 8A2 są ukończone. Następny krok to osobne włączenie default-deny enforcementu zwykłego UI/browser API, z jawnymi minimalnymi wyjątkami. Obecne logowanie 8A2 nie chroni jeszcze danych pracy, korekt, płac, ustawień ani raportów.
 
-Docelowy auth człowieka pozostaje oddzielony od integracji maszynowych. Home Assistant zachowuje własny `X-Webhook-Token` dla ingestion i korekt i nie może wymagać sesji użytkownika. Sesje przeglądarkowe mają być server-side, odwoływalne i zaprojektowane pod długowieczne zaufane urządzenia, tak aby normalne korzystanie nie wymagało częstego ponownego logowania. Dokładna polityka lifetime/idle timeout zostanie ustalona w 8A2.
+Home Assistant pozostaje niezależny: ingestion i korekty wymagają `X-Webhook-Token`, nigdy browser cookie. 8B1 obejmie CSRF, brute-force protection i race-safe transparentną rotację/recovery; 8B2 przygotuje zaufany reverse proxy/HTTPS. Przez cały Phase 8 produkcja pozostaje LAN-only.
 
 Po Phase 8 planowane są kolejno Phase 9 (publiczny HTTPS dostęp do całej aplikacji przez Cloudflare Tunnel pod dedykowaną, jeszcze nieustaloną subdomeną) i Phase 10 (asymetryczna, dwukierunkowa integracja z dedykowanym Google Calendar). To wyłącznie kierunek rozwoju, nie stan wdrożenia. Prywatny origin ma pozostać w LAN bez przekierowania portów; przez cały Phase 8 produkcja pozostaje LAN-only, a publiczny dostęp całego UI może zostać uruchomiony dopiero po końcowym hardening review.
 
@@ -179,7 +188,7 @@ Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfej
 - brak nadgodzin, dodatków, podatków i przeliczeń walut,
 - brak live estymacji wynagrodzenia dla niezakończonej zmiany,
 - brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
-- brak logowania użytkownika,
+- brak obowiązkowego logowania i ochrony zwykłego UI/API (cutover dopiero w 8A3),
 - brak eksportu XLSX/Excel,
 - brak publicznego dostępu do aplikacji w obecnym wdrożeniu (plan: Phase 9 po Phase 8),
 - brak integracji Google Calendar w obecnym wdrożeniu (plan: Phase 10).

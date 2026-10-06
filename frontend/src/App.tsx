@@ -10,6 +10,7 @@ import {
   type ApplicationSettingsFormErrors,
 } from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
+import AuthPanel from './AuthPanel'
 import { createBackgroundRefresh, type BackgroundRefresh } from './backgroundRefresh'
 import {
   shouldRefreshMonthlyData,
@@ -1011,6 +1012,7 @@ function App() {
         <details className="settings-panel">
           <summary>Ustawienia</summary>
           <div className="settings-content">
+            <AuthPanel apiBase={apiBase} />
             <section className="settings-section application-settings" aria-labelledby="application-settings-heading">
               <h3 id="application-settings-heading">Aplikacja</h3>
               {applicationSettingsState === 'loading' && (

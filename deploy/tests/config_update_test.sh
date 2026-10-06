@@ -43,3 +43,25 @@ sync_missing_required_config "${MANIFEST_FILE}" "${ENV_FILE}"
 cmp -s "${ENV_FILE}" "${SNAPSHOT_FILE}"
 
 printf 'Configuration update tests passed.\n'
+
+# The real 8A2 manifest requires an explicit choice for LAN HTTP cookies.
+REAL_MANIFEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/config.manifest"
+printf '%s\n' 'APP_HOST=0.0.0.0' 'APP_PORT=8000' \
+    'WEBHOOK_TOKEN=public-test-only-webhook-token-32-characters' \
+    'DATABASE_URL=sqlite:////var/lib/work-tracker/work_tracker.db' \
+    'UNKNOWN_KEY=preserved' >"${ENV_FILE}"
+printf '\n' >"${INPUT_FILE}"
+exec 3<"${INPUT_FILE}"
+sync_missing_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
+validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
+grep -qx 'SESSION_COOKIE_SECURE=false' "${ENV_FILE}"
+grep -qx 'UNKNOWN_KEY=preserved' "${ENV_FILE}"
+validate_config_value boolean true
+validate_config_value boolean false
+! validate_config_value boolean ''
+! validate_config_value boolean maybe
+cp "${ENV_FILE}" "${SNAPSHOT_FILE}"
+exec 3</dev/null
+sync_missing_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
+cmp -s "${ENV_FILE}" "${SNAPSHOT_FILE}"
+printf 'Session cookie configuration tests passed.\n'

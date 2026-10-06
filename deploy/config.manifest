@@ -4,3 +4,4 @@ APP_PORT|required|plain|8000|Backend port|port
 WEBHOOK_TOKEN|required|secret||Webhook token (leave empty to generate one)|token
 DATABASE_URL|required|plain|sqlite:////var/lib/work-tracker/work_tracker.db|SQLite database URL|database_url
 CORS_ORIGINS|optional|plain||Browser CORS origins, comma-separated (empty for same-origin)|cors
+SESSION_COOKIE_SECURE|required|plain|false|Secure session cookie (true for HTTPS, false only for trusted LAN HTTP)|boolean

@@ -85,6 +85,8 @@ if [[ ! -e "${CONFIG_FILE}" ]]; then
     webhook_token="${REPLY}"
     prompt_config_value plain "" "Browser CORS origins, comma-separated (empty for same-origin)" cors
     cors_origins="${REPLY}"
+    prompt_config_value plain "false" "Secure session cookie (true for HTTPS, false only for trusted LAN HTTP)" boolean
+    session_cookie_secure="${REPLY}"
 
     config_temp="$(mktemp "${CONFIG_DIR}/work-tracker.env.XXXXXX")"
     {
@@ -94,6 +96,7 @@ if [[ ! -e "${CONFIG_FILE}" ]]; then
         printf 'WEBHOOK_TOKEN=%s\n' "${webhook_token}"
         printf 'DATABASE_URL=sqlite:////var/lib/work-tracker/work_tracker.db\n'
         printf 'CORS_ORIGINS=%s\n' "${cors_origins}"
+        printf 'SESSION_COOKIE_SECURE=%s\n' "${session_cookie_secure}"
     } >"${config_temp}"
     chown root:"${SERVICE_USER}" "${config_temp}"
     chmod 0640 "${config_temp}"
