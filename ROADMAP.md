@@ -319,6 +319,22 @@ produkcyjnych:
 - [ ] Ustawić kill switch na OFF i sprawdzić, że notification nie przychodzi, podczas gdy raw ingestion nadal działa.
 - [ ] Celowo wywołać notification/handler failure albo pozostawić powiadomienie bez reakcji i ręcznie potwierdzić, że raw ingestion pozostaje nienaruszone.
 
+### Post-Phase-7 follow-up — Short-visit suppression
+
+**Status: DONE**
+
+- [x] Wspólna klasyfikacja canonical pairing oznacza jednoznaczną, zakończoną parę nietkniętych eventów Home Assistant o dokładnym czasie UTC ≤ 5 minut jako `suppressed_short_visit`; powyżej progu sesja pozostaje `valid`.
+- [x] Manualna granica lub aktywna korekta timestampu dowolnej granicy wyłącza tę politykę. Żadna anomalia nie jest maskowana.
+- [x] Oba eventy i dokładne `duration_seconds` pozostają do audytu, bez zmian raw events, automatycznych `ignore_event`, migracji lub backfillu; polityka działa także dla historii.
+- [x] Krótka wizyta nie zwiększa czasu pracy, dni, liczby problemów ani płacy; dashboard po rzeczywistym wyjściu wraca do `outside`, a CSV/PDF pomijają ją jako pracę i jako problem.
+- [x] Domyślny widok ukrywa wizyty oraz dni zawierające tylko takie wizyty. Zachowana preferencja `Pokaż ignorowane i automatycznie ukryte wydarzenia` przywraca neutralny audyt z eventami, zakresem godzin i czasem w minutach oraz sekundach.
+- [x] Włączony audyt odświeża `work-summary` przy kolejnych udanych pollach również dla `outside → outside` z niezmienionym fingerprintem; nie wymusza dodatkowego odświeżenia płac, a zwykły tryb zachowuje dotychczasowe ograniczanie refetches.
+- [x] Odświeżanie audytu zachowuje wyrenderowany miesiąc do udanej odpowiedzi i nie zastępuje trwającego requestu przy kolejnych pollach. Zmiana miesiąca lub jawne retry anuluje nieaktualne żądanie; testy pokrywają wolne odpowiedzi, sukces, błąd i ochronę przed spóźnioną odpowiedzią.
+- [x] Ingestion i interaktywne powiadomienia nie zmieniają zachowania; otwarte wejście nadal może być trwającą zmianą.
+- [x] Testy obejmują progi 299/300/301 s, dokładne sekundy, korekty/manual events, anomalie, eventy poza kolejnością oraz wszystkich odbiorców klasyfikacji.
+
+Przyszła projekcja Google Calendar nadal obejmuje tylko `valid` finalized sessions, więc automatycznie pominięte wizyty nie będą projektowane.
+
 ## Phase 8 — Authentication and hardening
 
 **Status: NEXT**

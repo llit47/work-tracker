@@ -9,7 +9,7 @@ type VisibleEvent = {
 
 type VisibleDay = {
   date: string
-  items: readonly unknown[]
+  items: readonly { status: string }[]
   ignored_events: readonly unknown[]
 }
 
@@ -40,8 +40,16 @@ export function isEventVisible(event: VisibleEvent, showIgnoredEvents: boolean):
 
 export function getVisibleDays<T extends VisibleDay>(days: readonly T[], showIgnoredEvents: boolean): T[] {
   return days
+    .map((day) => ({
+      ...day,
+      items: day.items.filter((item) => isWorkItemVisible(item, showIgnoredEvents)),
+    }))
     .filter((day) => day.items.length > 0 || (showIgnoredEvents && day.ignored_events.length > 0))
     .sort((left, right) => right.date.localeCompare(left.date))
+}
+
+export function isWorkItemVisible(item: { status: string }, showIgnoredEvents: boolean): boolean {
+  return item.status !== 'suppressed_short_visit' || showIgnoredEvents
 }
 
 export function hasStandaloneUndoAction(event: UndoableEvent): boolean {

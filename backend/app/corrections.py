@@ -252,6 +252,7 @@ def build_effective_event_stream(
             event_timestamp_utc=effective_timestamp_utc,
             received_at=raw_event.received_at,
             source=raw_event.source,
+            is_timestamp_corrected=correction is not None,
         )
         effective_events.append(effective_event)
         metadata_by_id[effective_event.id] = _raw_metadata(

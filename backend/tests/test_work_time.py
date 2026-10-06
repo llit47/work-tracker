@@ -94,12 +94,13 @@ def test_stale_entry_does_not_contaminate_a_later_session():
     )
 
     assert [day.date.isoformat() for day in summary.days] == ["2026-09-02", "2026-09-06"]
-    assert [item.status for item in items] == [SessionStatus.MISSING_EXIT, SessionStatus.VALID]
+    assert [item.status for item in items] == [SessionStatus.MISSING_EXIT, SessionStatus.SUPPRESSED_SHORT_VISIT]
     assert [[raw.id for raw in item.events] for item in items] == [[1], [2, 3]]
     assert items[1].duration_seconds == 3
-    assert summary.total_duration_seconds == 3
+    assert summary.total_duration_seconds == 0
     assert summary.days[0].anomaly_count == 1
-    assert summary.days[1].total_duration_seconds == 3
+    assert summary.days[1].total_duration_seconds == 0
+    assert summary.days[1].anomaly_count == 0
 
 
 def test_stale_duplicate_entries_do_not_contaminate_a_later_session():

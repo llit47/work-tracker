@@ -199,13 +199,14 @@ def test_csv_neutralizes_formula_prefixed_location_aliases_only(alias):
 
 
 def test_session_cent_allocation_reconciles_two_half_cent_sessions():
+    # Explicit manual work stays valid even below the HA short-visit threshold.
     rate = PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN")
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-01T08:00:00+02:00"),
-            event(2, "exit", "2026-09-01T08:00:01+02:00"),
-            event(3, "entry", "2026-09-01T09:00:00+02:00"),
-            event(4, "exit", "2026-09-01T09:00:01+02:00"),
+            event(1, "entry", "2026-09-01T08:00:00+02:00", source="manual"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00", source="manual"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00", source="manual"),
+            event(4, "exit", "2026-09-01T09:00:01+02:00", source="manual"),
         ],
         rates=[rate],
     )
@@ -221,15 +222,16 @@ def test_session_cent_allocation_reconciles_two_half_cent_sessions():
 
 
 def test_session_cent_allocation_uses_largest_remainder_for_several_sessions():
+    # Explicit manual work stays valid even below the HA short-visit threshold.
     rate = PayRateRecord(1, date(1970, 1, 1), Decimal("12.00"), "PLN")
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-01T08:00:00+02:00"),
-            event(2, "exit", "2026-09-01T08:00:01+02:00"),
-            event(3, "entry", "2026-09-01T09:00:00+02:00"),
-            event(4, "exit", "2026-09-01T09:00:02+02:00"),
-            event(5, "entry", "2026-09-01T10:00:00+02:00"),
-            event(6, "exit", "2026-09-01T10:00:04+02:00"),
+            event(1, "entry", "2026-09-01T08:00:00+02:00", source="manual"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00", source="manual"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00", source="manual"),
+            event(4, "exit", "2026-09-01T09:00:02+02:00", source="manual"),
+            event(5, "entry", "2026-09-01T10:00:00+02:00", source="manual"),
+            event(6, "exit", "2026-09-01T10:00:04+02:00", source="manual"),
         ],
         rates=[rate],
     )
@@ -282,16 +284,17 @@ def test_report_keeps_multiple_sessions_and_uses_historical_rate_per_session():
 
 
 def test_fractional_session_allocation_preserves_each_historical_rate():
+    # Explicit manual work stays valid even below the HA short-visit threshold.
     rates = [
         PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN"),
         PayRateRecord(2, date(2026, 9, 15), Decimal("36.00"), "PLN"),
     ]
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-10T08:00:00+02:00"),
-            event(2, "exit", "2026-09-10T08:00:01+02:00"),
-            event(3, "entry", "2026-09-20T08:00:00+02:00"),
-            event(4, "exit", "2026-09-20T08:00:01+02:00"),
+            event(1, "entry", "2026-09-10T08:00:00+02:00", source="manual"),
+            event(2, "exit", "2026-09-10T08:00:01+02:00", source="manual"),
+            event(3, "entry", "2026-09-20T08:00:00+02:00", source="manual"),
+            event(4, "exit", "2026-09-20T08:00:01+02:00", source="manual"),
         ],
         rates=rates,
     )
@@ -457,13 +460,14 @@ def test_csv_anomaly_timestamps_keep_dates_offsets_and_deterministic_columns():
 
 
 def test_csv_session_amounts_reconcile_to_monthly_total():
+    # Explicit manual work stays valid even below the HA short-visit threshold.
     rate = PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN")
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-01T08:00:00+02:00"),
-            event(2, "exit", "2026-09-01T08:00:01+02:00"),
-            event(3, "entry", "2026-09-01T09:00:00+02:00"),
-            event(4, "exit", "2026-09-01T09:00:01+02:00"),
+            event(1, "entry", "2026-09-01T08:00:00+02:00", source="manual"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00", source="manual"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00", source="manual"),
+            event(4, "exit", "2026-09-01T09:00:01+02:00", source="manual"),
         ],
         rates=[rate],
     )
@@ -480,13 +484,14 @@ def test_csv_session_amounts_reconcile_to_monthly_total():
 
 
 def test_pdf_sessions_table_uses_reconciled_line_item_amounts():
+    # Explicit manual work stays valid even below the HA short-visit threshold.
     rate = PayRateRecord(1, date(1970, 1, 1), Decimal("18.00"), "PLN")
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-01T08:00:00+02:00"),
-            event(2, "exit", "2026-09-01T08:00:01+02:00"),
-            event(3, "entry", "2026-09-01T09:00:00+02:00"),
-            event(4, "exit", "2026-09-01T09:00:01+02:00"),
+            event(1, "entry", "2026-09-01T08:00:00+02:00", source="manual"),
+            event(2, "exit", "2026-09-01T08:00:01+02:00", source="manual"),
+            event(3, "entry", "2026-09-01T09:00:00+02:00", source="manual"),
+            event(4, "exit", "2026-09-01T09:00:01+02:00", source="manual"),
         ],
         rates=[rate],
     )
@@ -655,10 +660,11 @@ def test_pdf_duration_omits_seconds_without_rounding_or_changing_source_data():
 
 
 def test_pdf_subminute_duration_displays_zero_minutes_without_rounding_up():
+    # Explicit manual work stays valid even below the HA short-visit threshold.
     monthly_report = report(
         [
-            event(1, "entry", "2026-09-06T16:42:00+02:00"),
-            event(2, "exit", "2026-09-06T16:42:59+02:00"),
+            event(1, "entry", "2026-09-06T16:42:00+02:00", source="manual"),
+            event(2, "exit", "2026-09-06T16:42:59+02:00", source="manual"),
         ]
     )
 
@@ -761,7 +767,7 @@ def test_normal_month_pdf_fits_one_page_and_large_report_paginates():
     large_events = []
     for index in range(70):
         entry = start + timedelta(minutes=index * 10)
-        exit_timestamp = entry + timedelta(minutes=5)
+        exit_timestamp = entry + timedelta(minutes=6)
         large_events.extend(
             [
                 event(index * 2 + 1, "entry", entry.isoformat()),

@@ -11,7 +11,7 @@ from app.pay import (
 from app.work_time import RawWorkEvent, calculate_monthly_work_time
 
 
-def event(event_id: int, event_type: str, timestamp: str) -> RawWorkEvent:
+def event(event_id: int, event_type: str, timestamp: str, *, source: str = "home_assistant") -> RawWorkEvent:
     local_timestamp = datetime.fromisoformat(timestamp)
     return RawWorkEvent(
         id=event_id,
@@ -20,7 +20,7 @@ def event(event_id: int, event_type: str, timestamp: str) -> RawWorkEvent:
         event_timestamp=local_timestamp,
         event_timestamp_utc=local_timestamp.astimezone(timezone.utc),
         received_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
-        source="home_assistant",
+        source=source,
     )
 
 
@@ -204,15 +204,16 @@ def test_dst_duration_comes_from_utc_while_rate_uses_local_entry_date():
 
 
 def test_seconds_are_not_truncated_and_rounding_is_half_up_at_output_boundaries():
+    # Explicit manual work stays valid even below the HA short-visit threshold.
     seconds_summary = pay_for(
-        [event(1, "entry", "2026-09-06T08:00:00+02:00"), event(2, "exit", "2026-09-06T08:00:36+02:00")]
+        [event(1, "entry", "2026-09-06T08:00:00+02:00", source="manual"), event(2, "exit", "2026-09-06T08:00:36+02:00", source="manual")]
     )
     rounding_summary = pay_for(
         [
-            event(1, "entry", "2026-09-06T08:00:00+02:00"),
-            event(2, "exit", "2026-09-06T08:00:01+02:00"),
-            event(3, "entry", "2026-09-07T08:00:00+02:00"),
-            event(4, "exit", "2026-09-07T08:00:01+02:00"),
+            event(1, "entry", "2026-09-06T08:00:00+02:00", source="manual"),
+            event(2, "exit", "2026-09-06T08:00:01+02:00", source="manual"),
+            event(3, "entry", "2026-09-07T08:00:00+02:00", source="manual"),
+            event(4, "exit", "2026-09-07T08:00:01+02:00", source="manual"),
         ],
         rates=[rate(hourly_rate="18.00")],
     )

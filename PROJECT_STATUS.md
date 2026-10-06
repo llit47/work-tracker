@@ -15,6 +15,7 @@
   - **Phase 7A — Backend integration: DONE**
   - **Phase 7B — Correction input and live-domain behavior: DONE**
   - **Phase 7C — Home Assistant integration and safe rollout: DONE**
+- **Post-Phase-7 — Short-visit suppression: DONE**
 - **Phase 8 — Authentication and hardening: NEXT**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
@@ -39,7 +40,9 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Każda canonical location może mieć osobno zapisaną opcjonalną IANA timezone. Backend waliduje ją przez `ZoneInfo`, a minimalny formularz `Ustawienia → Aplikacja` pozwala ją ustawić lub wyczyścić bez zgadywania wartości.
 - Tytuł strony i karty przeglądarki korzysta z globalnej nazwy aplikacji; identyfikator `gabinet_zabki` pozostaje niezmienionym kluczem technicznym, a UI stosuje skonfigurowaną nazwę wyświetlaną z bezpiecznym fallbackiem do klucza.
 - Widok obsługuje motywy `Auto`, `Jasny` i `Ciemny`; wybór jest lokalny dla przeglądarki, a tryb automatyczny reaguje na zmianę systemowego schematu kolorów.
-- Ignorowane eventy są domyślnie ukryte; opcja `Pokaż ignorowane wydarzenia` przywraca ich audytowy widok wraz z możliwością cofnięcia korekty i jest zapamiętywana w `localStorage`.
+- Ignorowane eventy i automatycznie pominięte krótkie wizyty są domyślnie ukryte, również całe dni zawierające wyłącznie takie wpisy. Opcja `Pokaż ignorowane i automatycznie ukryte wydarzenia` przywraca audyt i zachowuje istniejącą preferencję w `localStorage`; ręczne ignorowanie nadal można cofnąć.
+- Canonical pairing oznacza zakończone, jednoznaczne pary nietkniętych eventów Home Assistant o dokładnym czasie UTC ≤ 5 minut jako `suppressed_short_visit`. Oba raw eventy i dokładny czas pozostają w API/audycie, bez zmian bazy, backfillu czy automatycznych korekt.
+- Krótkie wizyty nie są pracą ani anomalią: nie zwiększają czasu, dni pracy, liczby problemów ani płacy i nie trafiają do CSV/PDF. Po rzeczywistym wyjściu dashboard raportuje `outside`; przed nim działa zwykła otwarta zmiana. Manualna granica lub aktywny timestamp override wyłącza suppression.
 - Backend przechowuje historyczne stawki godzinowe i wylicza dzienne oraz miesięczne wynagrodzenie wyłącznie z poprawnych sesji.
 - Domyślna stawka to `50,00 PLN/h` od `1970-01-01`; kolejne stawki nie zmieniają historycznych rozliczeń.
 - Frontend pobiera autorytatywne `pay-summary` i pokazuje miesięczne oraz dzienne wynagrodzenie bez przeliczania kwot w React.
@@ -52,6 +55,8 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Frontend odświeża dashboard co 30 sekund, a czas bieżącej zmiany aktualizuje lokalnie bez ciągłego odpytywania API; użytkownik widzi ukończone minuty.
 - Frontend pokazuje `missing_exit` jako `Trwająca zmiana` wyłącznie dla pojedynczego wejścia odpowiadającego tej samej chwili UTC co autorytatywna bieżąca sesja dashboardu. Pozostałe otwarte lub niejednoznaczne wpisy pozostają problemami.
 - Pierwszy snapshot oraz istotne zmiany dashboardu odświeżają aktualnie wybrane podsumowanie czasu i płac, także przy zamknięciu sesji na granicy miesięcy; sam postęp timera nie wywołuje tych żądań.
+- Włączenie widoku audytowego i każdy udany poll dashboardu przy włączonym audycie odświeżają dodatkowo tylko `work-summary`, aby pokazać krótkie wizyty zakończone pomiędzy pollami mimo niezmienionego statusu i sum. `pay-summary` oraz zwykły widok zachowują ograniczenie do istotnych zmian dashboardu.
+- Odświeżanie audytu działa w tle po załadowaniu miesiąca: zachowuje summary i rozwinięte dni do udanej odpowiedzi, również przy błędzie. Polle podczas trwającego requestu nie zastępują ani nie abortują go; zmiana miesiąca lub jawne retry anuluje nieaktualny request i uruchamia zwykłe ładowanie.
 - Stan niejednoznaczny jest pokazywany jawnie dla duplikatów, sprzecznych eventów, wielu otwartych zmian oraz wejścia starszego niż 16 godzin.
 - Otwarta zmiana nie tworzy syntetycznego eventu, nie modyfikuje raw events i nie zwiększa wynagrodzenia przed poprawnym zakończeniem.
 - Wybrany miesiąc można pobrać jako CSV lub raport PDF bez ponownego wybierania daty.
@@ -124,7 +129,7 @@ Aktualne endpointy:
 - `work_event_corrections` zawiera `id`, `correction_type`, `created_at`, `updated_at`, opcjonalny `raw_event_id` oraz pola efektywnego eventu: `event_type`, `event_timestamp`, `event_timestamp_utc` i `location`.
 - Typy korekt to `timestamp_override`, `ignore_event` i `manual_event`.
 - Dla pojedynczego raw eventu może istnieć najwyżej jedna aktywna korekta: timestamp albo ignorowanie.
-- Effective event stream powstaje z raw events i korekt, a następnie trafia do niezmienionego algorytmu Phase 1.
+- Effective event stream powstaje z raw events i korekt, przekazuje pochodzenie i informację o aktywnym timestamp override, a następnie trafia do wspólnego canonical pairing z polityką krótkich wizyt.
 - Manualne i skorygowane timestampy zachowują offset, a ich chwile UTC są przechowywane osobno.
 - Undo usuwa rekord `work_event_corrections`; nigdy nie usuwa ani nie modyfikuje raw eventu.
 - Migracja Alembic `20260907_02` dodaje wyłącznie strukturę korekt i zachowuje dane `work_events`.
@@ -136,7 +141,7 @@ Aktualne endpointy:
 - Stawka sesji jest wybierana jako najnowsza z `effective_from <=` lokalna data efektywnego wejścia.
 - Płaca powstaje wyłącznie z sesji `valid`; czas anomalii nie jest zgadywany ani opłacany.
 - Kwoty są liczone z sekund za pomocą `Decimal`, zaokrąglane do dwóch miejsc przez `ROUND_HALF_UP` dopiero dla wyniku dnia i miesiąca oraz zwracane przez API jako stringi.
-- Prezentacja UI, PDF i CSV nie pokazuje sekund ani nie zaokrągla czasu do najbliższej minuty; baza, API domenowe, obliczenia czasu i wynagrodzenia zachowują pełną precyzję sekundową.
+- Zwykła prezentacja UI, PDF i CSV nie pokazuje sekund ani nie zaokrągla czasu do najbliższej minuty; jawny audyt krótkich wizyt pokazuje dokładny czas w minutach i sekundach. Baza, API domenowe, obliczenia czasu i wynagrodzenia zachowują pełną precyzję sekundową.
 - Backend nie sumuje sesji rozliczanych w różnych walutach; taki miesiąc zwraca jednoznaczny błąd.
 - Dashboard otrzymuje nazwę strefy IANA przeglądarki, aby poprawnie określić lokalne „dzisiaj” i bieżący miesiąc; wszystkie czasy trwania nadal wynikają z chwil UTC.
 - Status `working` wymaga dokładnie jednego terminalnego `missing_exit` nie starszego niż 16 godzin. Pojedyncze future `entry` przy jednoznacznym bieżącym stanie `outside` pozostaje oczekującym startem; future `exit`, konfliktujące przyszłe eventy, terminalny `duplicate_entry`, `ambiguous_timestamp`, wiele otwartych wejść lub wejście starsze niż 16 godzin daje status `ambiguous`.

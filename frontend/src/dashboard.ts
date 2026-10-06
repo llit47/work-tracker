@@ -65,6 +65,15 @@ export function shouldRefreshMonthlyData(
   return dashboardDataFingerprint(previousDashboard) !== dashboardDataFingerprint(dashboard)
 }
 
+export function shouldRefreshWorkSummary(
+  previousDashboard: DashboardSummary | null,
+  dashboard: DashboardSummary,
+  showIgnoredEvents: boolean,
+): boolean {
+  // Suppressed visits can appear without changing live status or work/pay totals.
+  return showIgnoredEvents || shouldRefreshMonthlyData(previousDashboard, dashboard)
+}
+
 export const dashboardStatusPresentation: Record<DashboardStatus, {
   label: string
   description: string

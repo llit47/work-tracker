@@ -67,6 +67,7 @@ Canonical pairing is per technical location and deterministic by `(event_timesta
 Canonical outcomes include:
 
 - `valid`
+- `suppressed_short_visit`
 - `missing_exit`
 - `duplicate_entry`
 - `orphan_exit`
@@ -74,6 +75,12 @@ Canonical outcomes include:
 - `ambiguous_timestamp`
 
 Anomalies must remain visible rather than being converted into invented work.
+
+An otherwise valid finalized pair of untouched Home Assistant events with an
+exact UTC duration of at most 5 minutes is `suppressed_short_visit`. This is
+neither work nor an anomaly; retain both events and duration for audit without
+persisting automatic corrections. A manual boundary or active timestamp
+override on either boundary excludes the pair from this policy.
 
 A session longer than 16 hours is anomalous. A session of exactly 16 hours is valid.
 
@@ -169,6 +176,7 @@ Normal user-facing application text should be natural Polish.
 Code identifiers, API names, database names, Git names, and technical identifiers should remain English unless an existing external contract requires otherwise.
 
 Normal user-facing time presentation in the UI, CSV, and PDF does not show seconds.
+The explicit short-visit audit view shows exact duration in minutes and seconds.
 
 Seconds remain preserved internally in timestamps, domain/API calculations, corrections, work duration, and pay calculations.
 
