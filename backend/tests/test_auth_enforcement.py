@@ -135,7 +135,7 @@ def test_cors_wraps_guard_and_preflights_are_session_independent(setup):
     assert allowed.headers['access-control-allow-origin'] == origin
 
 
-def test_domain_activity_reuses_coalesced_policy_without_touching_ha(setup):
+def test_domain_and_ha_requests_validate_without_renewing_idle(setup):
     client, factory, clock = setup
     assert login(client).status_code == 200
     initial = clock[0]
@@ -147,6 +147,63 @@ def test_domain_activity_reuses_coalesced_policy_without_touching_ha(setup):
     with factory() as session:
         assert session.scalar(select(UserSession.last_seen_at)) == initial
     assert client.get('/api/pay-rates').status_code == 200
+    assert client.put('/api/application-settings', json={
+        'application_title': 'Praca', 'locations': [],
+    }).status_code == 200
+    with factory() as session:
+        assert session.scalar(select(UserSession.last_seen_at)) == initial
+    assert client.get('/api/auth/me').status_code == 200
     with factory() as session:
         assert session.scalar(select(UserSession.last_seen_at)) == clock[0]
         assert session.scalar(select(UserSession.expires_at)) == initial + auth.ABSOLUTE_LIFETIME
+
+
+def test_repeated_domain_polling_cannot_postpone_exact_idle_expiry(setup):
+    client, factory, clock = setup
+    assert login(client).status_code == 200
+    initial = clock[0]
+    token = client.cookies.get(auth.COOKIE_NAME)
+    for elapsed in [timedelta(hours=1), timedelta(hours=2), timedelta(days=7),
+                    timedelta(days=29), auth.IDLE_TIMEOUT - timedelta(microseconds=1),
+                    auth.IDLE_TIMEOUT, auth.IDLE_TIMEOUT + timedelta(microseconds=1)]:
+        clock[0] = initial + elapsed
+        expected = 200 if elapsed < auth.IDLE_TIMEOUT else 401
+        # Dashboard, monthly refreshes, settings, exports and future API traffic
+        # all pass through the same validation-only guard.
+        for path in READ_PATHS:
+            assert client.get(path).status_code == expected, (elapsed, path)
+        with factory() as session:
+            stored = session.scalar(select(UserSession))
+            assert stored.last_seen_at == initial
+            assert stored.expires_at == initial + auth.ABSOLUTE_LIFETIME
+        assert client.cookies.get(auth.COOKIE_NAME) == token
+    # An expired heartbeat must not revive the session either.
+    assert client.get('/api/auth/me').status_code == 401
+    with factory() as session:
+        assert session.scalar(select(UserSession.last_seen_at)) == initial
+
+
+def test_deliberate_heartbeat_renews_idle_without_extending_absolute_expiry(setup):
+    client, factory, clock = setup
+    assert login(client).status_code == 200
+    initial = clock[0]
+    heartbeat_at = initial + timedelta(days=29)
+    clock[0] = heartbeat_at
+    assert client.get('/api/dashboard').status_code == 200
+    with factory() as session:
+        assert session.scalar(select(UserSession.last_seen_at)) == initial
+    assert client.get('/api/auth/me').status_code == 200
+    # The heartbeat keeps the session valid beyond its original idle deadline.
+    for instant in [initial + auth.IDLE_TIMEOUT,
+                    heartbeat_at + auth.IDLE_TIMEOUT - timedelta(microseconds=1)]:
+        clock[0] = instant
+        assert client.get('/api/dashboard').status_code == 200
+        with factory() as session:
+            stored = session.scalar(select(UserSession))
+            assert stored.last_seen_at == heartbeat_at
+            assert stored.expires_at == initial + auth.ABSOLUTE_LIFETIME
+    clock[0] = heartbeat_at + auth.IDLE_TIMEOUT
+    assert client.get('/api/dashboard').status_code == 401
+    assert client.get('/api/auth/me').status_code == 401
+    with factory() as session:
+        assert session.scalar(select(UserSession.last_seen_at)) == heartbeat_at

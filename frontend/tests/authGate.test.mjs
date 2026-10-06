@@ -147,6 +147,39 @@ for (const failingPath of ['/dashboard', '/application-settings', '/pay-summary'
   await unmount()
 }
 
+// Hidden domain polling is allowed, but only a visible auth heartbeat renews idle.
+let visibility = 'visible'
+Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility })
+await mount((url) => url.endsWith('/auth/me') ? response(user) : response(data(url)))
+const heartbeatRequests = () => requests.filter(({ url }) => url.endsWith('/auth/me')).length
+const initialHeartbeats = heartbeatRequests()
+const initialDomainRequests = domainRequests().length
+visibility = 'hidden'
+await act(async () => {
+  // Simulate throttled browser timers still firing in a hidden tab.
+  for (const { callback } of intervals.values()) callback()
+  window.dispatchEvent(new window.Event('focus'))
+  document.dispatchEvent(new window.Event('visibilitychange'))
+})
+await flush()
+assert.equal(heartbeatRequests(), initialHeartbeats, 'hidden timers/focus/visibility events skip auth heartbeat')
+assert.ok(domainRequests().length > initialDomainRequests, 'existing hidden dashboard polling remains supported')
+visibility = 'visible'
+await act(async () => document.dispatchEvent(new window.Event('visibilitychange')))
+await flush()
+assert.equal(heartbeatRequests(), initialHeartbeats + 1, 'visibility recovery deliberately renews idle')
+await act(async () => {
+  const heartbeatTimer = [...intervals.values()].find(({ delay }) => delay === 5 * 60_000)
+  assert.ok(heartbeatTimer)
+  heartbeatTimer.callback()
+})
+await flush()
+assert.equal(heartbeatRequests(), initialHeartbeats + 2, 'visible periodic heartbeat still runs')
+await act(async () => window.dispatchEvent(new window.Event('focus')))
+await flush()
+assert.equal(heartbeatRequests(), initialHeartbeats + 3, 'visible focus deliberately renews idle')
+await unmount()
+
 // Responses from a logged-out lifetime must not affect a subsequent login.
 for (const status of [200, 401]) {
   const late = deferred()

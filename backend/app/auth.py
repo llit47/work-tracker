@@ -64,7 +64,10 @@ SESSION_INDEPENDENT_ENDPOINTS = frozenset({
 })
 
 
-def current_session(request: Request, session: Session, now: datetime) -> dict:
+def current_session(
+    request: Request, session: Session, now: datetime, *, touch_activity: bool = False,
+) -> dict:
+    """Validate every request; only the deliberate auth heartbeat renews idle."""
     digest = token_hash(request.cookies.get(COOKIE_NAME))
     instant = now.astimezone(timezone.utc)
     found = session.execute(valid_session_statement(digest, instant)).first() if digest else None
@@ -73,7 +76,7 @@ def current_session(request: Request, session: Session, now: datetime) -> dict:
         expires_at = stored.expires_at
         last_seen_at = stored.last_seen_at
         session.rollback()
-        if last_seen_at <= instant - ACTIVITY_WRITE_INTERVAL:
+        if touch_activity and last_seen_at <= instant - ACTIVITY_WRITE_INTERVAL:
             # One conditional update coalesces concurrent touches, never revives
             # expired/revoked sessions, and never moves last_seen backwards.
             session.execute(update(UserSession).where(
@@ -112,7 +115,7 @@ class BrowserSessionMiddleware:
 
             def validate() -> None:
                 with request.app.state.session_factory() as session:
-                    current_session(request, session, self.now_provider())
+                    current_session(request, session, self.now_provider(), touch_activity=False)
 
             try:
                 await run_in_threadpool(validate)
@@ -191,7 +194,7 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
     @router.get("/me")
     def me(request: Request, response: Response, session: Session = Depends(get_session)):
         response.headers["Cache-Control"] = "no-store"
-        return current_session(request, session, now())
+        return current_session(request, session, now(), touch_activity=True)
 
     @router.post("/logout", status_code=204)
     def logout(request: Request, session: Session = Depends(get_session)):

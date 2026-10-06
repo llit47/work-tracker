@@ -384,7 +384,7 @@ Ukończony zakres:
 
 - [x] `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` oraz izolowana tabela `user_sessions` powiązana z `users`.
 - [x] Każdy poprawny login tworzy nowy stabilny token z 256 bitami CSPRNG entropy; baza przechowuje wyłącznie SHA-256. Token nie zmienia się podczas zwykłych żądań.
-- [x] Dokładnie 30 dni idle od `last_seen_at` oraz nieprzedłużalne 180 dni absolute od loginu. Aktywność jest zapisywana najwyżej raz na godzinę, warunkowym UPDATE odpornym na równoległe żądania; coalescing może pozostawić ostatnią aktywność niezapisaną przez mniej niż godzinę.
+- [x] Dokładnie 30 dni idle od `last_seen_at` oraz nieprzedłużalne 180 dni absolute od loginu. Aktywność odnawia wyłącznie deliberate `/api/auth/me` browser heartbeat, najwyżej raz na godzinę, warunkowym UPDATE odpornym na równoległe żądania; coalescing może pozostawić ostatnią aktywność niezapisaną przez mniej niż godzinę.
 - [x] Persistent host-only cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, expiry 180 dni. Kod domyślnie wymaga `Secure`; jawne `SESSION_COOKIE_SECURE=false` jest wyjątkiem wyłącznie dla zaufanego LAN HTTP. HTTPS musi używać `true`.
 - [x] Logout unieważnia bieżącą sesję w bazie i usuwa cookie. Indeks `user_id` umożliwia przyszłe unieważnienie wszystkich sesji użytkownika.
 - [x] Wspólna normalizacja loginu, ogólny błąd credentials, dummy Argon2 verification dla nieistniejącego użytkownika i warunkowy rehash po poprawnej weryfikacji.
@@ -409,7 +409,7 @@ Ukończony zakres:
 
 Dodatkowe acceptance criteria 8A3:
 
-- [x] Pure-ASGI guard całej przestrzeni HTTP `/api` i `/api/...`, przed routingiem/body; nowe route i mount automatycznie chronione. Wspólny walidator z `/auth/me` zachowuje kompletną politykę sesji 8A2.
+- [x] Pure-ASGI guard całej przestrzeni HTTP `/api` i `/api/...`, przed routingiem/body; nowe route i mount automatycznie chronione. Wspólny walidator z `/auth/me` zachowuje kompletną politykę sesji 8A2: ordinary protected API traffic tylko waliduje sesję bez odnawiania idle; wyłącznie deliberate `/api/auth/me` heartbeat/activity widocznej przeglądarki może wykonać coalesced update `last_seen_at`. Hidden background domain polling nie podtrzymuje sesji.
 - [x] Centralna lista dokładnych par: `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`, `GET /api/health`, `POST /api/webhook/home-assistant`, `POST /api/webhook/home-assistant/correction`. Brak prefix exceptions; HA nie wymaga cookie ani nie akceptuje go zamiast tokenu.
 - [x] Publiczny static frontend pozwala zawsze załadować login; schema/docs FastAPI przeniesione pod chronione `/api`. CORS preflight obsługiwany przez zewnętrzną warstwę bez sesji i bez rozszerzania origins.
 - [x] Frontend checking/login/authenticated gate nie pobiera domain data przed auth. Logout/globalny 401 usuwa lokalny protected state i zatrzymuje polling; polski komunikat expiry, login po utracie sesji i stale-response/JSON/blob guards.

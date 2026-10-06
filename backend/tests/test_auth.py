@@ -321,8 +321,7 @@ def test_ha_auth_independent(setup, browser_session):
         assert session.execute(text('SELECT event_timestamp FROM work_events')).scalar_one() == payload['timestamp']
 
 
-@pytest.mark.parametrize('path', ['/api/auth/me', '/api/dashboard'])
-def test_activity_touch_cannot_revive_session_revoked_concurrently(setup, path):
+def test_activity_touch_cannot_revive_session_revoked_concurrently(setup):
     client, factory, clock = setup
     login(client)
     clock[0] += timedelta(hours=1)
@@ -337,7 +336,7 @@ def test_activity_touch_cannot_revive_session_revoked_concurrently(setup, path):
                 session.commit()
     event.listen(engine, 'before_cursor_execute', revoke_before_touch)
     try:
-        assert client.get(path).status_code == 401
+        assert client.get('/api/auth/me').status_code == 401
     finally:
         event.remove(engine, 'before_cursor_execute', revoke_before_touch)
     with factory() as session:
