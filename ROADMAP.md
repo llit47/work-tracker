@@ -384,32 +384,42 @@ Ukończony zakres:
 
 - [x] `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` oraz izolowana tabela `user_sessions` powiązana z `users`.
 - [x] Każdy poprawny login tworzy nowy stabilny token z 256 bitami CSPRNG entropy; baza przechowuje wyłącznie SHA-256. Token nie zmienia się podczas zwykłych żądań.
-- [x] Dokładnie 30 dni idle od `last_seen_at` oraz nieprzedłużalne 180 dni absolute od loginu. Aktywność jest zapisywana najwyżej raz na godzinę, warunkowym UPDATE odpornym na równoległe żądania; coalescing może pozostawić ostatnią aktywność niezapisaną przez mniej niż godzinę.
+- [x] Dokładnie 30 dni idle od `last_seen_at` oraz nieprzedłużalne 180 dni absolute od loginu. Aktywność odnawia wyłącznie deliberate `/api/auth/me` browser heartbeat, najwyżej raz na godzinę, warunkowym UPDATE odpornym na równoległe żądania; coalescing może pozostawić ostatnią aktywność niezapisaną przez mniej niż godzinę.
 - [x] Persistent host-only cookie: `HttpOnly`, `SameSite=Lax`, `Path=/`, expiry 180 dni. Kod domyślnie wymaga `Secure`; jawne `SESSION_COOKIE_SECURE=false` jest wyjątkiem wyłącznie dla zaufanego LAN HTTP. HTTPS musi używać `true`.
 - [x] Logout unieważnia bieżącą sesję w bazie i usuwa cookie. Indeks `user_id` umożliwia przyszłe unieważnienie wszystkich sesji użytkownika.
 - [x] Wspólna normalizacja loginu, ogólny błąd credentials, dummy Argon2 verification dla nieistniejącego użytkownika i warunkowy rehash po poprawnej weryfikacji.
 - [x] Polski, opcjonalny panel `Ustawienia → Konto`, przywracanie sesji po reload oraz obsługa expiry bez ukrywania aplikacji.
 - [x] Testy persistence, hash-only storage, expiry boundaries, revocation/logout, concurrent sessions, coarse activity writes, cookie/CORS oraz niezależności HA i anonimowego browser API. Addytywna migracja `20261006_07` zachowuje wszystkie istniejące dane i użytkowników.
-- [x] **Nadal bez globalnego enforcementu na istniejącym UI/browser API.** Ten cutover należy do 8A3.
+- [x] **8A2 nie aktywował globalnego enforcementu na istniejącym UI/browser API.** Ten cutover został wykonany osobno w 8A3.
 
 Stabilny token przez czas życia pojedynczej sesji jest świadomą, kompletną polityką 8A2. Transparentna okresowa rotacja jest odłożona do 8B1, gdzie należy zaprojektować protokół odporny na concurrent requests, kolejność odpowiedzi i utracone odpowiedzi z nowym cookie. Odnowienie idle nie przedłuża absolute expiry.
 
 ### Phase 8A3 — Protect browser UI and API
 
-**Status: NEXT**
+**Status: DONE**
 
-Zakres:
+Ukończony zakres:
 
-- Włączenie wymagania poprawnej sesji dla zwykłego UI oraz API odczytującego lub zmieniającego dane pracy, korekty, stawki, raporty i ustawienia.
-- Ochrona ma działać default-deny dla browser-facing API, tak aby nowy endpoint nie stał się anonimowy tylko dlatego, że autor zapomniał dopisać osobną dependency.
-- Jawna mała lista wyjątków obejmuje tylko endpointy konieczne do ustanowienia sesji (np. login), wymagane machine endpoints oraz minimalny health check. Home Assistant `POST /api/webhook/home-assistant` i `POST /api/webhook/home-assistant/correction` zachowują własny token i nie akceptują sesji użytkownika jako zamiennika. Publiczna rejestracja nie jest takim wyjątkiem i nie powstaje.
-- Frontend po `401` przechodzi do login UX bez utraty domenowych danych; zalogowanie przywraca zwykłe działanie dashboardu, miesięcy, korekt, płac, ustawień i eksportów.
-- Regresja HA musi być przetestowana bez browser cookie: raw ingestion oraz HA correction nadal działają z prawidłowym `X-Webhook-Token`; brak/nieprawidłowy token nadal jest odrzucany.
-- Rollout ma zachować możliwość szybkiego wycofania zmian przez istniejący updater/rollback bez utraty danych.
+- [x] Włączenie wymagania poprawnej sesji dla zwykłego UI oraz API odczytującego lub zmieniającego dane pracy, korekty, stawki, raporty i ustawienia.
+- [x] Ochrona ma działać default-deny dla browser-facing API, tak aby nowy endpoint nie stał się anonimowy tylko dlatego, że autor zapomniał dopisać osobną dependency.
+- [x] Jawna mała lista wyjątków obejmuje tylko endpointy konieczne do ustanowienia sesji (np. login), wymagane machine endpoints oraz minimalny health check. Home Assistant `POST /api/webhook/home-assistant` i `POST /api/webhook/home-assistant/correction` zachowują własny token i nie akceptują sesji użytkownika jako zamiennika. Publiczna rejestracja nie jest takim wyjątkiem i nie powstaje.
+- [x] Frontend po `401` przechodzi do login UX bez utraty domenowych danych; zalogowanie przywraca zwykłe działanie dashboardu, miesięcy, korekt, płac, ustawień i eksportów.
+- [x] Regresja HA musi być przetestowana bez browser cookie: raw ingestion oraz HA correction nadal działają z prawidłowym `X-Webhook-Token`; brak/nieprawidłowy token nadal jest odrzucany.
+- [x] Rollout ma zachować możliwość szybkiego wycofania zmian przez istniejący updater/rollback bez utraty danych.
+
+Dodatkowe acceptance criteria 8A3:
+
+- [x] Pure-ASGI guard całej przestrzeni HTTP `/api` i `/api/...`, przed routingiem/body; nowe route i mount automatycznie chronione. Wspólny walidator z `/auth/me` zachowuje kompletną politykę sesji 8A2: ordinary protected API traffic tylko waliduje sesję bez odnawiania idle; wyłącznie deliberate `/api/auth/me` heartbeat/activity widocznej przeglądarki może wykonać coalesced update `last_seen_at`. Hidden background domain polling nie podtrzymuje sesji.
+- [x] Centralna lista dokładnych par: `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`, `GET /api/health`, `POST /api/webhook/home-assistant`, `POST /api/webhook/home-assistant/correction`. Brak prefix exceptions; HA nie wymaga cookie ani nie akceptuje go zamiast tokenu.
+- [x] Publiczny static frontend pozwala zawsze załadować login; schema/docs FastAPI przeniesione pod chronione `/api`. CORS preflight obsługiwany przez zewnętrzną warstwę bez sesji i bez rozszerzania origins.
+- [x] Frontend checking/login/authenticated gate nie pobiera domain data przed auth. Logout/globalny 401 usuwa lokalny protected state i zatrzymuje polling; polski komunikat expiry, login po utracie sesji i stale-response/JSON/blob guards.
+- [x] Regresje anonymous/authenticated reads i writes, session failure/expiry, nowe trasy/mounty, dokładne wyjątki, HA, static i CORS oraz wyrenderowany frontend gate. Bez migracji (head `20261006_07`), nowego configu, zmian danych ani public exposure.
+
+Full CSRF, login rate limiting i race-safe transparentna rotacja/recovery pozostają odłożone do 8B1 (następny target); proxy/HTTPS review należy do 8B2. 8A3 nie dodaje nowych domain mutation paths.
 
 ### Phase 8B1 — Browser security hardening
 
-**Status: PLANNED**
+**Status: NEXT**
 
 Zakres:
 
@@ -438,9 +448,9 @@ Zakres:
 - [ ] Hasła są przechowywane wyłącznie jako bezpieczne password hashes; sekrety i dane sesyjne nie trafiają do repozytorium ani logów.
 - [ ] Sesje są server-side, losowe i odwoływalne; przeglądarka nie przechowuje podstawowego auth tokenu w `localStorage`.
 - [ ] Zaufane urządzenie może pozostawać zalogowane przez długi okres zgodnie z udokumentowaną polityką sesji, bez częstego wymuszania ponownego loginu, przy zachowaniu możliwości revocation i bezpiecznej rotacji.
-- [ ] Cały zwykły UI i browser API wymagają poprawnej sesji; brak anonimowego odczytu lub mutacji danych pracy i płac.
-- [ ] Ochrona browser API jest default-deny, a machine-auth exceptions są jawne i minimalne.
-- [ ] Home Assistant ingestion i HA correction pozostają niezależne od sesji użytkownika, nadal wymagają własnego `X-Webhook-Token` i są pokryte testami regresyjnymi po aktywacji auth.
+- [x] Cały zwykły UI i browser API wymagają poprawnej sesji; brak anonimowego odczytu lub mutacji danych pracy i płac.
+- [x] Ochrona browser API jest default-deny, a machine-auth exceptions są jawne i minimalne.
+- [x] Home Assistant ingestion i HA correction pozostają niezależne od sesji użytkownika, nadal wymagają własnego `X-Webhook-Token` i są pokryte testami regresyjnymi po aktywacji auth.
 - [ ] CSRF, CORS, brute-force protection, session fixation/rotation, logout/expiry i security headers są zweryfikowane testami.
 - [ ] Cookies i obsługa sesji mają bezpieczną semantykę w docelowym HTTPS/reverse-proxy układzie; klient nie może sam spoofować zaufanych forwarded headers.
 - [ ] Migracje Phase 8 są addytywne/niedestrukcyjne dla istniejących raw events, korekt, stawek, ustawień i historii.

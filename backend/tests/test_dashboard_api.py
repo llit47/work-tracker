@@ -2,7 +2,8 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
+from conftest import authenticated_client
 import pytest
 
 from app.config import Settings
@@ -59,7 +60,7 @@ async def add_raw_event(client: AsyncClient, event_type: str, timestamp: str) ->
 @pytest.mark.anyio
 async def test_dashboard_api_returns_authoritative_live_and_finalized_totals(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         await add_raw_event(client, "entry", "2026-09-07T08:00:00+02:00")
         await add_raw_event(client, "exit", "2026-09-07T12:00:00+02:00")
         await add_raw_event(client, "entry", "2026-09-07T13:00:00+02:00")
@@ -94,7 +95,7 @@ async def test_dashboard_api_returns_authoritative_live_and_finalized_totals(tmp
 @pytest.mark.anyio
 async def test_dashboard_api_applies_timestamp_correction_ignore_and_undo(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         entry_id = await add_raw_event(client, "entry", "2026-09-07T08:00:00+02:00")
         correction = await client.put(
             f"/api/work-events/{entry_id}/timestamp-correction",
@@ -120,7 +121,7 @@ async def test_dashboard_api_applies_timestamp_correction_ignore_and_undo(tmp_pa
 @pytest.mark.anyio
 async def test_dashboard_api_rejects_unknown_timezone(tmp_path: Path):
     app = make_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with authenticated_client(app, base_url="http://testserver") as client:
         response = await client.get("/api/dashboard?timezone=Not%2FAZone")
 
     assert response.status_code == 422

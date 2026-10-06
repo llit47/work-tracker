@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 
 import {
   DEFAULT_APPLICATION_SETTINGS,
@@ -11,6 +11,7 @@ import {
 } from './applicationSettings'
 import DashboardPanel from './DashboardPanel'
 import AuthPanel from './AuthPanel'
+import { AUTH_REFRESH_INTERVAL_MS, INITIAL_AUTH_STATE, createAuthController, type AuthState } from './auth'
 import { createBackgroundRefresh, type BackgroundRefresh } from './backgroundRefresh'
 import {
   shouldRefreshMonthlyData,
@@ -390,7 +391,43 @@ function findSummaryLocation(summary: WorkSummary | null): string {
   return defaultLocation
 }
 
+type AuthController = ReturnType<typeof createAuthController>
+
 function App() {
+  const [state, setState] = useState(INITIAL_AUTH_STATE)
+  const [controller, setController] = useState<AuthController | null>(null)
+  useEffect(() => {
+    const auth = createAuthController(fetch, apiBase, setState)
+    setController(auth)
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void auth.refresh(true)
+    }
+    void auth.refresh()
+    const timer = window.setInterval(refresh, AUTH_REFRESH_INTERVAL_MS)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      auth.dispose()
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!state.user) document.title = 'Work Tracker'
+  }, [state.user])
+
+  if (state.loading) return <main className="auth-gate"><h1>Work Tracker</h1><p>Sprawdzanie sesji…</p></main>
+  if (!state.user || !controller) return (
+    <main className="auth-gate"><h1>Work Tracker</h1><AuthPanel state={state} controller={controller} /></main>
+  )
+  return <AuthenticatedApp controller={controller} authState={state} />
+}
+
+// Unmounting on auth loss discards all work/pay/settings state and stops polls.
+function AuthenticatedApp({ controller, authState }: { controller: AuthController; authState: AuthState }) {
+  const authenticatedFetch = useMemo(() => controller.protect(fetch), [controller])
   const [today, setToday] = useState(() => currentMonth())
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
   const previousDashboardSummary = useRef<DashboardSummary | null>(null)
@@ -472,7 +509,7 @@ function App() {
     setApplicationSettingsState('loading')
     const load = async () => {
       try {
-        const loaded = await loadApplicationSettings(fetch, apiBase, controller.signal)
+        const loaded = await loadApplicationSettings(authenticatedFetch, apiBase, controller.signal)
         if (!ignoreResponse) {
           setApplicationSettings(loaded)
           setApplicationSettingsForm(loaded)
@@ -566,7 +603,7 @@ function App() {
     let ignoreResponse = false
 
     const fetchSummary = async (signal: AbortSignal): Promise<WorkSummary> => {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiBase}/api/work-summary?year=${selectedMonth.year}&month=${selectedMonth.month}`,
         { signal },
       )
@@ -613,7 +650,7 @@ function App() {
     const load = async () => {
       try {
         const loadedSummary = await loadPaySummary(
-          fetch,
+          authenticatedFetch,
           apiBase,
           selectedMonth.year,
           selectedMonth.month,
@@ -648,7 +685,7 @@ function App() {
 
     const load = async () => {
       try {
-        const response = await fetch(`${apiBase}/api/pay-rates`, { signal: controller.signal })
+        const response = await authenticatedFetch(`${apiBase}/api/pay-rates`, { signal: controller.signal })
         if (!response.ok) throw new Error('Pay-rate request failed')
         const loadedRates: PayRate[] = await response.json()
         if (!ignoreResponse) {
@@ -705,7 +742,7 @@ function App() {
 
     setIsSavingApplicationSettings(true)
     try {
-      const saved = await saveApplicationSettings(fetch, apiBase, {
+      const saved = await saveApplicationSettings(authenticatedFetch, apiBase, {
         application_title: titleValidation.value,
         locations: applicationSettingsForm.locations,
       })
@@ -729,7 +766,7 @@ function App() {
 
     setIsSavingPayRate(true)
     try {
-      await createPayRate(fetch, apiBase, validation.payload, {
+      await createPayRate(authenticatedFetch, apiBase, validation.payload, {
         rates: () => setPayRatesRetryRequest((request) => request + 1),
         paySummary: refreshPaySummary,
       })
@@ -752,7 +789,7 @@ function App() {
     setIsSavingCorrection(true)
     setActionMessage(null)
     try {
-      const response = await fetch(`${apiBase}${url}`, request)
+      const response = await authenticatedFetch(`${apiBase}${url}`, request)
       if (!response.ok) throw new Error('Correction request failed')
       refreshSummaryAfterCorrection(successMessage)
     } catch {
@@ -767,7 +804,7 @@ function App() {
     setExportError('')
     try {
       const blob = await downloadMonthlyExport(
-        fetch,
+        authenticatedFetch,
         apiBase,
         format,
         selectedMonth.year,
@@ -937,6 +974,7 @@ function App() {
       <section className="card" aria-live="polite">
         <h1>{applicationSettings.application_title}</h1>
         <DashboardPanel
+          fetcher={authenticatedFetch}
           apiBase={apiBase}
           refreshRequest={dashboardRefreshRequest}
           onSummaryChange={setDashboardSummary}
@@ -1012,7 +1050,7 @@ function App() {
         <details className="settings-panel">
           <summary>Ustawienia</summary>
           <div className="settings-content">
-            <AuthPanel apiBase={apiBase} />
+            <AuthPanel state={authState} controller={controller} />
             <section className="settings-section application-settings" aria-labelledby="application-settings-heading">
               <h3 id="application-settings-heading">Aplikacja</h3>
               {applicationSettingsState === 'loading' && (

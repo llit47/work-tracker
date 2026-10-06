@@ -17,7 +17,7 @@ from .application_settings import (
     load_application_settings,
 )
 from .config import Settings, get_settings
-from .auth import build_auth_router
+from .auth import BrowserSessionMiddleware, build_auth_router
 from .database import build_session_factory, get_session
 from .dashboard import DashboardSummary, calculate_dashboard
 from .corrections import (
@@ -169,8 +169,15 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     dashboard_now_provider = now_provider or (lambda: datetime.now(timezone.utc))
-    app = FastAPI(title="Work Tracker API", version="0.1.0")
+    app = FastAPI(
+        title="Work Tracker API", version="0.1.0",
+        # Generated documentation inherits the same guarded API namespace.
+        openapi_url="/api/openapi.json", docs_url="/api/docs", redoc_url="/api/redoc",
+        swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect",
+    )
     app.state.session_factory = build_session_factory(settings.database_url)
+    app.add_middleware(BrowserSessionMiddleware, now_provider=dashboard_now_provider)
+    # Last added is outermost: CORS handles preflights and decorates guard 401s.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

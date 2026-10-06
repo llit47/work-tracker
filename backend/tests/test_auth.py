@@ -133,6 +133,7 @@ def test_invalid_cookie_fails_closed_without_changing_cookie(setup, cookie):
         client.cookies.set(auth.COOKIE_NAME, cookie)
     response = client.get('/api/auth/me')
     assert response.status_code == 401
+    assert client.get('/api/dashboard').status_code == 401
     assert 'set-cookie' not in response.headers
     assert response.headers['cache-control'] == 'no-store'
 
@@ -144,6 +145,7 @@ def test_revoked_session(setup):
         session.execute(update(UserSession).values(revoked_at=clock[0]))
         session.commit()
     assert client.get('/api/auth/me').status_code == 401
+    assert client.get('/api/dashboard').status_code == 401
 
 
 @pytest.mark.parametrize('offset,expected', [(-1, 200), (0, 401), (1, 401)])
@@ -159,6 +161,7 @@ def test_exact_expiration_boundaries(setup, offset, expected, deadline):
             session.commit()
     response = client.get('/api/auth/me')
     assert response.status_code == expected
+    assert client.get('/api/dashboard').status_code == expected
     with factory() as session:
         assert session.scalar(select(UserSession.expires_at)) == initial + timedelta(days=180)
         if expected == 401:
@@ -285,14 +288,22 @@ def test_concurrent_logins_create_independently_revocable_sessions(setup):
     assert touch(tokens[1]) == 401
 
 
-@pytest.mark.parametrize('logged_in', [False, True])
-def test_ha_auth_independent_and_browser_api_still_anonymous(setup, logged_in):
-    client, factory, _ = setup
-    if logged_in:
+@pytest.mark.parametrize('browser_session', ['none', 'valid', 'malformed', 'revoked'])
+def test_ha_auth_independent(setup, browser_session):
+    client, factory, clock = setup
+    if browser_session in ['valid', 'revoked']:
         login(client)
-    assert client.put('/api/application-settings', json={'application_title': 'Praca', 'locations': [
-        {'location': 'gabinet_zabki', 'display_name': 'Gabinet', 'timezone': 'Europe/Warsaw'},
-    ]}).status_code == 200
+    if browser_session == 'malformed':
+        client.cookies.set(auth.COOKIE_NAME, 'bad-cookie')
+    if browser_session == 'revoked':
+        with factory() as session:
+            session.execute(update(UserSession).values(revoked_at=clock[0]))
+            session.commit()
+    from app.models import LocationTimezone
+    with factory() as session:
+        session.add(LocationTimezone(location='gabinet_zabki', timezone='Europe/Warsaw',
+                                     updated_at=datetime.now(timezone.utc)))
+        session.commit()
     payload = {'event': 'entry', 'location': 'gabinet_zabki',
                'timestamp': '2026-10-06T08:00:17+02:00', 'source': 'home_assistant'}
     assert client.post('/api/webhook/home-assistant', json=payload).status_code == 401
@@ -308,23 +319,6 @@ def test_ha_auth_independent_and_browser_api_still_anonymous(setup, logged_in):
                        headers={'X-Webhook-Token': WEBHOOK_TOKEN}).status_code == 200
     with factory() as session:
         assert session.execute(text('SELECT event_timestamp FROM work_events')).scalar_one() == payload['timestamp']
-    # Anonymous access persists even with a malformed browser cookie.
-    client.cookies.clear()
-    client.cookies.set(auth.COOKIE_NAME, 'bad-cookie')
-    for path in ['/api/work-events?year=2026&month=10', '/api/work-summary?year=2026&month=10',
-                 '/api/pay-rates', '/api/application-settings', '/api/pay-summary?year=2026&month=10',
-                 '/api/dashboard', '/api/corrections', '/api/export/monthly.csv?year=2026&month=10',
-                 '/api/export/monthly.pdf?year=2026&month=10']:
-        assert client.get(path).status_code == 200
-    assert client.post('/api/pay-rates', json={'effective_from': '2026-11-01',
-                       'hourly_rate': '60.00', 'currency': 'PLN'}).status_code == 201
-    assert client.put(f"/api/work-events/{accepted.json()['id']}/timestamp-correction",
-                      json={'timestamp': '2026-10-06T08:06:00+02:00'}).status_code == 200
-    correction_id = client.get('/api/corrections').json()[0]['id']
-    assert client.delete(f'/api/corrections/{correction_id}').status_code == 204
-    assert client.put(f"/api/work-events/{accepted.json()['id']}/ignore").status_code == 200
-    assert client.post('/api/manual-events', json={'event': 'exit', 'location': 'gabinet_zabki',
-                       'timestamp': '2026-10-06T16:00:00+02:00'}).status_code == 201
 
 
 def test_activity_touch_cannot_revive_session_revoked_concurrently(setup):

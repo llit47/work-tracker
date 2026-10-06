@@ -255,3 +255,5 @@ code { color: var(--text-soft); overflow-wrap: anywhere; }
 .auth-form { display: grid; gap: 0.75rem; max-width: 28rem; }
 .auth-form label { display: grid; gap: 0.3rem; }
 .auth-form input { min-width: 0; width: 100%; }
+
+.auth-gate { max-width: 32rem; margin: 8vh auto; padding: 1.5rem; }

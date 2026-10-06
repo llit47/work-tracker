@@ -1,28 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { AUTH_REFRESH_INTERVAL_MS, INITIAL_AUTH_STATE, createAuthController } from './auth'
+import type { FormEvent } from 'react'
+import { createAuthController, type AuthState } from './auth'
 
-export default function AuthPanel({ apiBase }: { apiBase: string }) {
-  const [state, setState] = useState(INITIAL_AUTH_STATE)
-  const controller = useRef<ReturnType<typeof createAuthController> | null>(null)
-  useEffect(() => {
-    const auth = createAuthController(fetch, apiBase, setState)
-    controller.current = auth
-    const refresh = () => {
-      if (document.visibilityState === 'visible') void auth.refresh()
-    }
-    void auth.refresh()
-    const timer = window.setInterval(refresh, AUTH_REFRESH_INTERVAL_MS)
-    window.addEventListener('focus', refresh)
-    document.addEventListener('visibilitychange', refresh)
-    return () => {
-      auth.dispose()
-      controller.current = null
-      window.clearInterval(timer)
-      window.removeEventListener('focus', refresh)
-      document.removeEventListener('visibilitychange', refresh)
-    }
-  }, [apiBase])
+type AuthPanelProps = {
+  state: AuthState
+  controller: ReturnType<typeof createAuthController> | null
+}
 
+export default function AuthPanel({ state, controller }: AuthPanelProps) {
   const login = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = event.currentTarget
@@ -30,17 +14,16 @@ export default function AuthPanel({ apiBase }: { apiBase: string }) {
     const username = String(fields.get('username') ?? '')
     const password = String(fields.get('password') ?? '')
     form.reset()
-    void controller.current?.login(username, password)
+    void controller?.login(username, password)
   }
 
   return (
     <section className="settings-section" aria-labelledby="account-heading">
       <h3 id="account-heading">Konto</h3>
-      <p className="settings-note">Logowanie jest opcjonalne. Dostęp do danych nie wymaga jeszcze konta.</p>
       {state.loading ? <p>Sprawdzanie sesji…</p> : state.user ? (
         <div>
           <p>Zalogowano jako <strong>{state.user.username}</strong>.</p>
-          <button type="button" disabled={state.busy} onClick={() => { void controller.current?.logout() }}>
+          <button type="button" disabled={state.busy} onClick={() => { void controller?.logout() }}>
             {state.busy ? 'Wylogowywanie…' : 'Wyloguj'}
           </button>
         </div>
@@ -61,7 +44,7 @@ export default function AuthPanel({ apiBase }: { apiBase: string }) {
       {state.error && (
         <div className="settings-error" role="alert">
           <span>{state.error}</span>
-          <button type="button" disabled={state.busy} onClick={() => { void controller.current?.refresh() }}>Sprawdź sesję</button>
+          <button type="button" disabled={state.busy} onClick={() => { void controller?.refresh() }}>Sprawdź sesję</button>
         </div>
       )}
     </section>

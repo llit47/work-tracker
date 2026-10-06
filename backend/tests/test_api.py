@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from conftest import authenticated_client
 from pydantic import ValidationError
 import pytest
 
@@ -37,7 +37,7 @@ def payload(event: str = "entry", timestamp: str = "2026-09-06T08:14:32+02:00") 
 
 @pytest.mark.anyio
 async def test_accepts_entry_and_persists_original_timestamp(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         response = await client.post("/api/webhook/home-assistant", json=payload(), headers={"X-Webhook-Token": TOKEN})
         assert response.status_code == 201
         events = (await client.get("/api/work-events?year=2026&month=9")).json()
@@ -57,9 +57,7 @@ async def test_accepts_entry_and_persists_original_timestamp(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_ingestion_response_uses_current_location_alias(tmp_path: Path):
-    async with AsyncClient(
-        transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver"
-    ) as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         settings_response = await client.put(
             "/api/application-settings",
             json={
@@ -88,7 +86,7 @@ async def test_ingestion_response_uses_current_location_alias(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_accepts_exit(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         response = await client.post("/api/webhook/home-assistant", json=payload("exit"), headers={"X-Webhook-Token": TOKEN})
         assert response.status_code == 201
         assert (await client.get("/api/work-events?year=2026&month=9")).json()[0]["event_type"] == "exit"
@@ -96,21 +94,21 @@ async def test_accepts_exit(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_rejects_invalid_event(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         response = await client.post("/api/webhook/home-assistant", json=payload("pause"), headers={"X-Webhook-Token": TOKEN})
     assert response.status_code == 422
 
 
 @pytest.mark.anyio
 async def test_rejects_missing_or_wrong_token(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         assert (await client.post("/api/webhook/home-assistant", json=payload())).status_code == 401
         assert (await client.post("/api/webhook/home-assistant", json=payload(), headers={"X-Webhook-Token": "wrong"})).status_code == 401
 
 
 @pytest.mark.anyio
 async def test_rejects_timestamp_without_timezone(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         response = await client.post(
             "/api/webhook/home-assistant",
             json=payload(timestamp="2026-09-06T08:14:32"),
@@ -123,7 +121,7 @@ async def test_rejects_timestamp_without_timezone(tmp_path: Path):
 async def test_rejects_unexpected_source(tmp_path: Path):
     invalid_payload = payload()
     invalid_payload["source"] = "other_system"
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         response = await client.post(
             "/api/webhook/home-assistant", json=invalid_payload, headers={"X-Webhook-Token": TOKEN}
         )
@@ -132,7 +130,7 @@ async def test_rejects_unexpected_source(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_lists_only_requested_month_in_chronological_order(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         headers = {"X-Webhook-Token": TOKEN}
         await client.post("/api/webhook/home-assistant", json=payload("exit", "2026-10-01T08:00:00+02:00"), headers=headers)
         await client.post("/api/webhook/home-assistant", json=payload("exit", "2026-09-06T12:00:00+02:00"), headers=headers)
@@ -144,7 +142,7 @@ async def test_lists_only_requested_month_in_chronological_order(tmp_path: Path)
 
 @pytest.mark.anyio
 async def test_sorts_correctly_across_daylight_saving_fall_back(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         headers = {"X-Webhook-Token": TOKEN}
         # 02:50 CEST is 00:50 UTC; 02:10 CET is later, at 01:10 UTC.
         await client.post("/api/webhook/home-assistant", json=payload("entry", "2026-10-25T02:50:00+02:00"), headers=headers)

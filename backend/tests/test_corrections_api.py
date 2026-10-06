@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
+from conftest import authenticated_client
 import pytest
 
 from app.config import Settings
@@ -50,7 +51,7 @@ def all_items(month_summary: dict) -> list[dict]:
 
 @pytest.mark.anyio
 async def test_timestamp_correction_changes_duration_and_preserves_raw_event(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         await add_raw_event(client, "entry", "2026-09-07T08:00:00+02:00")
         exit_id = await add_raw_event(client, "exit", "2026-09-07T23:59:00+02:00")
         raw_before = (await client.get("/api/work-events?year=2026&month=9")).json()
@@ -96,7 +97,7 @@ async def test_timestamp_correction_changes_duration_and_preserves_raw_event(tmp
 
 @pytest.mark.anyio
 async def test_ignoring_duplicate_entry_resolves_anomaly_and_undo_restores_it(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         await add_raw_event(client, "entry", "2026-09-07T08:00:00+02:00")
         duplicate_id = await add_raw_event(client, "entry", "2026-09-07T08:01:00+02:00")
         await add_raw_event(client, "exit", "2026-09-07T16:00:00+02:00")
@@ -122,7 +123,7 @@ async def test_ignoring_duplicate_entry_resolves_anomaly_and_undo_restores_it(tm
 
 @pytest.mark.anyio
 async def test_manual_exit_resolves_missing_exit_and_removal_restores_anomaly(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         await add_raw_event(client, "entry", "2026-09-07T08:00:00+02:00")
         assert all_items(await summary(client))[0]["status"] == "missing_exit"
 
@@ -150,7 +151,7 @@ async def test_manual_exit_resolves_missing_exit_and_removal_restores_anomaly(tm
 
 @pytest.mark.anyio
 async def test_manual_entry_resolves_orphan_exit(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         await add_raw_event(client, "exit", "2026-09-07T16:00:00+02:00")
         assert all_items(await summary(client))[0]["status"] == "orphan_exit"
 
@@ -170,7 +171,7 @@ async def test_manual_entry_resolves_orphan_exit(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_rejects_invalid_or_conflicting_corrections(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         raw_id = await add_raw_event(client, "entry", "2026-09-07T08:00:00+02:00")
 
         assert (
@@ -226,7 +227,7 @@ async def test_rejects_invalid_or_conflicting_corrections(tmp_path: Path):
 
 @pytest.mark.anyio
 async def test_timestamp_correction_moves_session_between_months_by_effective_entry(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         entry_id = await add_raw_event(client, "entry", "2026-09-30T23:00:00+02:00")
         await add_raw_event(client, "exit", "2026-10-01T07:00:00+02:00")
         assert (await summary(client, month=9))["total_duration_seconds"] == 8 * 3600
@@ -249,7 +250,7 @@ async def test_timestamp_correction_moves_session_between_months_by_effective_en
 
 @pytest.mark.anyio
 async def test_duration_threshold_still_applies_after_timestamp_correction(tmp_path: Path):
-    async with AsyncClient(transport=ASGITransport(app=make_app(tmp_path)), base_url="http://testserver") as client:
+    async with authenticated_client(make_app(tmp_path), base_url="http://testserver") as client:
         await add_raw_event(client, "entry", "2026-09-07T00:00:00+02:00")
         exit_id = await add_raw_event(client, "exit", "2026-09-07T20:00:00+02:00")
 
