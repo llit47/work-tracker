@@ -17,6 +17,11 @@
   - **Phase 7C — Home Assistant integration and safe rollout: DONE**
 - **Post-Phase-7 — Short-visit suppression: DONE**
 - **Phase 8 — Authentication and hardening: NEXT**
+  - **Phase 8A1 — Identity foundation: NEXT**
+  - **Phase 8A2 — Server-side sessions and login UX: PLANNED**
+  - **Phase 8A3 — Protect browser UI and API: PLANNED**
+  - **Phase 8B1 — Browser security hardening: PLANNED**
+  - **Phase 8B2 — Reverse-proxy and Internet-readiness review: PLANNED**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
@@ -154,9 +159,11 @@ Aktualne endpointy:
 
 **Phase 8 — Authentication and hardening**
 
-Phase 7 wraz z produkcyjną integracją Home Assistanta jest ukończony. Następny krok to zabezpieczenie logowania, sesji i endpointów aplikacji przed planowanym publicznym udostępnieniem.
+Phase 7 wraz z produkcyjną integracją Home Assistanta jest ukończony. Phase 8 ma teraz jawnie zaplanowany etapowy rollout: 8A1 tworzy wyłącznie fundament tożsamości użytkowników, 8A2 dodaje server-side sessions i login UX bez wymuszania logowania na istniejącym API, a dopiero 8A3 przełącza zwykły UI/browser API na wymaganie sesji. Następnie 8B1 i 8B2 domykają browser security oraz gotowość do zaufanego reverse proxy/HTTPS.
 
-Po Phase 8 planowane są kolejno Phase 9 (publiczny HTTPS dostęp do całej aplikacji przez Cloudflare Tunnel pod dedykowaną, jeszcze nieustaloną subdomeną) i Phase 10 (asymetryczna, dwukierunkowa integracja z dedykowanym Google Calendar). To wyłącznie kierunek rozwoju, nie stan wdrożenia. Prywatny origin ma pozostać w LAN bez przekierowania portów; przed publicznym dostępem całego UI wymagane jest ukończenie Phase 8.
+Docelowy auth człowieka pozostaje oddzielony od integracji maszynowych. Home Assistant zachowuje własny `X-Webhook-Token` dla ingestion i korekt i nie może wymagać sesji użytkownika. Sesje przeglądarkowe mają być server-side, odwoływalne i zaprojektowane pod długowieczne zaufane urządzenia, tak aby normalne korzystanie nie wymagało częstego ponownego logowania. Dokładna polityka lifetime/idle timeout zostanie ustalona w 8A2.
+
+Po Phase 8 planowane są kolejno Phase 9 (publiczny HTTPS dostęp do całej aplikacji przez Cloudflare Tunnel pod dedykowaną, jeszcze nieustaloną subdomeną) i Phase 10 (asymetryczna, dwukierunkowa integracja z dedykowanym Google Calendar). To wyłącznie kierunek rozwoju, nie stan wdrożenia. Prywatny origin ma pozostać w LAN bez przekierowania portów; przez cały Phase 8 produkcja pozostaje LAN-only, a publiczny dostęp całego UI może zostać uruchomiony dopiero po końcowym hardening review.
 
 Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfejsem korekt ich godzin, nie źródłem raw events ani niezależną bazą czasu pracy. Nadal obowiązuje `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`. Zmiana godzin managed Calendar event ma docelowo korzystać z audytowalnej warstwy korekt; szczegóły identyfikacji sesji i ręcznych granic pozostają do zaprojektowania w Phase 10.
 
