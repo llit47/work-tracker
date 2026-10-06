@@ -153,6 +153,26 @@ A time correction submitted through Home Assistant must use the existing auditab
 
 Technical location identifiers remain canonical throughout the integration. User-facing location names must come from backend application settings, with fallback to the technical identifier; Home Assistant automation must not hard-code display aliases.
 
+## Authentication and integration boundaries
+
+Interactive user authentication and machine integrations are separate security domains.
+
+Browser sessions must never replace or weaken Home Assistant authentication. The Home Assistant ingestion and correction endpoints keep their dedicated `X-Webhook-Token` contract and must remain usable without a browser session or user cookie.
+
+When browser authentication enforcement is activated, protect ordinary UI/API access with a default-deny design and keep the unauthenticated exception surface explicit and minimal. Exceptions may include only what is necessary to establish a session, required machine integrations, and a minimal health check; public registration is not an exception. Adding a new browser-facing endpoint must not make it anonymously accessible by omission.
+
+Use server-side, revocable user sessions. The browser should hold only an unpredictable session identifier in an `HttpOnly` cookie; do not use a long-lived bearer JWT or authentication token in `localStorage` as the primary session mechanism.
+
+The intended UX is long-lived trusted-device sessions rather than frequent logins. Exact lifetime/idle limits belong to the Phase 8 implementation and documentation, but renewal/rotation and server-side revocation must remain possible.
+
+Public HTTPS deployment requires secure cookie semantics, including `Secure`. LAN-only development or staged rollout before public exposure must use an explicit controlled configuration rather than weakening the intended Internet-facing defaults.
+
+Authentication must not change the work-time domain pipeline or raw-event immutability rules. Authorization failures in the browser layer must not create, remove, rewrite, or infer work events.
+
+Any change to authentication middleware, routing, proxy handling, or endpoint protection must include regression coverage proving that Home Assistant can still ingest a raw event and submit its token-authenticated timestamp correction without a user session.
+
+Public routing remains a separate roadmap phase. Completing part of authentication/hardening does not authorize enabling Cloudflare Tunnel, public DNS, port forwarding, or direct public origin exposure.
+
 ## Pay invariants
 
 Pay is backend-authoritative.
