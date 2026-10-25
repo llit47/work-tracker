@@ -419,16 +419,120 @@ Full CSRF, login rate limiting i race-safe transparentna rotacja/recovery pozost
 
 ### Phase 8B1 — Browser security hardening
 
-**Status: NEXT**
+**Status: PLANNED**
+
+Pełny projekt po security review: [Phase 8B1 — security architecture](docs/architecture/security-8b1.md).
+To specyfikacja przyszłej implementacji, nie deklaracja działających zabezpieczeń.
+Obecny `GET /api/auth/me` nadal może odnawiać activity; read-only GET i osobny
+chroniony POST heartbeat są zmianą zaplanowaną w 8B1-A.
+
+Kolejność wdrożenia: **8A3 → 8B1-A → 8B1-B → 8B1-C → 8B2**.
+Wszystkie podetapy zachowują 30 dni idle, 180 dni absolute lifetime,
+server-side revocation, centralny default-deny i niezależne uwierzytelnianie
+Home Assistanta przez `X-Webhook-Token`. Produkcja pozostaje LAN-only.
+
+#### Phase 8B1-A — HTTP Security & CSRF
+
+**Status: PLANNED**
+
+Dependencies: ukończone 8A1–8A3. Fundament dla 8B1-B i 8B1-C.
 
 Zakres:
 
-- Ochrona CSRF dla cookie-authenticated operacji zmieniających stan; nie polegać wyłącznie na CORS.
-- Spójna polityka CORS dla rzeczywistych originów oraz brak przypadkowego szerokiego credentialed CORS.
-- Ochrona logowania przed brute force / credential stuffing z limitem, który nie blokuje normalnego domowego użycia.
-- Security-sensitive response headers i sensowne cache policy dla danych prywatnych oraz ekranu logowania.
-- Transparentna okresowa rotacja tokenu sesji odłożona z 8A2: protokół acknowledgement/recovery odporny na concurrent requests, spóźnione i utracone odpowiedzi, bez przechowywania używalnych tokenów w bazie. Każdy login już w 8A2 tworzy nowy token; idle/absolute expiry i revocation pozostają obowiązujące.
-- Testy negatywne dla nieautoryzowanego odczytu, mutacji, CSRF i prób logowania.
+- Session-bound HMAC CSRF ze stabilną tożsamością sesji, niezależny od rotacji
+  cookie; bootstrap po loginie, reload i ograniczony bootstrap przy recovery.
+- `GET /api/auth/me` wyłącznie odczytowy: bez last_seen_at, rotacji i Set-Cookie.
+  Nowy `POST /api/auth/heartbeat` wymaga sesji, Origin i CSRF; świadoma aktywność
+  wyłącznie widocznej karty, zapis activity najwyżej raz na godzinę.
+- Centralna ochrona browser mutacji, login CSRF i logout CSRF. Heartbeat
+  nie staje się anonimowym wyjątkiem; recovery nie otwiera ordinary API.
+- Jawne `BROWSER_ALLOWED_ORIGINS`, restrictive CORS, dodatkowe Fetch Metadata
+  z obsługą ich braku w LAN HTTP. Bez wildcard/null i zaufania do dowolnych
+  forwarded headers. Rezerwacja DHCP/lokalny DNS oraz procedura zmiany hosta/IP.
+- Limit body loginu 16 KiB (16384 bajty) przed parsingiem/Argon2id, HTTP 413
+  po przekroczeniu; osobna walidacja 15–1024 znaków hasła po JSON unescape.
+- CSP, security headers i no-store dla auth/prywatnych danych/raportów;
+  konfiguracja, klucze, backup i fail-closed według projektu.
+
+Acceptance criteria:
+
+- [ ] Macierz A01–A12 i X01–X03 z dokumentu architektonicznego jest pokryta;
+  cross-site GET /me nie zmienia żadnego stanu i nigdy nie ustawia cookie.
+- [ ] Login/logout i wszystkie obecne oraz przyszłe browser mutacje dziedziczą
+  ochronę. Poprawny LAN HTTP działa bez Sec-Fetch-*, a brak Origin/CSRF nie daje bypass.
+- [ ] Testy obejmują granice 16384 bajtów, 1024 znaki Unicode zapisane przez
+  sekwencje \uXXXX, w tym pary zastępcze, oraz konfigurację origins po zmianie IP.
+- [ ] Production build działa z CSP bez szerokich wyjątków; bootstrap,
+  no-store, klucze i procedury wdrożenia/rollbacku są zweryfikowane.
+- [ ] HA ingestion i tokenowa timestamp correction działają bez browser sesji,
+  Origin i CSRF, bez zmiany raw events.
+
+#### Phase 8B1-B — Login Rate Limiting
+
+**Status: PLANNED**
+
+Dependencies: 8B1-A — kontrolowany ingress, odpowiedzi i konfiguracja bezpieczeństwa.
+
+Zakres:
+
+- 8 błędnych weryfikacji hasła na konto i 30 prób na IP, każde w ruchomym oknie
+  15 minut; limit IP niezależny od wyniku. Progresja po błędzie:
+  1–3 → 0 s, 4 → 30 s, 5 → 60 s, 6 → 120 s, 7 → 240 s, 8 → 300 s.
+- Przy 8 błędach blokada przed Argon2id do zmniejszenia liczby błędów i końca
+  kary; brak permanentnego lockoutu. Ruchome okno może wymagać dłuższego
+  oczekiwania niż maksymalna kara progresywna 300 s.
+- SQLite: atomowe admission IP → reservation konta → Argon2id poza transakcją
+  → finalizacja, jedna aktywna rezerwacja na konto, trwałe deadlines i Retry-After.
+  Blokady bez weryfikacji nie zwiększają account failures ani nie przedłużają kary.
+- Wspólna polityka istniejących/nieistniejących nazw, dummy verification,
+  ogólne błędy i brak resetu bieżących failures/IP przy udanym loginie.
+- Deterministyczna normalizacja: IPv4 /32, IPv6 /64, IPv4-mapped IPv6 → IPv4;
+  źródło wyłącznie zweryfikowany transport, bez niezatwierdzonych proxy headers.
+- Brak osobnego twardego limitu dobowego; wymagany monitoring ostatnich 24 godzin.
+  Jawne ryzyko denial-of-service przez celowe wyczerpywanie limitu logowania:
+  nowe loginy mogą być czasowo utrudnione, istniejące sesje pozostają aktywne.
+
+Acceptance criteria:
+
+- [ ] B01–B08 i X01–X03: dokładne progi/okna/kary, Retry-After, restart,
+  równoległe procesy i lease nie pozwalają ominąć admission przed Argon2id.
+- [ ] Udane, błędne i account-blocked próby prawidłowo zużywają IP budget;
+  nieistniejące konta nie mają łatwiejszej ścieżki ani odmiennych komunikatów.
+- [ ] Zmiana adresu IPv6 w tym samym /64 nie resetuje limitu; spoofed headers
+  nie zmieniają klucza. Udokumentowane skutki współdzielonego /64/NAT.
+- [ ] Test celowego wyczerpywania konta potwierdza DoS compromise i dalsze
+  działanie istniejących sesji/HA; monitoring 24 h nie wprowadza limitu dobowego.
+
+#### Phase 8B1-C — Session Rotation & Recovery
+
+**Status: PLANNED**
+
+Dependencies: 8B1-A i 8B1-B — stabilny CSRF, chroniony heartbeat i throttled relogin.
+
+Zakres:
+
+- Rotacja co 7 dni wyłącznie podczas świadomego activity heartbeat, atomic CAS,
+  bez przedłużania idle/absolute poza zatwierdzone reguły i bez jawnych tokenów w SQLite.
+- Deterministyczny HMAC: nowa rotacja używa g+1, recovery **persisted_generation**,
+  bez inkrementacji. Wersjonowane kodowanie, rozdzielone klucze/contexty i test vectors.
+- Previous token ważny wyłącznie do read-only bootstrapu i chronionego recovery
+  przez 10 minut, nigdy do zwykłych operacji; explicit `session_rotation_required`
+  przed efektem. Recovery nie podtrzymuje idle i nie wydłuża okna.
+- Wiele kart, przegrany CAS, utracona odpowiedź, reload i spóźnione Set-Cookie;
+  CSRF pozostaje spójny. Brak automatycznego powtarzania mutacji po nieznanym wyniku.
+- Brak gwarancji recovery po 10 minutach lub po nadpisaniu cookie starszym tokenem;
+  bezpieczny relogin zamiast poszerzania akceptacji previous.
+
+Acceptance criteria:
+
+- [ ] C01–C08 i X01–X03 potwierdzają identyczny token dla pierwszej rotacji,
+  przegranego CAS i recovery oraz granice 7 dni/10 minut/idle/absolute/revocation.
+- [ ] Reload z previous cookie i bez CSRF w pamięci odzyskuje sesję w oknie
+  przez read-only /me → chroniony recover → /me, bez anonimowego heartbeat.
+- [ ] Wyścigi rotacji, domain mutations i logout nie duplikują efektów;
+  późne cookie nie wskrzesza odwołanej sesji, a ograniczenia przeglądarki są jawne.
+- [ ] Addytywne migracje, hash-only storage, backup/key-loss/rollback i frontend
+  auth lifetime zachowują dane pracy oraz oddzielne tokenowe uwierzytelnianie HA.
 
 ### Phase 8B2 — Reverse-proxy and Internet-readiness review
 
