@@ -347,7 +347,7 @@ Cel: przygotować całą aplikację i jej dane do bezpiecznego udostępnienia pr
 - Phase 8 nie zmienia domenowego pipeline'u czasu pracy: `raw events → corrections → effective events → canonical pairing → valid sessions → pay/dashboard/reports`.
 - Ochrona browser API ma być domyślnie zamknięta po aktywacji, z małą jawną listą wyjątków wyłącznie dla endpointów koniecznych do ustanowienia sesji, integracji maszynowych oraz minimalnego health checku. Nie utrzymywać rozproszonej listy "chronionych endpointów", którą łatwo pominąć przy dodawaniu nowych tras.
 - Sesje użytkowników mają być server-side i odwoływalne. Przeglądarka przechowuje wyłącznie nieprzewidywalny identyfikator w `HttpOnly` cookie; nie używać długowiecznego bearer JWT ani tokenu auth w `localStorage` jako podstawowego mechanizmu sesji.
-- UX ma preferować długowieczne zaufane urządzenia: prawidłowo zalogowany telefon lub komputer powinien pozostawać zalogowany przez okres liczony w miesiącach, z bezpiecznym odnawianiem idle i możliwością unieważnienia sesji po stronie serwera; transparentna okresowa rotacja należy do 8B1. Dokładne limity idle/absolute lifetime należy ustalić i udokumentować w Phase 8A2 zamiast przypadkowo przyjmować krótki timeout.
+- UX ma preferować długowieczne zaufane urządzenia: prawidłowo zalogowany telefon lub komputer powinien pozostawać zalogowany przez okres liczony w miesiącach, z bezpiecznym odnawianiem idle i możliwością unieważnienia sesji po stronie serwera; okresowa rotacja jest opcjonalnym przyszłym kierunkiem, nie warunkiem Phase 9. Dokładne limity idle/absolute lifetime należy ustalić i udokumentować w Phase 8A2 zamiast przypadkowo przyjmować krótki timeout.
 - Publiczny tryb musi używać cookies `Secure`; LAN-only development/rollout przed Phase 9 musi mieć jawny, kontrolowany sposób testowania bez obniżania docelowych internetowych defaults.
 - Phase 8 jest wdrażany etapowo. 8A1 i 8A2 mają nie przełączać istniejącego browser API na obowiązkowy login. Dopiero osobny 8A3 aktywuje enforcement po przygotowaniu użytkowników, sesji, UI i testów.
 - Każda zmiana routingu/authentication musi regresyjnie potwierdzić, że Home Assistant nadal może bez sesji użytkownika zapisać raw `entry`/`exit` oraz wykonać token-protected timestamp correction.
@@ -392,7 +392,7 @@ Ukończony zakres:
 - [x] Testy persistence, hash-only storage, expiry boundaries, revocation/logout, concurrent sessions, coarse activity writes, cookie/CORS oraz niezależności HA i anonimowego browser API. Addytywna migracja `20261006_07` zachowuje wszystkie istniejące dane i użytkowników.
 - [x] **8A2 nie aktywował globalnego enforcementu na istniejącym UI/browser API.** Ten cutover został wykonany osobno w 8A3.
 
-Stabilny token przez czas życia pojedynczej sesji jest świadomą, kompletną polityką 8A2. Transparentna okresowa rotacja jest odłożona do 8B1, gdzie należy zaprojektować protokół odporny na concurrent requests, kolejność odpowiedzi i utracone odpowiedzi z nowym cookie. Odnowienie idle nie przedłuża absolute expiry.
+Stabilny token przez czas życia pojedynczej sesji jest świadomą, kompletną polityką 8A2. Okresowa rotacja jest opcjonalna i odłożona do osobnej oceny ryzyka; obecny model sesji pozostaje docelową podstawą 8B1. Odnowienie idle nie przedłuża absolute expiry.
 
 ### Phase 8A3 — Protect browser UI and API
 
@@ -415,150 +415,139 @@ Dodatkowe acceptance criteria 8A3:
 - [x] Frontend checking/login/authenticated gate nie pobiera domain data przed auth. Logout/globalny 401 usuwa lokalny protected state i zatrzymuje polling; polski komunikat expiry, login po utracie sesji i stale-response/JSON/blob guards.
 - [x] Regresje anonymous/authenticated reads i writes, session failure/expiry, nowe trasy/mounty, dokładne wyjątki, HA, static i CORS oraz wyrenderowany frontend gate. Bez migracji (head `20261006_07`), nowego configu, zmian danych ani public exposure.
 
-Full CSRF, login rate limiting i race-safe transparentna rotacja/recovery pozostają odłożone do 8B1 (następny target); proxy/HTTPS review należy do 8B2. 8A3 nie dodaje nowych domain mutation paths.
+Origin/header CSRF, login rate limiting i response hardening pozostają planem 8B1; Cloudflare Access i Internet-readiness review należą do 8B2. Okresowa rotacja nie jest obowiązkowym zakresem. 8A3 nie dodaje nowych domain mutation paths.
 
 ### Phase 8B1 — Browser security hardening
 
 **Status: PLANNED**
 
-Pełny projekt po security review: [Phase 8B1 — security architecture](docs/architecture/security-8b1.md).
-To specyfikacja przyszłej implementacji, nie deklaracja działających zabezpieczeń.
-Obecny `GET /api/auth/me` nadal może odnawiać activity; read-only GET i osobny
-chroniony POST heartbeat są zmianą zaplanowaną w 8B1-A.
+[Praktyczny projekt bezpieczeństwa 8B1 / 8B2](docs/architecture/security-8b1.md)
+zastępuje rozbudowany projekt własnych tokenów/rotacji prostszym modelem
+proporcjonalnym do ryzyka małego self-hosted wdrożenia.
+To plan, nie opis działających nowych mechanizmów; obecny GET /me nadal
+może odnawiać last_seen_at. Kolejność: **8A3 → 8B1-A → 8B1-B → 8B2**.
 
-Kolejność wdrożenia: **8A3 → 8B1-A → 8B1-B → 8B1-C → 8B2**.
-Wszystkie podetapy zachowują 30 dni idle, 180 dni absolute lifetime,
-server-side revocation, centralny default-deny i niezależne uwierzytelnianie
-Home Assistanta przez `X-Webhook-Token`. Produkcja pozostaje LAN-only.
-
-#### Phase 8B1-A — HTTP Security & CSRF
+#### Phase 8B1-A — Lightweight Browser Security
 
 **Status: PLANNED**
 
-Dependencies: ukończone 8A1–8A3. Fundament dla 8B1-B i 8B1-C.
+Dependencies: ukończone 8A1–8A3. Bez nowej tabeli ani kluczy kryptograficznych.
 
-Zakres:
-
-- Session-bound HMAC CSRF ze stabilną tożsamością sesji, niezależny od rotacji
-  cookie; bootstrap po loginie, reload i ograniczony bootstrap przy recovery.
-- `GET /api/auth/me` wyłącznie odczytowy: bez last_seen_at, rotacji i Set-Cookie.
-  Nowy `POST /api/auth/heartbeat` wymaga sesji, Origin i CSRF; świadoma aktywność
-  wyłącznie widocznej karty, zapis activity najwyżej raz na godzinę.
-- Centralna ochrona browser mutacji, login CSRF i logout CSRF. Heartbeat
-  nie staje się anonimowym wyjątkiem; recovery nie otwiera ordinary API.
-- Jawne `BROWSER_ALLOWED_ORIGINS`, restrictive CORS, dodatkowe Fetch Metadata
-  z obsługą ich braku w LAN HTTP. Bez wildcard/null i zaufania do dowolnych
-  forwarded headers. Rezerwacja DHCP/lokalny DNS oraz procedura zmiany hosta/IP.
-- Limit body loginu 16 KiB (16384 bajty) przed parsingiem/Argon2id, HTTP 413
-  po przekroczeniu; osobna walidacja 15–1024 znaków hasła po JSON unescape.
-- CSP, security headers i no-store dla auth/prywatnych danych/raportów;
-  konfiguracja, klucze, backup i fail-closed według projektu.
+- Read-only GET /api/auth/me, bez last_seen_at, rotacji i Set-Cookie.
+  Osobny chroniony POST heartbeat podtrzymuje świadomą aktywność widocznej
+  karty najwyżej raz na godzinę; 30 dni idle i 180 dni absolute bez zmian.
+- CSRF przez obowiązkowy dokładny Origin, X-Work-Tracker-Request: 1,
+  restrictive CORS i właściwy JSON; brak fallbacku przy pominiętym Origin.
+  Bez tokenów CSRF, nonce, HMAC/keyringu i frontendowego bootstrapu.
+- Centralny default-deny obejmuje wszystkie obecne i przyszłe browser mutacje,
+  login/logout i heartbeat; HA zachowuje samodzielny X-Webhook-Token.
+- Limit login body 16 KiB przed JSON/Argon2id, osobny limit 15–1024 znaków
+  hasła po unescape; podstawowy CSP, nosniff, Referrer-Policy, frame protection
+  i no-store. Jawna allowlista origins oraz procedura zmiany DHCP/hosta.
+- Zachować działające sesje, revocation, globalne 401 i stale-response guards.
+  Szczegóły kontraktów i pomocniczego docs UI opisuje dokument architektoniczny.
 
 Acceptance criteria:
 
-- [ ] Macierz A01–A12 i X01–X03 z dokumentu architektonicznego jest pokryta;
-  cross-site GET /me nie zmienia żadnego stanu i nigdy nie ustawia cookie.
-- [ ] Login/logout i wszystkie obecne oraz przyszłe browser mutacje dziedziczą
-  ochronę. Poprawny LAN HTTP działa bez Sec-Fetch-*, a brak Origin/CSRF nie daje bypass.
-- [ ] Testy obejmują granice 16384 bajtów, 1024 znaki Unicode zapisane przez
-  sekwencje \uXXXX, w tym pary zastępcze, oraz konfigurację origins po zmianie IP.
-- [ ] Production build działa z CSP bez szerokich wyjątków; bootstrap,
-  no-store, klucze i procedury wdrożenia/rollbacku są zweryfikowane.
-- [ ] HA ingestion i tokenowa timestamp correction działają bez browser sesji,
-  Origin i CSRF, bez zmiany raw events.
+- [ ] A1–A6 i X1–X2 z projektu: cross-site GET /me nie zapisuje żadnego stanu;
+  heartbeat wymaga sesji, a hidden polling nie odnawia idle.
+- [ ] Simple requests/formularze, brak/null/zły Origin, brak znacznika i błędne
+  CORS/JSON nie mutują; LAN HTTP bez Sec-Fetch-* działa bez bypass.
+- [ ] Testy granic 16384 bajtów i 1024 znaków Unicode jako escape/surrogate
+  pairs oraz rzeczywistego frontend CSP/cache i centralnej ochrony.
+- [ ] HA ingest i tokenowa timestamp correction działają bez browser cookie,
+  Origin i znacznika; raw events pozostają immutable.
 
-#### Phase 8B1-B — Login Rate Limiting
+#### Phase 8B1-B — Simple Login Rate Limiting
 
 **Status: PLANNED**
 
-Dependencies: 8B1-A — kontrolowany ingress, odpowiedzi i konfiguracja bezpieczeństwa.
+Dependencies: 8B1-A. Jedna tabela SQLite historii prób, bez zmian schematu sesji.
 
-Zakres:
-
-- 8 błędnych weryfikacji hasła na konto i 30 prób na IP, każde w ruchomym oknie
-  15 minut; limit IP niezależny od wyniku. Progresja po błędzie:
-  1–3 → 0 s, 4 → 30 s, 5 → 60 s, 6 → 120 s, 7 → 240 s, 8 → 300 s.
-- Przy 8 błędach blokada przed Argon2id do zmniejszenia liczby błędów i końca
-  kary; brak permanentnego lockoutu. Ruchome okno może wymagać dłuższego
-  oczekiwania niż maksymalna kara progresywna 300 s.
-- SQLite: atomowe admission IP → reservation konta → Argon2id poza transakcją
-  → finalizacja, jedna aktywna rezerwacja na konto, trwałe deadlines i Retry-After.
-  Blokady bez weryfikacji nie zwiększają account failures ani nie przedłużają kary.
-- Wspólna polityka istniejących/nieistniejących nazw, dummy verification,
-  ogólne błędy i brak resetu bieżących failures/IP przy udanym loginie.
-- Deterministyczna normalizacja: IPv4 /32, IPv6 /64, IPv4-mapped IPv6 → IPv4;
-  źródło wyłącznie zweryfikowany transport, bez niezatwierdzonych proxy headers.
-- Brak osobnego twardego limitu dobowego; wymagany monitoring ostatnich 24 godzin.
-  Jawne ryzyko denial-of-service przez celowe wyczerpywanie limitu logowania:
-  nowe loginy mogą być czasowo utrudnione, istniejące sesje pozostają aktywne.
+- 8 nieudanych prób/login i 30 prób/IP w ruchomym oknie 15 minut,
+  HTTP 429 + Retry-After; kontrola przed Argon2id, bez permanentnego lockoutu.
+- Krótkie atomowe operacje SQLite; bez write locka podczas hashowania.
+  Jeden worker i dwa sloty Argon2id, z jawnym wyścigiem do 9 zamiast 8 błędów
+  loginu; zapisane liczniki zachowane po restarcie. Szczegóły w §4 projektu.
+- Te same zasady dla istniejących/nieistniejących nazw, dummy verification;
+  zwykły SHA-256 klucza loginu, bez K_throttle.
+- IPv4 /32, IPv6 /64, mapped IPv6 → IPv4; peer IP w LAN, bez zaufania do
+  niezweryfikowanych proxy headers.
+- Cleanup i pułap 4096 rekordów zabezpieczają rozmiar tabeli. Bez osobnych
+  rezerwacji/lease/owner ID/CAS, progresji kar i tabel/agregatów telemetrycznych.
+  Zwykłe redagowane logi; brak obowiązkowej agregacji 24 h lub limitu dobowego.
 
 Acceptance criteria:
 
-- [ ] B01–B08 i X01–X03: dokładne progi/okna/kary, Retry-After, restart,
-  równoległe procesy i lease nie pozwalają ominąć admission przed Argon2id.
-- [ ] Udane, błędne i account-blocked próby prawidłowo zużywają IP budget;
-  nieistniejące konta nie mają łatwiejszej ścieżki ani odmiennych komunikatów.
-- [ ] Zmiana adresu IPv6 w tym samym /64 nie resetuje limitu; spoofed headers
-  nie zmieniają klucza. Udokumentowane skutki współdzielonego /64/NAT.
-- [ ] Test celowego wyczerpywania konta potwierdza DoS compromise i dalsze
-  działanie istniejących sesji/HA; monitoring 24 h nie wprowadza limitu dobowego.
+- [ ] B1–B5 i X1–X2: progi, okna, Retry-After, restart/crash, bounded concurrency
+  i jawny wyścig są testowalne; 30/IP atomowo, najwyżej dwie kosztowne weryfikacje.
+- [ ] Sukcesy, account-blocked i overload poprawnie liczą IP; zablokowane
+  żądania nie dopisują błędów hasła, a sukces nie zeruje aktualnych okien.
+- [ ] Normalizacja IPv6 /64 i spoofed headers, unknown login, SQLite busy
+  oraz pełna tabela mają bezpieczne, jednoznaczne zachowanie.
+- [ ] Test celowego wyczerpywania limitu potwierdza czasowy DoS nowych loginów,
+  ale dalsze działanie istniejących sesji i HA, bez ujawniania credentials.
 
-#### Phase 8B1-C — Session Rotation & Recovery
+#### Okresowa rotacja sesji — opcjonalny kierunek
+
+**Status: DEFERRED**
+
+8B1-C nie jest obowiązkowym etapem. Zachowujemy obecny losowy token 256 bitów,
+SHA-256 w SQLite, host-only HttpOnly/Lax cookie, Secure przy HTTPS,
+30 dni idle, 180 dni absolute i server-side revocation.
+Okresowa rotacja wymaga osobnej oceny ryzyka i projektu; nie warunkuje Phase 9.
+Nie projektujemy obecnie recovery, generacji sesji ani dodatkowych kluczy.
+
+### Phase 8B2 — Cloudflare Access and Internet Readiness
 
 **Status: PLANNED**
 
-Dependencies: 8B1-A i 8B1-B — stabilny CSRF, chroniony heartbeat i throttled relogin.
+Dependencies: 8B1-A i 8B1-B. Przygotowanie i weryfikacja konfiguracji/testów;
+bez publicznego rollout produkcji, który należy dopiero do Phase 9.
 
-Zakres:
-
-- Rotacja co 7 dni wyłącznie podczas świadomego activity heartbeat, atomic CAS,
-  bez przedłużania idle/absolute poza zatwierdzone reguły i bez jawnych tokenów w SQLite.
-- Deterministyczny HMAC: nowa rotacja używa g+1, recovery **persisted_generation**,
-  bez inkrementacji. Wersjonowane kodowanie, rozdzielone klucze/contexty i test vectors.
-- Previous token ważny wyłącznie do read-only bootstrapu i chronionego recovery
-  przez 10 minut, nigdy do zwykłych operacji; explicit `session_rotation_required`
-  przed efektem. Recovery nie podtrzymuje idle i nie wydłuża okna.
-- Wiele kart, przegrany CAS, utracona odpowiedź, reload i spóźnione Set-Cookie;
-  CSRF pozostaje spójny. Brak automatycznego powtarzania mutacji po nieznanym wyniku.
-- Brak gwarancji recovery po 10 minutach lub po nadpisaniu cookie starszym tokenem;
-  bezpieczny relogin zamiast poszerzania akceptacji previous.
+- Docelowy wariant: Browser → Cloudflare Access → Cloudflare Tunnel →
+  Work Tracker, z zachowaniem dodatkowego loginu aplikacji.
+- Access default-deny z jawną allowlistą osób; weryfikacja Access JWT na
+  kontrolowanej ścieżce originu (preferowane Protect with Access w cloudflared),
+  bez obchodzenia ochrony przez alias, ścieżkę, metodę lub bezpośredni port.
+- Origin prywatny i ograniczony do zaufanej ścieżki; HA wyłącznie przez
+  osobną kontrolowaną ścieżkę LAN. Oba webhooki HA nie są publicznie routowane,
+  również dla osoby uwierzytelnionej w Access.
+- HTTPS, Secure cookies, jawny publiczny Origin/trusted hosts, konfiguracja
+  jednego workera Uvicorn oraz proxy trust dla konkretnych peers, bez '*'.
+- Rzeczywiste IP wymaga potwierdzonej ścieżki Cloudflare i nadpisywania
+  klientowskich nagłówków. Access nie rozwiązuje wspólnego peer IP tunelu;
+  nie ufać dowolnemu X-Forwarded-For/CF-Connecting-IP. Test dwóch klientów,
+  spoofingu, brakujących nagłówków oraz IPv6 jest obowiązkowy.
+- Opcjonalny WAF rate limiting jako dodatkowa warstwa, bez zastępowania
+  limitera aplikacji. Aktualne możliwości Free i ograniczenia opisano
+  ze źródłami w §6 projektu; sprawdzić ponownie przed wdrożeniem.
+- Kontrola dostępu do backupów/env/tunnel credentials poza checkoutem,
+  regresje HA, przygotowany rollback i końcowe security-focused review.
 
 Acceptance criteria:
 
-- [ ] C01–C08 i X01–X03 potwierdzają identyczny token dla pierwszej rotacji,
-  przegranego CAS i recovery oraz granice 7 dni/10 minut/idle/absolute/revocation.
-- [ ] Reload z previous cookie i bez CSRF w pamięci odzyskuje sesję w oknie
-  przez read-only /me → chroniony recover → /me, bez anonimowego heartbeat.
-- [ ] Wyścigi rotacji, domain mutations i logout nie duplikują efektów;
-  późne cookie nie wskrzesza odwołanej sesji, a ograniczenia przeglądarki są jawne.
-- [ ] Addytywne migracje, hash-only storage, backup/key-loss/rollback i frontend
-  auth lifetime zachowują dane pracy oraz oddzielne tokenowe uwierzytelnianie HA.
+- [ ] C1–C2 i X1–X2: przygotowane i zweryfikowane testy/config Access,
+  ochrony originu/private HA, trusted client IP i HTTPS bez publicznego rollout.
+- [ ] Nieprawidłowy Access JWT, niedopuszczona osoba i niezweryfikowane nagłówki
+  nie dają bypass; pochodzenie IP jest wykazane dla każdego ingressu.
+- [ ] Plan konta/wersja cloudflared, uprawnienia plików i rollback są
+  sprawdzone; Phase 9 powtarza testy end-to-end przed dopuszczeniem użytkowników.
 
-### Phase 8B2 — Reverse-proxy and Internet-readiness review
+### Acceptance criteria Phase 8
 
-**Status: PLANNED**
-
-Zakres:
-
-- Dostosowanie do docelowej architektury reverse proxy: poprawne rozpoznawanie HTTPS, hosta i adresu klienta wyłącznie z zaufanej ścieżki proxy; bez bezwarunkowego ufania klientowskim `Forwarded` / `X-Forwarded-*`.
-- Weryfikacja trusted hosts/proxies, generowania redirectów/URL-i, `Secure` cookies i semantyki client IP w planowanym przepływie Cloudflare Tunnel.
-- Sprawdzenie, że endpointy integracyjne zachowują oddzielne uwierzytelnianie i nie stają się publicznie użyteczne przez sam fakt dodania reverse proxy.
-- Końcowy security-focused review całego Phase 8 i regresja pełnego UI/API oraz Home Assistant ingestion przed rozpoczęciem Phase 9.
-- Produkcja nadal pozostaje LAN-only do czasu jawnego rollout Phase 9.
-
-### Acceptance criteria
-
-- [ ] Istnieje mała, jawnie kontrolowana baza użytkowników bez publicznej rejestracji i bez zbędnego RBAC.
-- [ ] Hasła są przechowywane wyłącznie jako bezpieczne password hashes; sekrety i dane sesyjne nie trafiają do repozytorium ani logów.
-- [ ] Sesje są server-side, losowe i odwoływalne; przeglądarka nie przechowuje podstawowego auth tokenu w `localStorage`.
-- [ ] Zaufane urządzenie może pozostawać zalogowane przez długi okres zgodnie z udokumentowaną polityką sesji, bez częstego wymuszania ponownego loginu, przy zachowaniu możliwości revocation i bezpiecznej rotacji.
-- [x] Cały zwykły UI i browser API wymagają poprawnej sesji; brak anonimowego odczytu lub mutacji danych pracy i płac.
-- [x] Ochrona browser API jest default-deny, a machine-auth exceptions są jawne i minimalne.
-- [x] Home Assistant ingestion i HA correction pozostają niezależne od sesji użytkownika, nadal wymagają własnego `X-Webhook-Token` i są pokryte testami regresyjnymi po aktywacji auth.
-- [ ] CSRF, CORS, brute-force protection, session fixation/rotation, logout/expiry i security headers są zweryfikowane testami.
-- [ ] Cookies i obsługa sesji mają bezpieczną semantykę w docelowym HTTPS/reverse-proxy układzie; klient nie może sam spoofować zaufanych forwarded headers.
-- [ ] Migracje Phase 8 są addytywne/niedestrukcyjne dla istniejących raw events, korekt, stawek, ustawień i historii.
-- [ ] Publiczny Tunnel/DNS nie jest aktywowany w Phase 8. Dopiero po końcowym security review i spełnieniu acceptance criteria można rozpocząć Phase 9.
+- [ ] Mała kontrolowana baza użytkowników, bez publicznej rejestracji/RBAC.
+- [ ] Password hashes i sekrety poza logami/repo; odwoływalne sesje server-side,
+  bez primary auth tokenu w localStorage.
+- [ ] Długowieczne sesje zgodne z 30/180 dni, nowy token przy loginie,
+  revocation, logout/expiry i brak session fixation; rotacja okresowa opcjonalna.
+- [x] Ordinary UI/API wymagają sesji, centralny default-deny i minimalne wyjątki.
+- [x] HA ingestion/correction zachowują dedykowany token i testy niezależności.
+- [ ] Origin/header CSRF, CORS, login rate limiting, security headers/cache
+  i granice sesji przechodzą testy akceptacyjne/regresyjne.
+- [ ] 8B2 wykazuje gotowość Access/origin, client IP, HTTPS/Secure i backupów.
+- [ ] Migracje addytywne, bez zmiany raw events, korekt, stawek i ustawień.
+- [ ] Produkcja pozostaje LAN-only. Dopiero Phase 9 aktywuje publiczny routing.
 
 ## Phase 9 — Cloudflare public deployment
 
@@ -567,15 +556,15 @@ Zakres:
 Cel: udostępnić **całą** aplikację Work Tracker przez HTTPS pod dedykowaną subdomeną domeny obsługiwanej przez Cloudflare. Nazwa subdomeny nie jest jeszcze ustalona. Phase 9 następuje po ukończeniu Phase 8; obecny origin pozostaje prywatny.
 
 ```text
-Internet → Cloudflare (DNS/HTTPS) → Cloudflare Tunnel → prywatny origin Work Trackera w LAN
+Browser → Cloudflare Access (HTTPS) → Cloudflare Tunnel → prywatny origin Work Trackera
 ```
 
 ### Phase 9A — Private-origin routing and protection
 
 - Cloudflare Tunnel i DNS dla dedykowanego publicznego hostname; bez router port-forwardingu i bez bezpośredniego publicznego wystawiania LXC.
 - HTTPS dla użytkowników; poprawne przekazywanie informacji o schemacie, hoście i adresie klienta przez zaufany proxy path, tak by sesyjne cookies i logi zachowały właściwą semantykę.
-- Application authentication z Phase 8 chroni cały zwykły UI/API. Cloudflare Access może być dodatkową warstwą ochrony, a nie substytutem uwierzytelniania aplikacji.
-- Zachowanie prywatnej ścieżki LAN dla Home Assistant ingestion niezależnie od publicznego UI; sam publiczny hostname nie powinien automatycznie rozszerzać dostępu do token-protected endpointów integracyjnych. Decyzję o routingu i regułach dla nich trzeba zweryfikować przy wdrożeniu.
+- Cloudflare Access z jawną polityką użytkowników chroni browser hostname, a application authentication z Phase 8 pozostaje dodatkową warstwą. Wdrożyć konfigurację sprawdzoną w 8B2; nie uruchamiać publicznej ścieżki omijającej Access.
+- Zachowanie kontrolowanej prywatnej ścieżki LAN dla obu webhooków Home Assistant, niezależnej od publicznego UI. Publiczny ingress odrzuca te endpointy, także po uwierzytelnieniu w Access; testować normalizację ścieżek i brak bezpośredniego dostępu do browser originu.
 - Projekt routingu powinien później dopuścić bardzo wąski, niezależnie uwierzytelniany Google webhook z Phase 10 bez interaktywnego loginu ani wyłączenia ochrony całej aplikacji.
 
 ### Phase 9B — Safe rollout and rollback
@@ -588,7 +577,7 @@ Internet → Cloudflare (DNS/HTTPS) → Cloudflare Tunnel → prywatny origin Wo
 
 - [ ] Phase 8 jest ukończona przed publicznym udostępnieniem całego UI/API.
 - [ ] Dedykowany hostname działa przez Cloudflare Tunnel i HTTPS; origin nie ma bezpośredniej publicznej ekspozycji ani router port-forwardingu.
-- [ ] Autoryzacja aplikacji, HTTPS-aware cookies, trusted proxy/client IP i ewentualna dodatkowa ochrona Access są sprawdzone end-to-end.
+- [ ] Access oraz dodatkowy login aplikacji, HTTPS/Secure cookies, trusted proxy/client IP i odrzucanie publicznych webhooków HA są sprawdzone end-to-end.
 - [ ] Istniejące Home Assistant ingestion i korekty w LAN działają bez zależności od publicznego UI.
 - [ ] Publiczny routing można wycofać bez zmiany lub utraty raw events, korekt, płac i konfiguracji.
 

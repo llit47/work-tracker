@@ -20,8 +20,10 @@
   - **Phase 8A1 — Identity foundation: DONE**
   - **Phase 8A2 — Server-side sessions and login UX: DONE**
   - **Phase 8A3 — Protect browser UI and API: DONE**
-  - **Phase 8B1 — Browser security hardening: NEXT**
-  - **Phase 8B2 — Reverse-proxy and Internet-readiness review: PLANNED**
+  - **Phase 8B1 — Browser security hardening: PLANNED**
+    - **Phase 8B1-A — Lightweight Browser Security: PLANNED**
+    - **Phase 8B1-B — Simple Login Rate Limiting: PLANNED**
+  - **Phase 8B2 — Cloudflare Access and Internet Readiness: PLANNED**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
@@ -34,7 +36,7 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Publiczny statyczny HTML/JS/CSS/assets umożliwia render loginu; dokumentacja/schema FastAPI jest chroniona w `/api/docs`, `/api/redoc`, `/api/openapi.json`. Frontend sprawdza sesję przed montowaniem domain UI i przed ordinary requests.
 - Globalny 401 lub logout odmontowuje aplikację, usuwa lokalny stan chronionych danych i zatrzymuje domain polling. Expiry pokazuje „Sesja wygasła. Zaloguj się ponownie.”; nowe logowanie ponownie otwiera aplikację. Wersjonowanie odpowiedzi i dekodowania JSON/blob odrzuca stare dane i stare 401 po nowym loginie. Błąd logout nie przywraca lokalnych danych.
 - 8A3 nie zmienia schematu ani konfiguracji wdrożenia; Alembic head pozostaje `20261006_07`. Dane raw events/corrections/pay pozostają bez zmian.
-- `user_sessions`: ID, user_id, unikalny SHA-256 tokenu, created_at/last_seen_at/expires_at/revoked_at UTC. Każdy login tworzy nowy token (256 bitów CSPRNG), przechowywany tylko w host-only HttpOnly cookie. Brak transparentnej rotacji to zamierzona polityka 8A2; rotacja/recovery należy do 8B1.
+- `user_sessions`: ID, user_id, unikalny SHA-256 tokenu, created_at/last_seen_at/expires_at/revoked_at UTC. Każdy login tworzy nowy token (256 bitów CSPRNG), przechowywany tylko w host-only HttpOnly cookie. Stabilny token to zamierzona polityka 8A2, zachowana w uproszczonym 8B1; okresowa rotacja jest opcjonalna, poza obowiązkowym planem.
 - Sesje: dokładnie 30 dni idle od ostatniego zapisanego `last_seen_at`, maksymalnie 180 dni od początkowego loginu. Wspólny walidator chroni `/auth/me` i ordinary API; ordinary API wyłącznie waliduje sesję bez zmiany `last_seen_at`, a tylko deliberate `/api/auth/me` heartbeat odnawia idle najwyżej raz na godzinę; niezapisana końcowa aktywność może być późniejsza o mniej niż godzinę. Zalogowana widoczna karta sprawdza sesję co 5 minut i po odzyskaniu focus; HA nie dotyka sesji. Hidden domain polling nie odnawia idle. Anonimowy gate nie wykonuje background domain requests.
 - Logout odwołuje sesję w bazie i usuwa cookie; expired/revoked/invalid token jest odrzucany. Rehash Argon2 po poprawnym loginie ma warunek zachowania poprzedniego hasha.
 - Persistent cookie: HttpOnly, SameSite=Lax, Path=/, lifetime 180 dni, Secure domyślnie true w kodzie. Instalator/updater wymagają jawnego `SESSION_COOKIE_SECURE`: false wyłącznie dla obecnego LAN HTTP, true obowiązkowo dla HTTPS. Migracja `20261006_07` dodaje wyłącznie pustą tabelę sesji.
@@ -175,11 +177,36 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 8B1 — Browser security hardening**
+**Phase 8B1-A — Lightweight Browser Security (PLANNED)**
 
-8A1, 8A2 i 8A3 są ukończone. Login jest obowiązkowy dla ordinary UI/API, z centralną default-deny ochroną i sześcioma dokładnymi wyjątkami. Następne prace obejmują full CSRF, rate limiting, response/cache hardening i race-safe transparentną rotację/recovery; żadne z nich nie zostało dodane w 8A3.
+8A1, 8A2 i 8A3 są ukończone. Działające logowanie, sesje i centralny
+default-deny z sześcioma dokładnymi wyjątkami pozostają bez zmian w tym PR.
+Aktualny GET /me może odnawiać last_seen_at; read-only GET i osobny chroniony
+POST heartbeat są dopiero planowane, podobnie jak obowiązkowe Origin/custom
+header, format JSON, limit login body i CSP/response/cache hardening.
+CSRF opiera się na Origin + X-Work-Tracker-Request: 1 + restrictive CORS,
+bez tokenów, nonce i dodatkowego keyringu.
 
-Home Assistant pozostaje niezależny: ingestion i korekty wymagają `X-Webhook-Token`, nigdy browser cookie. 8B1 obejmie CSRF, brute-force protection i race-safe transparentną rotację/recovery; 8B2 przygotuje zaufany reverse proxy/HTTPS. Przez cały Phase 8 produkcja pozostaje LAN-only.
+Następny **8B1-B — Simple Login Rate Limiting (PLANNED)** przewiduje jedną
+tabelę SQLite, 8 błędów/login i 30 prób/IP w 15 minut, dwa sloty Argon2id,
+trwałość liczników i ograniczenie rozmiaru. Mały wyścig konta (do 9 błędów)
+oraz nieznany wynik najwyżej dwóch weryfikacji po crash są jawne w projekcie.
+Nie dodano tych mechanizmów w 8A3 i nadal nie są zaimplementowane.
+
+**8B2 — Cloudflare Access and Internet Readiness (PLANNED)** przygotuje
+i zweryfikuje politykę Access, ochronę prywatnego originu, HTTPS/Secure,
+proxy/client IP oraz backupy. Access pozostanie dodatkową warstwą obok
+loginu Work Trackera; jego wdrożenie nie zastępuje aplikacyjnego limitera.
+Home Assistant zachowuje X-Webhook-Token i kontrolowaną prywatną ścieżkę LAN;
+oba webhooki będą wykluczone z publicznego ingressu.
+Przez cały Phase 8 produkcja pozostaje LAN-only; publiczny rollout to Phase 9.
+
+8B1-C usunięto z obowiązkowego planu: obecne 30 dni idle, 180 dni absolute,
+hash-only token i revocation pozostają podstawą. Okresowa rotacja może wrócić
+po osobnej ocenie ryzyka, lecz nie warunkuje Phase 9.
+Szczegóły: [uproszczony projekt bezpieczeństwa](docs/architecture/security-8b1.md).
+README nadal ma starszą zapowiedź obowiązkowej rotacji w 8B1; to nieaktualny
+plan, nie działająca funkcja. Zgodnie z zakresem tego PR README nie zmieniono.
 
 Po Phase 8 planowane są kolejno Phase 9 (publiczny HTTPS dostęp do całej aplikacji przez Cloudflare Tunnel pod dedykowaną, jeszcze nieustaloną subdomeną) i Phase 10 (asymetryczna, dwukierunkowa integracja z dedykowanym Google Calendar). To wyłącznie kierunek rozwoju, nie stan wdrożenia. Prywatny origin ma pozostać w LAN bez przekierowania portów; przez cały Phase 8 produkcja pozostaje LAN-only, a publiczny dostęp całego UI może zostać uruchomiony dopiero po końcowym hardening review.
 
@@ -192,7 +219,8 @@ Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfej
 - brak nadgodzin, dodatków, podatków i przeliczeń walut,
 - brak live estymacji wynagrodzenia dla niezakończonej zmiany,
 - brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
-- full CSRF, login rate limiting i transparentna rotacja/recovery sesji pozostają odłożone do 8B1,
+- Origin/header CSRF, read-only /me, POST heartbeat, login rate limiting i response hardening pozostają planem 8B1-A/B,
+- okresowa rotacja sesji jest opcjonalna i nie należy do obowiązkowego zakresu przed Phase 9,
 - brak eksportu XLSX/Excel,
 - brak publicznego dostępu do aplikacji w obecnym wdrożeniu (plan: Phase 9 po Phase 8),
 - brak integracji Google Calendar w obecnym wdrożeniu (plan: Phase 10).
