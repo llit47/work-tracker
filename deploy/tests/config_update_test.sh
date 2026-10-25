@@ -93,3 +93,26 @@ printf 'CORS_ORIGINS=http://unapproved.example\n' >>"${ENV_FILE}"
 if (validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}") >"${OUTPUT_FILE}" 2>&1; then exit 1; fi
 grep -q 'subset' "${OUTPUT_FILE}"
 printf 'Browser origin configuration tests passed.\n'
+
+# 8B2 remains optional for LAN; existing values survive updates without prompts.
+sed -i '/^CORS_ORIGINS=/d' "${ENV_FILE}"
+! env_has_key "${ENV_FILE}" INGRESS_PROFILE
+! env_has_key "${ENV_FILE}" BROWSER_HSTS_SECONDS
+printf 'INGRESS_PROFILE=split\nBROWSER_HSTS_SECONDS=300\n' >>"${ENV_FILE}"
+if (validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}") >"${OUTPUT_FILE}" 2>&1; then exit 1; fi
+grep -q 'Inconsistent ingress/browser configuration' "${OUTPUT_FILE}"
+sed -i -e 's|^BROWSER_ALLOWED_ORIGINS=.*|BROWSER_ALLOWED_ORIGINS=https://work.example.invalid|' \
+    -e 's/^SESSION_COOKIE_SECURE=.*/SESSION_COOKIE_SECURE=true/' "${ENV_FILE}"
+cp "${ENV_FILE}" "${SNAPSHOT_FILE}"
+exec 3</dev/null
+sync_missing_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
+validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
+cmp -s "${ENV_FILE}" "${SNAPSHOT_FILE}"
+validate_config_value ingress_profile lan
+validate_config_value ingress_profile split
+! validate_config_value ingress_profile public
+validate_config_value hsts_seconds 0
+validate_config_value hsts_seconds 31536000
+! validate_config_value hsts_seconds 31536001
+! validate_config_value hsts_seconds -1
+printf 'Optional split ingress configuration tests passed.\n'

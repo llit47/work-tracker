@@ -1,0 +1,64 @@
+# Include inside nginx's http {} on the Work Tracker LXC. PHASE 9 ONLY.
+# Replace EVERY <...> placeholder. Never enable a generic/default proxy to WT.
+# No real_ip module / proxy_protocol: source ACLs must see the transport peer.
+server {
+    listen <WORK_TRACKER_LAN_IP>:<BROWSER_TLS_PORT> ssl default_server;
+    server_name <PUBLIC_HOSTNAME>;
+    ssl_certificate <ORIGIN_CERT_PATH>;
+    ssl_certificate_key <ORIGIN_KEY_PATH>;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    allow <CLOUDFLARED_SOURCE_IP>;
+    deny all;
+    access_log off;
+    client_max_body_size 1m;
+    if ($http_host != '<PUBLIC_HOSTNAME>') { return 403; }
+    if ($ssl_server_name != '<ORIGIN_TLS_NAME>') { return 403; }
+    # Cloudflare supplies the original visitor scheme. HTTP never reaches login.
+    if ($http_x_forwarded_proto != 'https') { return 403; }
+    location / {
+        proxy_bind 127.0.0.2;
+        # NO trailing URI: preserve the original request target for the ASGI guard.
+        proxy_pass http://127.0.0.1:<BACKEND_PORT>;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_set_header CF-Worker $http_cf_worker;
+        proxy_set_header Cf-Access-Jwt-Assertion '';
+        proxy_set_header X-Forwarded-For '';
+        proxy_set_header Forwarded '';
+        proxy_set_header X-Real-IP '';
+        proxy_set_header Upgrade '';
+    }
+}
+
+server {
+    # Preserve the EXISTING HA URL: same LAN IP and port as before cutover.
+    listen <WORK_TRACKER_LAN_IP>:<HA_PORT> default_server;
+    server_name _;
+    allow <HA_SOURCE_IP>;
+    deny all;
+    access_log off;
+    client_max_body_size 1m;
+    location / {
+        # Backend enforces exact RAW target + POST before routing or redirects.
+        proxy_bind 127.0.0.3;
+        proxy_pass http://127.0.0.1:<BACKEND_PORT>;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host localhost;
+        proxy_set_header X-Webhook-Token $http_x_webhook_token;
+        proxy_set_header Cf-Access-Jwt-Assertion '';
+        proxy_set_header CF-Connecting-IP '';
+        proxy_set_header CF-Worker '';
+        proxy_set_header X-Forwarded-Proto '';
+        proxy_set_header X-Forwarded-For '';
+        proxy_set_header Forwarded '';
+        proxy_set_header X-Real-IP '';
+        proxy_set_header Cookie '';
+        proxy_set_header Origin '';
+        proxy_set_header X-Work-Tracker-Request '';
+        proxy_set_header Upgrade '';
+    }
+}

@@ -1,0 +1,18 @@
+# LOCALLY MANAGED. PHASE 9 ONLY. Requires cloudflared >= 2026.10.0.
+# On EVERY connector: TUNNEL_DISABLE_PATH_NORMALIZATION=false
+# These addresses are in DIFFERENT LXCs; never substitute localhost for WT.
+tunnel: <TUNNEL_UUID>
+credentials-file: <CREDENTIALS_FILE_OUTSIDE_CHECKOUT>
+ingress:
+  - hostname: <PUBLIC_HOSTNAME>
+    service: https://<WORK_TRACKER_LAN_IP>:<BROWSER_TLS_PORT>
+    originRequest:
+      originServerName: <ORIGIN_TLS_NAME>
+      caPool: <CA_PEM_PATH_ON_CLOUDFLARED_LXC>
+      noTLSVerify: false
+      access:
+        required: true
+        teamName: <ACCESS_TEAM_SLUG>
+        audTag:
+          - <ACCESS_APPLICATION_AUD>
+  - service: http_status:404

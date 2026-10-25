@@ -159,7 +159,12 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
         try:
             with request.app.state.session_factory() as session:
                 username, login_key = login_identity(payload.username)
-                ip_key = peer_ip_key(request.client.host if request.client else None)
+                if settings.ingress_profile == "split":
+                    ip_key = getattr(request.state, "ingress_ip_key", None)
+                    if ip_key is None:
+                        raise unavailable()
+                else:
+                    ip_key = peer_ip_key(request.client.host if request.client else None)
                 attempt_id = admit(session, login_key, ip_key, now())
                 if not acquired:
                     raise unavailable()

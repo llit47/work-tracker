@@ -415,21 +415,21 @@ Dodatkowe acceptance criteria 8A3:
 - [x] Frontend checking/login/authenticated gate nie pobiera domain data przed auth. Logout/globalny 401 usuwa lokalny protected state i zatrzymuje polling; polski komunikat expiry, login po utracie sesji i stale-response/JSON/blob guards.
 - [x] Regresje anonymous/authenticated reads i writes, session failure/expiry, nowe trasy/mounty, dokładne wyjątki, HA, static i CORS oraz wyrenderowany frontend gate. Bez migracji (head `20261006_07`), nowego configu, zmian danych ani public exposure.
 
-Origin/header CSRF i response hardening implementuje 8B1-A; login rate limiting implementuje 8B1-B (końcowa walidacja X2 pozostaje otwarta); Cloudflare Access i Internet-readiness review należą do 8B2. Okresowa rotacja nie jest obowiązkowym zakresem. 8A3 nie dodaje nowych domain mutation paths.
+Origin/header CSRF i response hardening implementuje 8B1-A; login rate limiting implementuje 8B1-B (X2 A/B potwierdzone przez operatora na Debianie 13); Cloudflare Access i Internet-readiness review należą do 8B2. Okresowa rotacja nie jest obowiązkowym zakresem. 8A3 nie dodaje nowych domain mutation paths.
 
 ### Phase 8B1 — Browser security hardening
 
-**Status: IN PROGRESS**
+**Status: DONE**
 
 [Praktyczny projekt bezpieczeństwa 8B1 / 8B2](docs/architecture/security-8b1.md)
 zastępuje rozbudowany projekt własnych tokenów/rotacji prostszym modelem
 proporcjonalnym do ryzyka małego self-hosted wdrożenia.
-8B1-A jest zaimplementowane z końcową walidacją deploymentu do potwierdzenia;
+Operator potwierdził wdrożenie 8B1-A/B oraz package-install/service-user runtime na Debianie 13 LXC;
 GET /me jest już read-only, a activity odnawia osobny POST heartbeat. Kolejność: **8A3 → 8B1-A → 8B1-B → 8B2**.
 
 #### Phase 8B1-A — Lightweight Browser Security
 
-**Status: IN PROGRESS**
+**Status: DONE**
 
 Dependencies: ukończone 8A1–8A3. Bez nowej tabeli ani kluczy kryptograficznych.
 
@@ -458,14 +458,13 @@ Acceptance criteria:
 - [x] HA ingest i tokenowa timestamp correction działają bez browser cookie,
   Origin i znacznika; raw events pozostają immutable.
 
-- [ ] X2: pełny test instalowanego pakietu i runtime jako service user na Debianie/Ubuntu.
-  Obecne środowisko nie ma ensurepip, a sudo wymaga hasła. Pozostałe testy X2
-  (upgrade/head, konfiguracja, rollback przed/po migracji i layout uprawnień)
-  przechodzą. Status nie jest DONE do potwierdzenia tych dwóch sprawdzeń.
+- [x] X2 A/B: operator potwierdził pozytywny package-install i runtime service user
+  na Debianie 13 LXC, main de963ae/head 20261025_08. To potwierdzenie operatora,
+  nie samodzielna walidacja produkcji przez Codexa.
 
 #### Phase 8B1-B — Simple Login Rate Limiting
 
-**Status: IN PROGRESS**
+**Status: DONE**
 
 Dependencies: 8B1-A. Jedna tabela SQLite historii prób, bez zmian schematu sesji.
 
@@ -493,10 +492,9 @@ Acceptance criteria:
 - [x] Test celowego wyczerpywania limitu potwierdza czasowy DoS nowych loginów,
   ale dalsze działanie istniejących sesji i HA, bez ujawniania credentials.
 
-- [ ] X2: pełna instalacja pakietu i runtime jako service user na Debianie/Ubuntu.
-  Ponowiono próbę: brak ensurepip zatrzymuje package-install test; sudo wymaga
-  hasła, więc test service-user nie został wykonany jako root. Bez DONE i bez
-  deklaracji produkcyjnej walidacji 8B1-A/B. Nie wykonano wdrożenia.
+- [x] X2 A/B: testy pakietu i service-user runtime oraz działające UI/login/dane
+  potwierdzone przez operatora na Debianie 13 LXC. Lokalne ograniczenia nowej
+  walidacji 8B2 nie zmieniają tego potwierdzenia wdrożonych A/B.
 
 #### Okresowa rotacja sesji — opcjonalny kierunek
 
@@ -510,39 +508,46 @@ Nie projektujemy obecnie recovery, generacji sesji ani dodatkowych kluczy.
 
 ### Phase 8B2 — Cloudflare Access and Internet Readiness
 
-**Status: PLANNED**
+**Status: IN PROGRESS — implementacja i testy ingress/JWT gotowe; lokalne X2 BLOCKED**
 
-Dependencies: 8B1-A i 8B1-B. Przygotowanie i weryfikacja konfiguracji/testów;
-bez publicznego rollout produkcji, który należy dopiero do Phase 9.
+Dependencies: 8B1-A i 8B1-B DONE (operator-confirmed). Bez publicznej aktywacji;
+rollout, DNS i faktyczne E2E należą do Phase 9.
 
-- Docelowy wariant: Browser → Cloudflare Access → Cloudflare Tunnel →
-  Work Tracker, z zachowaniem dodatkowego loginu aplikacji.
-- Access default-deny z jawną allowlistą osób; weryfikacja Access JWT na
-  kontrolowanej ścieżce originu (preferowane Protect with Access w cloudflared),
-  bez obchodzenia ochrony przez alias, ścieżkę, metodę lub bezpośredni port.
-- Origin prywatny i ograniczony do zaufanej ścieżki; HA wyłącznie przez
-  osobną kontrolowaną ścieżkę LAN. Oba webhooki HA nie są publicznie routowane,
-  również dla osoby uwierzytelnionej w Access.
-- HTTPS, Secure cookies, jawny publiczny Origin/trusted hosts, konfiguracja
-  jednego workera Uvicorn oraz proxy trust dla konkretnych peers, bez '*'.
-- Rzeczywiste IP wymaga potwierdzonej ścieżki Cloudflare i nadpisywania
-  klientowskich nagłówków. Access nie rozwiązuje wspólnego peer IP tunelu;
-  nie ufać dowolnemu X-Forwarded-For/CF-Connecting-IP. Test dwóch klientów,
-  spoofingu, brakujących nagłówków oraz IPv6 jest obowiązkowy.
-- Opcjonalny WAF rate limiting jako dodatkowa warstwa, bez zastępowania
-  limitera aplikacji. Aktualne możliwości Free i ograniczenia opisano
-  ze źródłami w §6 projektu; sprawdzić ponownie przed wdrożeniem.
-- Kontrola dostępu do backupów/env/tunnel credentials poza checkoutem,
-  regresje HA, przygotowany rollback i końcowe security-focused review.
+- Opt-in INGRESS_PROFILE=split; domyślny LAN bez zmian. Nginx na WT LXC:
+  TLS browser tylko z osobnego LXC cloudflared, LAN HTTP tylko z HA; backend
+  wyłącznie loopback, dwa źródłowe proxy_bind i niezmieniony peer transportowy.
+- Guard odrzuca publiczne webhooki także po Access/WT login; HA dopuszcza
+  tylko dwa dokładne POST z istniejącym tokenem, niezależnie od Cloudflare.
+- Wzorce Protect with Access local/remote: jawne osoby/default-deny, właściwy
+  team/issuer i AUD, podpis/JWKS/expiry; cały hostname bez Bypass/Everyone/path
+  wyjątków. cloudflared 2026.10.0 sprawdzony lokalnie; jawna normalizacja.
+- CF-Connecting-IP tylko ze sprawdzonej ścieżki; nie zmienia scope.client.
+  Brak/błędny/duplikowany nagłówek → login 503, bez fallbacku. XFF/Forwarded
+  bez zaufania; normalizacja /32,/64,mapped bez zmian. Historia limitera trwała.
+- Jeden HTTPS origin, Secure/HttpOnly/Lax/host-only, pusty CORS, exact Host/scheme,
+  opcjonalny HSTS po walidacji. Sesje 30/180 dni, CSRF, progi i dwa sloty bez zmian.
+- [Runbook](docs/deployment/phase9-ingress.md): placeholdery, ACL/firewall/TLS,
+  Workers/Pseudo IPv4, dostęp konsolowy i cutover bez zmiany HA URL, rollback
+  browser bez zatrzymania HA. Zero migracji i nowej infrastruktury aktywowanej.
 
 Acceptance criteria:
 
-- [ ] C1–C2 i X1–X2: przygotowane i zweryfikowane testy/config Access,
-  ochrony originu/private HA, trusted client IP i HTTPS bez publicznego rollout.
-- [ ] Nieprawidłowy Access JWT, niedopuszczona osoba i niezweryfikowane nagłówki
-  nie dają bypass; pochodzenie IP jest wykazane dla każdego ingressu.
-- [ ] Plan konta/wersja cloudflared, uprawnienia plików i rollback są
-  sprawdzone; Phase 9 powtarza testy end-to-end przed dopuszczeniem użytkowników.
+- [x] C1 lokalne: ASGI policy i rzeczywisty Nginx/Uvicorn dla path/method/peer/host,
+  źródłowych ACL, prywatnych HA i publicznej odmowy. Rzeczywisty cloudflared
+  JWTValidator z RSA/JWKS: missing/forged/expired/wrong AUD/team.
+- [x] C2 lokalne: prawdziwy proxy/TLS, niezależne IP, NAT, IPv6 /64/mapped,
+  duplikaty/spoofing, 429/Retry-After, cookie/CSRF/heartbeat i brak resetu historii.
+- [x] X1 oraz lokalne migracje/config/updater/rollback/layout X2, pełny backend,
+  frontend test/build; dokumentacja i nieaktywne local/remote config templates.
+- [ ] X2 8B2 package-install/runtime: BLOCKED — lokalnie brak ensurepip i roota;
+  A/B wcześniej potwierdzone przez operatora nie są testem zmienionego kodu.
+- [x] Rzeczywiste testy Access/IdP/Edge, IP i firewalla jawnie wydzielone jako
+  **BLOCKED / REQUIRES PHASE 9 VERIFICATION**, z przygotowanymi live probes.
+  Brak deklaracji PASS dla niedopuszczonej osoby i skutecznego remote configu.
+
+Szczegółowy status każdego wymagania i dowód:
+[macierz C1–C2/X1–X2](docs/architecture/security-8b2-verification.md).
+DONE wymaga domknięcia lokalnej weryfikacji X2; publiczne E2E nadal są Phase 9.
 
 ### Acceptance criteria Phase 8
 

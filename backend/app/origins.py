@@ -50,9 +50,25 @@ def validate_browser_origins(browser: str, cors: str) -> None:
         raise ValueError("CORS_ORIGINS must be a subset of BROWSER_ALLOWED_ORIGINS")
 
 
+def validate_ingress_profile(profile: str, browser: str, cors: str, secure: bool, hsts: int) -> None:
+    """Shared by runtime and updater before dependencies/migrations/restart."""
+    if profile not in {"lan", "split"} or not 0 <= hsts <= 31536000:
+        raise ValueError("Invalid ingress profile or HSTS max-age")
+    if profile == "split":
+        origins = origin_list(browser, required=True)
+        if (len(origins) != 1 or not origins[0].startswith("https://")
+                or urlsplit(origins[0]).port is not None or not secure or origin_list(cors)):
+            raise ValueError("Split ingress requires one HTTPS origin on port 443, Secure cookie and no CORS")
+    elif hsts:
+        raise ValueError("HSTS requires split HTTPS ingress")
+
+
 if __name__ == "__main__":
     try:
-        if sys.argv[1] == "subset":
+        if sys.argv[1] == "profile":
+            validate_ingress_profile(sys.argv[2], sys.argv[3], sys.argv[4],
+                                     sys.argv[5] == "true", int(sys.argv[6]))
+        elif sys.argv[1] == "subset":
             validate_browser_origins(sys.argv[2], sys.argv[3])
         else:
             origin_list(sys.argv[2], required=sys.argv[1] == "browser_origins")

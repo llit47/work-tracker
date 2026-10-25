@@ -6,7 +6,7 @@ Obecny instalator i obecne wdrożenie nie konfigurują publicznego dostępu, dom
 
 ## Planned direction (not implemented)
 
-Po ukończeniu authentication/hardening (Phase 8) planowany jest dostęp do całej aplikacji pod dedykowaną, jeszcze nieustaloną subdomeną: Internet → Cloudflare → Cloudflare Tunnel → prywatny origin Work Trackera w LAN (Phase 9), bez przekierowania portów routera i bez bezpośredniego wystawienia LXC. Następnie planowana jest integracja z dedykowanym Google Calendar (Phase 10): projekcja wyłącznie poprawnych zakończonych sesji oraz ograniczone korekty godzin zarządzanych wydarzeń z powrotem w Work Trackerze. Calendar nie będzie źródłem raw events. Szczegóły i kryteria etapów są w `ROADMAP.md`; poniższe instrukcje dotyczą wyłącznie aktualnego wdrożenia LAN-only.
+Po ukończeniu authentication/hardening (Phase 8) planowany jest dostęp do całej aplikacji pod dedykowaną, jeszcze nieustaloną subdomeną: Internet → Cloudflare → Cloudflare Tunnel → prywatny origin Work Trackera w LAN (Phase 9), bez przekierowania portów routera i bez bezpośredniego wystawienia LXC. Następnie planowana jest integracja z dedykowanym Google Calendar (Phase 10): projekcja wyłącznie poprawnych zakończonych sesji oraz ograniczone korekty godzin zarządzanych wydarzeń z powrotem w Work Trackerze. Calendar nie będzie źródłem raw events. Szczegóły i kryteria etapów są w `ROADMAP.md`; standardowa instalacja poniżej dotyczy LAN-only; osobny profil przygotowania 8B2 nie aktywuje publicznego dostępu.
 
 ## Quick install
 
@@ -172,11 +172,11 @@ Token ma 256 bitów CSPRNG entropy (`secrets.token_urlsafe(32)`); `user_sessions
 
 Host-only cookie `work_tracker_session` ma `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age=15552000` i `Expires` odpowiadające absolute expiry. Cookie może pozostać w przeglądarce po wcześniejszym idle expiry/revocation, ale serwer go nie akceptuje. `/auth/me` nie usuwa cookie, aby spóźniona odpowiedź nie skasowała świeżego loginu. Login ma ten sam błąd dla błędnego hasła i nieistniejącego konta; brak konta wykonuje dummy Argon2 verification. Hasła/tokens nie trafiają do browser storage, URL-i ani logów aplikacji.
 
-Kod domyślnie używa `SESSION_COOKIE_SECURE=true`. Instalator i updater wymagają jawnej wartości w `/etc/work-tracker/work-tracker.env`: podczas obecnego LAN-only HTTP rollout wybierz `false` (domyślna propozycja manifestu dla tego wdrożenia). Updater dopisuje wyłącznie brakujący klucz i zachowuje istniejącą wartość. Developerski `.env.example` również jawnie ustawia `false`. **Każde przyszłe HTTPS/Internet wdrożenie musi ustawić `true` przed udostępnieniem.** Aplikacja nie wyznacza Secure z `X-Forwarded-*`; trusted proxy handling należy do 8B2. Ten etap nie włącza proxy, tunelu ani publicznego routingu.
+Kod domyślnie używa `SESSION_COOKIE_SECURE=true`. Instalator i updater wymagają jawnej wartości w `/etc/work-tracker/work-tracker.env`: podczas obecnego LAN-only HTTP rollout wybierz `false` (domyślna propozycja manifestu dla tego wdrożenia). Updater dopisuje wyłącznie brakujący klucz i zachowuje istniejącą wartość. Developerski `.env.example` również jawnie ustawia `false`. **Każde przyszłe HTTPS/Internet wdrożenie musi ustawić `true` przed udostępnieniem.** Aplikacja nie wyznacza Secure z `X-Forwarded-*`. Opcjonalny profil 8B2 opisano poniżej; zwykły update nie włącza proxy, tunelu ani publicznego routingu.
 
 Produkcja używa same-origin FastAPI/frontend. Istniejący Vite z `VITE_API_BASE_URL=http://localhost:8000` używa wszystkich API requests z `credentials: include` i jawnych `CORS_ORIGINS`; wildcard i origin `null` są odrzucane. Używaj tego samego hostname dla Vite i API (np. `localhost` po obu stronach, albo `127.0.0.1` po obu stronach), ponieważ SameSite=Lax nie służy do cross-site cookies. Przy frontendzie LAN ustaw oba adresy na ten sam hostname/IP, różniący się portem, i dodaj dokładny origin Vite do CORS. Zbudowany frontend production pozostawia `VITE_API_BASE_URL` puste.
 
-Migracja `20261006_07` jest addytywna: dodaje pustą tabelę sesji, bez zmiany istniejących użytkowników lub danych domenowych. Updater zachowuje backup/rollback; starszy kod nie potrzebuje tabeli sesji. 8B1-A nie zmienia schematu. 8B1-B dodaje wyłącznie tabelę `login_attempts` (opis poniżej); trusted proxy/Access i gotowość Internetu należą do 8B2.
+Migracja `20261006_07` jest addytywna: dodaje pustą tabelę sesji, bez zmiany istniejących użytkowników lub danych domenowych. Updater zachowuje backup/rollback; starszy kod nie potrzebuje tabeli sesji. 8B1-A nie zmienia schematu. 8B1-B dodaje wyłącznie tabelę `login_attempts` (opis poniżej); profil trusted ingress/Access 8B2 opisano poniżej, aktywacja należy do Phase 9.
 
 ### Ochrona mutacji i odpowiedzi (8B1-A)
 
@@ -252,7 +252,7 @@ Unit systemd jawnie uruchamia **`--workers 1 --no-proxy-headers`**. W LAN
 limiter bierze wyłącznie peer IP, ignoruje X-Forwarded-For, Forwarded i
 CF-Connecting-IP, również od localhost. Nie uruchamiać dodatkowych workerów ani
 instancji. Klienci za wspólnym NAT lub w tym samym IPv6 /64 współdzielą budżet.
-Nie dodano ustawień manifestu ani sekretów; to nadal LAN-only, bez proxy/tunelu.
+8B1-B nie dodaje ustawień ani sekretów; domyślny profil nadal jest LAN-only. Opcjonalne ustawienia 8B2 opisano poniżej.
 Frontend pokazuje polskie komunikaty 401/429/503 i czas z `Retry-After`.
 Sesje, heartbeat, logout i ochrona CSRF 8B1-A pozostają bez zmian.
 
@@ -262,9 +262,11 @@ Użyć istniejącego `sudo /opt/work-tracker/update.sh`: czysty checkout, backup
 SQLite, fast-forward, wspólny build klienta/backendu, stop usługi, addytywna
 migracja jako service user i restart z nowym unitem. Potwierdzić head
 `20261025_08`, jeden worker, login/logout/heartbeat, eksporty i oba webhooki HA.
-Ten PR nie wykonuje wdrożenia. Test instalacji pakietu i runtime jako service
-user nadal wymagają środowiska z `python3-venv` i uprawnieniami roota;
-8B1-A/B nie są oznaczone jako w pełni zweryfikowane produkcyjnie.
+Operator potwierdził wdrożenie 8B1-A/B oraz pozytywne testy package-install i
+service-user runtime na Debianie 13 LXC (main de963ae, head 20261025_08).
+To potwierdzenie operatora, nie samodzielny test Codexa w produkcji. Bieżące
+8B2 nie wykonuje deploymentu; ponowne lokalne package/runtime jest BLOCKED
+przez brak ensurepip i roota w środowisku Codexa.
 
 Rollback updatera przed migracją zachowuje DB; po rozpoczęciu migracji stosuje
 dotychczasowy restore z backupu przy zatrzymanej usłudze. Przy późniejszym ręcznym
@@ -273,6 +275,43 @@ bieżące dane pracy. Nie odtwarzać starej DB kosztem nowych raw events/korekt.
 Jeżeli konieczny jest restore, odwołać odtworzone sesje i odczekać pełne 15 minut
 przed ponownym dopuszczeniem loginów. Powrót do 8B1-A usuwa limiter, więc
 wyłącznie awaryjnie w izolowanym LAN.
+
+## Przygotowanie Cloudflare Access i HTTPS (8B2, bez aktywacji)
+
+Kod zawiera opt-in profil izolowanych ingressów. Obecny update pozostawia
+`INGRESS_PROFILE=lan` (domyślne), LAN HTTP i tokenowe webhooki bez zmian.
+Nie instaluje Nginx i nie tworzy Access/DNS/tunelu. Publiczny rollout to Phase 9.
+
+Docelowo: browser HTTPS → Access (jawne osoby/default-deny) → cloudflared w
+osobnym LXC (Protect with Access/JWT) → Nginx TLS w WT LXC (tylko źródło
+connectora) → lokalny Uvicorn. Osobny Nginx LAN HTTP przyjmuje tylko HA, na
+**dotychczasowym IP/porcie HA**. Backend rozróżnia ingressy po zachowanym
+peer transportowym 127.0.0.2/.3 i odrzuca pozostałe. Publiczne webhooki są
+blokowane niezależnie od sesji Access/WT; prywatne zachowują X-Webhook-Token.
+
+| Ustawienie | Obecne LAN | Docelowe split (dopiero Phase 9) |
+|---|---|---|
+| INGRESS_PROFILE | lan (opcjonalny klucz) | split |
+| BROWSER_ALLOWED_ORIGINS | dokładny dotychczasowy HTTP origin | jeden `https://<PUBLIC_HOSTNAME>` na 443 |
+| SESSION_COOKIE_SECURE | false wyłącznie w kontrolowanym LAN HTTP | true |
+| CORS_ORIGINS | dotychczasowy podzbiór origins | puste, same-origin |
+| BROWSER_HSTS_SECONDS | 0 (opcjonalny klucz) | najpierw 0, po testach 300 → 86400 → 31536000 |
+
+Runtime i updater sprawdzają spójność profilu przed uruchomieniem/migracją.
+Host-only HttpOnly/SameSite=Lax, CSRF i sesje 30 dni idle/180 dni absolute są
+bez zmian. Nadal jeden worker, dwa sloty Argon2id, 8 błędów/login i 30 prób/IP
+na 15 minut. Split używa CF-Connecting-IP tylko za potwierdzonym ingress;
+brak/błędny/duplikowany IP daje login 503, bez fallbacku do connectora.
+XFF/Forwarded nigdy nie ustalają IP. Nie zmieniać `--no-proxy-headers`.
+
+Przykłady z jawnymi placeholderami są w [deploy/ingress](deploy/ingress).
+Pełny [runbook operatora Phase 9](docs/deployment/phase9-ingress.md) zawiera
+Access local/remote, TLS między LXC, firewall/ACL, HTTPS cutover bez zmian HA,
+kontrolę IP/Workers/Pseudo IPv4, testy i rollback z zachowaniem prywatnych HA.
+[Macierz wymagań i dowodów](docs/architecture/security-8b2-verification.md)
+oddziela testy ASGI, prawdziwe Nginx/Uvicorn, walidator JWT cloudflared i
+**BLOCKED / REQUIRES PHASE 9 VERIFICATION** dla rzeczywistego konta/Edge.
+Brak nowej migracji; Alembic head pozostaje 20261025_08.
 
 ## Logs/status/restart
 
@@ -405,6 +444,21 @@ cd frontend
 npm test
 npm run build
 ```
+
+Dodatkowe lokalne testy ingress 8B2 (z root repo; narzędzia mogą być wypakowane
+poza checkoutem, testy nie uruchamiają tunelu):
+
+```bash
+WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/ingress_security_test.py -q
+WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN> backend/.venv/bin/pytest deploy/tests/cloudflared_config_test.py deploy/tests/ingress_config_test.py -q
+CLOUDFLARED_SOURCE_DIR=<SOURCE_2026.10.0> WORK_TRACKER_GO_BIN=<GO_BIN> deploy/tests/cloudflared_access_test.sh
+git diff --check
+```
+
+Brak rzeczywistych binarek jest błędem tych testów, nie cichym PASS/skip.
+Źródło/tag, checksum i granice dowodów opisuje macierz weryfikacji. Live probes
+`deploy/tests/access_live_test.py` są przygotowane wyłącznie dla operatora
+Phase 9 z prywatnymi fixtures; nie uruchamiać ich jako części lokalnego pytest.
 
 ## Endpointy
 

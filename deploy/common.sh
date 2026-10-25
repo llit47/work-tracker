@@ -109,6 +109,12 @@ validate_config_value() {
         boolean)
             [[ "${value}" == true || "${value}" == false ]]
             ;;
+        ingress_profile)
+            [[ "${value}" == lan || "${value}" == split ]]
+            ;;
+        hsts_seconds)
+            [[ "${value}" =~ ^(0|[1-9][0-9]{0,7})$ ]] && ((value <= 31536000))
+            ;;
         *) return 1 ;;
     esac
 }
@@ -167,7 +173,7 @@ validate_manifest_row() {
     [[ "${visibility}" == plain || "${visibility}" == secret ]] || fail "Invalid visibility for ${key}."
     [[ "${visibility}" != secret || -z "${default_value}" ]] || fail "Secret ${key} cannot define a displayed default."
     case "${validator}" in
-        token|port|host|database_url|cors|browser_origins|nonempty|boolean) ;;
+        token|port|host|database_url|cors|browser_origins|nonempty|boolean|ingress_profile|hsts_seconds) ;;
         *) fail "Invalid validator for ${key}." ;;
     esac
 }
@@ -210,5 +216,12 @@ validate_required_config() {
         if read_env_value "${env_file}" CORS_ORIGINS; then cors_origins="${REPLY}"; fi
         python3 "${WORK_TRACKER_DEPLOY_DIR}/../backend/app/origins.py" subset "${browser_origins}" "${cors_origins}" \
             || fail "CORS_ORIGINS must be a subset of BROWSER_ALLOWED_ORIGINS."
+        local ingress_profile=lan hsts_seconds=0 cookie_secure=false
+        if read_env_value "${env_file}" INGRESS_PROFILE; then ingress_profile="${REPLY}"; fi
+        if read_env_value "${env_file}" BROWSER_HSTS_SECONDS; then hsts_seconds="${REPLY}"; fi
+        if read_env_value "${env_file}" SESSION_COOKIE_SECURE; then cookie_secure="${REPLY}"; fi
+        python3 "${WORK_TRACKER_DEPLOY_DIR}/../backend/app/origins.py" profile \
+            "${ingress_profile}" "${browser_origins}" "${cors_origins}" "${cookie_secure}" "${hsts_seconds}" \
+            || fail "Inconsistent ingress/browser configuration."
     fi
 }
