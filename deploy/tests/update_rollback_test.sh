@@ -107,3 +107,25 @@ cmp -s "${ENV_FILE}" "${ENV_FILE}.snapshot"
 [[ "${permission_calls}" -eq 3 ]]
 
 printf 'Update rollback tests passed.\n'
+
+# First 8B1-A update: missing operator config fails before migration/new service.
+# Late raw events must survive this pre-migration rollback; env stays untouched.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/common.sh"
+set_application_permissions() { return 0; }
+git -C "${APP_DIR}" reset --hard -q "${NEW_COMMIT}"
+printf 'BROWSER_ALLOWED_ORIGINS|required|plain||Explicit browser origin|browser_origins\n' >"${TEST_DIR}/new.manifest"
+printf 'live data including new raw events\n' >"${DATABASE_FILE}"
+touch "${STATE_DIR}/active"
+if (exec 3</dev/null; sync_missing_required_config "${TEST_DIR}/new.manifest" "${ENV_FILE}") >"${TEST_DIR}/config-error" 2>&1; then
+    printf 'Missing origin unexpectedly accepted.\n' >&2
+    exit 1
+fi
+grep -q BROWSER_ALLOWED_ORIGINS "${TEST_DIR}/config-error"
+perform_update_rollback \
+    "${APP_DIR}" "${PREVIOUS_COMMIT}" true false "${DATABASE_FILE}" "${BACKUP_FILE}" \
+    "${SERVICE_FILE}" "${UNIT_BACKUP}" "${SERVICE_USER}" true
+grep -qx 'live data including new raw events' "${DATABASE_FILE}"
+cmp -s "${ENV_FILE}" "${ENV_FILE}.snapshot"
+[[ "$(git -C "${APP_DIR}" rev-parse HEAD)" == "${PREVIOUS_COMMIT}" ]]
+[[ -f "${STATE_DIR}/active" ]]
+printf 'Missing browser configuration rollback test passed.\n'

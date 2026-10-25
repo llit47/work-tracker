@@ -11,6 +11,8 @@ from pydantic import ValidationError
 from sqlalchemy import event, select, text, update
 import pytest
 
+from conftest import BROWSER_HEADERS
+
 from app import auth
 from app.config import Settings
 from app.identity import create_user, password_needs_rehash, verify_password
@@ -35,13 +37,13 @@ def setup(tmp_path):
         session.add(PayRate(effective_from=date(1970, 1, 1), hourly_rate=Decimal('50.00'),
                             currency='PLN', created_at=clock[0]))
         session.commit()
-    with TestClient(app) as client:
+    with TestClient(app, headers=BROWSER_HEADERS) as client:
         yield client, factory, clock
     factory.kw['bind'].dispose()
 
 
 def login(client, username='owner', password=PASSWORD):
-    return client.post('/api/auth/login', json={'username': username, 'password': password})
+    return client.post('/api/auth/login', headers=BROWSER_HEADERS, json={'username': username, 'password': password})
 
 
 def test_login_normalization_and_me(setup, caplog):
@@ -194,7 +196,7 @@ def test_cookie_attributes_and_no_forwarded_header_inference(setup, secure):
     app = create_app(Settings(webhook_token=WEBHOOK_TOKEN,
                      database_url=str(factory.kw['bind'].url), session_cookie_secure=secure),
                      now_provider=lambda: clock[0])
-    with TestClient(app, base_url='https://testserver' if secure else 'http://testserver') as client:
+    with TestClient(app, headers=BROWSER_HEADERS, base_url='https://testserver' if secure else 'http://testserver') as client:
         response = client.post('/api/auth/login', json={'username': 'owner', 'password': PASSWORD},
                                headers={'X-Forwarded-Proto': 'https' if not secure else 'http'})
         cookie = response.headers['set-cookie']
@@ -241,15 +243,15 @@ def test_activity_writes_are_coalesced_and_token_absolute_expiry_stable(setup):
     engine = factory.kw['bind']
     event.listen(engine, 'before_cursor_execute', track)
     try:
-        clock[0] += timedelta(minutes=59, seconds=59)
+        clock[0] += timedelta(hours=1, microseconds=-1)
         for _ in range(10):
-            response = client.get('/api/auth/me')
+            response = client.post('/api/auth/heartbeat')
             assert response.status_code == 200 and 'set-cookie' not in response.headers
         assert not writes
         clock[0] = initial + timedelta(hours=1)
-        assert client.get('/api/auth/me').status_code == 200
+        assert client.post('/api/auth/heartbeat').status_code == 200
         assert len(writes) == 1
-        assert client.get('/api/auth/me').status_code == 200
+        assert client.post('/api/auth/heartbeat').status_code == 200
         assert len(writes) == 1
     finally:
         event.remove(engine, 'before_cursor_execute', track)
@@ -264,7 +266,7 @@ def test_concurrent_logins_create_independently_revocable_sessions(setup):
     client, factory, clock = setup
     app = client.app
     def independent_login(_):
-        with TestClient(app) as device:
+        with TestClient(app, headers=BROWSER_HEADERS) as device:
             assert login(device).status_code == 200
             return device.cookies.get(auth.COOKIE_NAME)
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -272,12 +274,12 @@ def test_concurrent_logins_create_independently_revocable_sessions(setup):
     assert len(set(tokens)) == 2
     clock[0] += timedelta(hours=1)
     def touch(token):
-        with TestClient(app) as device:
+        with TestClient(app, headers=BROWSER_HEADERS) as device:
             device.cookies.set(auth.COOKIE_NAME, token)
-            return device.get('/api/auth/me').status_code
+            return device.post('/api/auth/heartbeat').status_code
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(pool.map(touch, [tokens[0], tokens[0]])) == [200, 200]
-    with TestClient(app) as device:
+    with TestClient(app, headers=BROWSER_HEADERS) as device:
         device.cookies.set(auth.COOKIE_NAME, tokens[0])
         assert device.post('/api/auth/logout').status_code == 204
     assert touch(tokens[0]) == 401 and touch(tokens[1]) == 200
@@ -288,8 +290,9 @@ def test_concurrent_logins_create_independently_revocable_sessions(setup):
     assert touch(tokens[1]) == 401
 
 
+@pytest.mark.parametrize('browser_headers', [False, True])
 @pytest.mark.parametrize('browser_session', ['none', 'valid', 'malformed', 'revoked'])
-def test_ha_auth_independent(setup, browser_session):
+def test_ha_auth_independent(setup, browser_session, browser_headers):
     client, factory, clock = setup
     if browser_session in ['valid', 'revoked']:
         login(client)
@@ -299,6 +302,10 @@ def test_ha_auth_independent(setup, browser_session):
         with factory() as session:
             session.execute(update(UserSession).values(revoked_at=clock[0]))
             session.commit()
+    client.headers.pop('Origin', None)
+    client.headers.pop('X-Work-Tracker-Request', None)
+    if browser_headers:
+        client.headers.update({'Origin': 'null', 'X-Work-Tracker-Request': 'invalid'})
     from app.models import LocationTimezone
     with factory() as session:
         session.add(LocationTimezone(location='gabinet_zabki', timezone='Europe/Warsaw',
@@ -336,7 +343,7 @@ def test_activity_touch_cannot_revive_session_revoked_concurrently(setup):
                 session.commit()
     event.listen(engine, 'before_cursor_execute', revoke_before_touch)
     try:
-        assert client.get('/api/auth/me').status_code == 401
+        assert client.post('/api/auth/heartbeat').status_code == 401
     finally:
         event.remove(engine, 'before_cursor_execute', revoke_before_touch)
     with factory() as session:
@@ -391,7 +398,7 @@ def test_session_survives_application_restart(setup):
     restarted = create_app(Settings(webhook_token=WEBHOOK_TOKEN,
                            database_url=str(factory.kw['bind'].url), session_cookie_secure=False),
                            now_provider=lambda: clock[0])
-    with TestClient(restarted) as device:
+    with TestClient(restarted, headers=BROWSER_HEADERS) as device:
         device.cookies.set(auth.COOKIE_NAME, token)
         assert device.get('/api/auth/me').json()['username'] == 'owner'
     restarted.state.session_factory.kw['bind'].dispose()

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # Shared deployment helpers. Calling scripts enable strict mode themselves.
+WORK_TRACKER_DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() {
     printf '[work-tracker] %s\n' "$*"
@@ -63,8 +64,8 @@ set_application_permissions() {
 
 require_prompt_fd() {
     if ! { true <&3; } 2>/dev/null; then
-        [[ -r /dev/tty ]] || fail "Interactive configuration requires a terminal."
-        exec 3</dev/tty
+        { exec 3</dev/tty; } 2>/dev/null \
+            || fail "Interactive configuration requires a terminal. Set missing required keys in the env file and retry."
     fi
 }
 
@@ -99,8 +100,8 @@ validate_config_value() {
         database_url)
             [[ "${value}" == "sqlite:////var/lib/work-tracker/work_tracker.db" ]]
             ;;
-        cors)
-            [[ -z "${value}" || "${value}" =~ ^https?://[A-Za-z0-9._:-]+(,https?://[A-Za-z0-9._:-]+)*$ ]]
+        cors|browser_origins)
+            python3 "${WORK_TRACKER_DEPLOY_DIR}/../backend/app/origins.py" "${validator}" "${value}"
             ;;
         nonempty)
             [[ -n "${value}" ]]
@@ -134,10 +135,10 @@ prompt_config_value() {
         fi
 
         if [[ "${visibility}" == secret ]]; then
-            IFS= read -r -s value <&3
+            IFS= read -r -s value <&3 || fail "Missing configuration input. Set the required key in the env file and retry."
             printf '\n'
         else
-            IFS= read -r value <&3
+            IFS= read -r value <&3 || fail "Missing configuration input. Set the required key in the env file and retry."
         fi
 
         if [[ -z "${value}" && -n "${default_value}" ]]; then
@@ -166,7 +167,7 @@ validate_manifest_row() {
     [[ "${visibility}" == plain || "${visibility}" == secret ]] || fail "Invalid visibility for ${key}."
     [[ "${visibility}" != secret || -z "${default_value}" ]] || fail "Secret ${key} cannot define a displayed default."
     case "${validator}" in
-        token|port|host|database_url|cors|nonempty|boolean) ;;
+        token|port|host|database_url|cors|browser_origins|nonempty|boolean) ;;
         *) fail "Invalid validator for ${key}." ;;
     esac
 }
@@ -197,8 +198,17 @@ validate_required_config() {
     while IFS='|' read -r key requirement visibility default_value prompt validator; do
         [[ -z "${key}" || "${key}" == \#* ]] && continue
         validate_manifest_row "${key}" "${requirement}" "${visibility}" "${default_value}" "${validator}"
-        [[ "${requirement}" == required ]] || continue
-        read_env_value "${env_file}" "${key}" || fail "Missing required configuration key: ${key}."
-        validate_config_value "${validator}" "${REPLY}" || fail "Invalid value for required configuration key: ${key}."
+        if ! read_env_value "${env_file}" "${key}"; then
+            [[ "${requirement}" == optional ]] && continue
+            fail "Missing required configuration key: ${key}."
+        fi
+        validate_config_value "${validator}" "${REPLY}" || fail "Invalid value for configuration key: ${key}."
     done <"${manifest_file}"
+    if env_has_key "${env_file}" BROWSER_ALLOWED_ORIGINS; then
+        read_env_value "${env_file}" BROWSER_ALLOWED_ORIGINS
+        local browser_origins="${REPLY}" cors_origins=""
+        if read_env_value "${env_file}" CORS_ORIGINS; then cors_origins="${REPLY}"; fi
+        python3 "${WORK_TRACKER_DEPLOY_DIR}/../backend/app/origins.py" subset "${browser_origins}" "${cors_origins}" \
+            || fail "CORS_ORIGINS must be a subset of BROWSER_ALLOWED_ORIGINS."
+    fi
 }

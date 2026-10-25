@@ -105,6 +105,7 @@ new_commit="$(git rev-parse HEAD)"
 source "${APP_DIR}/deploy/common.sh"
 # shellcheck source=deploy/update_rollback.sh
 source "${APP_DIR}/deploy/update_rollback.sh"
+log "Validating required configuration and browser origins before dependency updates, migrations or restart."
 sync_missing_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
 validate_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
 chown root:"${SERVICE_USER}" "${CONFIG_FILE}"

@@ -42,6 +42,7 @@ Instalator pyta interaktywnie o:
 - adres nasłuchu, domyślnie `0.0.0.0`,
 - port backendu, domyślnie `8000`,
 - token webhooka (minimum 32 znaki) lub zgodę przez pozostawienie pustej wartości na jego bezpieczne wygenerowanie,
+- `BROWSER_ALLOWED_ORIGINS`: jawną niepustą listę pełnych origins przeglądarki (scheme, host, port), bez ścieżek i wildcardów; brak proponowanej szerokiej wartości domyślnej,
 - originy CORS, jeśli frontend ma działać z innego originu,
 - `SESSION_COOKIE_SECURE`: `false` wyłącznie dla obecnego zaufanego LAN HTTP; `true` obowiązkowo dla HTTPS.
 
@@ -68,6 +69,39 @@ sudo /opt/work-tracker/update.sh
 Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Przed zmianami wykonuje spójny backup SQLite, następnie pobiera kod przez fast-forward, aktualizuje zależności, instaluje frontend według `package-lock.json`, wykonuje build i migracje oraz restartuje usługę. W razie błędu po zmianie commita automatycznie przywraca poprzedni commit, zależności, frontend i unit systemd. Jeżeli migracja już się rozpoczęła, najpierw zatrzymuje usługę i odtwarza bazę z backupu. Backup nie jest usuwany. Przy niepełnym rollbacku updater nie próbuje uruchamiać usługi i wyświetla wyraźne ostrzeżenia oraz instrukcje diagnostyczne; ostrzega też osobno, jeśli samego zatrzymania usługi nie udało się potwierdzić.
 
 Nowe wymagane ustawienia są definiowane w `deploy/config.manifest`. Updater dopisuje wyłącznie brakujące wymagane klucze, pyta o ich wartości i pokazuje bezpieczne wartości domyślne. Nie zmienia istniejących wartości, nie usuwa starszych lub nieznanych wpisów i nigdy nie wypisuje sekretów. Jeśli nie ma nowych wymaganych kluczy, aktualizacja nie zadaje pytań konfiguracyjnych.
+
+### Pierwsza aktualizacja do 8B1-A i zmiana adresu
+
+Przed aktualizacją istniejącego LXC dopisz w `/etc/work-tracker/work-tracker.env`
+origin faktycznie używany do otwierania aplikacji, przykładowo:
+
+```dotenv
+BROWSER_ALLOWED_ORIGINS=http://192.168.1.50:8000
+CORS_ORIGINS=
+SESSION_COOKIE_SECURE=false
+```
+
+Podstaw własny stabilny adres LAN lub DNS (np. `http://work-tracker.home.arpa:8000`).
+Lista jest rozdzielana przecinkami. Nie wpisuj adresu nasłuchu `0.0.0.0`, ścieżki,
+wildcardu ani `null`. Backend i deploy używają tego samego walidatora;
+scheme/host i domyślne porty są kanonizowane. `CORS_ORIGINS` musi być podzbiorem
+`BROWSER_ALLOWED_ORIGINS`; dla produkcyjnego same-origin pozostaje puste.
+Vite wymaga dodania jego originu do obu list, np. `http://localhost:5173`.
+
+Brak klucza powoduje pytanie updatera, bez zgadywania adresu. Brak odpowiedzi,
+nieprawidłowa wartość albo zbyt szeroki CORS przerywa aktualizację przed zmianą
+zależności, migracją i restartem nowej wersji. Działa dotychczasowy rollback kodu,
+frontendu i unitu; przed rozpoczęciem migracji baza z nowymi eventami pozostaje
+nietknięta. Backend bez poprawnej konfiguracji nie startuje. Rollback do 8A3
+usuwa nową ochronę mutacji, więc służy wyłącznie awaryjnemu użyciu w izolowanym LAN.
+
+Po udanym update przeładuj stronę, aby pobrać klienta ze znacznikiem żądań;
+stary klient otrzyma 403 przy mutacji. Sprawdź login/logout, heartbeat po kliknięciu
+w widocznej karcie, korektę, eksporty i oba webhooki HA bez browser cookie.
+Po zmianie DHCP/hosta/portu uaktualnij obie listy i zrestartuj usługę, sprawdź nowy
+adres, potem usuń stary origin. Zmiana hosta wymaga nowego loginu; w razie zmiany
+adresu backendu popraw również URL integracji HA. Brak nowego originu daje 403.
+8B1-A nie wymaga migracji, tabeli ani nowego sekretu; head to `20261006_07`.
 
 ## Utworzenie pierwszego użytkownika (Phase 8A1)
 
@@ -125,15 +159,15 @@ Centralny pure-ASGI guard chroni każde HTTP `/api` oraz `/api/...` przed routin
 - `POST /api/webhook/home-assistant` — wyłącznie własny `X-Webhook-Token`;
 - `POST /api/webhook/home-assistant/correction` — wyłącznie własny `X-Webhook-Token`.
 
-Wyjątki nie obejmują innych metod, podścieżek ani końcowego `/`. Sesja browser nie zastępuje tokenu HA i nie jest dodatkowym wymaganiem dla HA. Statyczne pliki poza `/api` pozostają anonimowo dostępne, aby zawsze można było załadować ekran logowania. Dokumentacja FastAPI (`/api/docs`, `/api/redoc`, `/api/openapi.json`) również wymaga sesji. Nowe domain endpoints muszą znajdować się w `/api/...` i automatycznie dziedziczą ochronę.
+Wyjątki nie obejmują innych metod, podścieżek ani końcowego `/`. Sesja browser nie zastępuje tokenu HA i nie jest dodatkowym wymaganiem dla HA. Statyczne pliki poza `/api` pozostają anonimowo dostępne, aby zawsze można było załadować ekran logowania. OpenAPI JSON (`/api/openapi.json`) wymaga sesji. Interaktywny HTML Swagger/ReDoc jest wyłączony, również w development, ponieważ wymagał CDN/inline niezgodnych z CSP. Nowe domain endpoints muszą znajdować się w `/api/...` i automatycznie dziedziczą ochronę.
 
-Reload przywraca sesję przez `/api/auth/me`; zalogowana widoczna karta sprawdza ją co 5 minut i po odzyskaniu focus. Wszystkie ordinary API calls (również mutacje i eksporty) wysyłają cookie przez `credentials: include`. HTTP 401 z dowolnego domain requestu albo `/auth/me` oznacza globalną utratę sesji: UI wraca do loginu z „Sesja wygasła. Zaloguj się ponownie.”, usuwa lokalny stan pracy/płac/ustawień i zatrzymuje polling dashboardu. Dane w bazie pozostają nienaruszone. Wersjonowanie obejmuje odpowiedzi i odczyt JSON/blob, aby stare odpowiedzi nie przywróciły danych ani nie wylogowały nowego loginu. Logout natychmiast ukrywa dane; błąd sieci zgłasza nieudane odwołanie sesji, bez przywracania lokalnego widoku. Błąd sieci przy sprawdzaniu już aktywnej sesji pozostawia aktualny widok do ponowienia; pierwsze nieudane sprawdzenie nie otwiera aplikacji.
+Reload przywraca sesję przez read-only `/api/auth/me`; zalogowana widoczna karta sprawdza ją co 5 minut. Focus/powrót do aplikacji i interakcje użytkownika wysyłają osobny `POST /api/auth/heartbeat`, najwyżej raz na 5 minut. Sam polling, także widocznej bezczynnej karty, nie odnawia idle. Wszystkie ordinary API calls (również mutacje i eksporty) wysyłają cookie przez `credentials: include`. HTTP 401 z dowolnego domain requestu, `/auth/me` albo heartbeat oznacza globalną utratę sesji: UI wraca do loginu z „Sesja wygasła. Zaloguj się ponownie.”, usuwa lokalny stan pracy/płac/ustawień i zatrzymuje polling dashboardu. Dane w bazie pozostają nienaruszone. Wersjonowanie obejmuje odpowiedzi i odczyt JSON/blob, aby stare odpowiedzi nie przywróciły danych ani nie wylogowały nowego loginu. Logout natychmiast ukrywa dane; błąd sieci zgłasza nieudane odwołanie sesji, bez przywracania lokalnego widoku. Błąd sieci przy sprawdzaniu już aktywnej sesji pozostawia aktualny widok do ponowienia; pierwsze nieudane sprawdzenie nie otwiera aplikacji. Heartbeat nie odtwarza automatycznie nieudanego żądania.
 
-Przed rolloutem operator powinien potwierdzić istniejące konto i poprawny login oraz jawne `SESSION_COOKIE_SECURE=false` dla obecnego LAN HTTP. Po aktualizacji sprawdź: anonimowy shell → login → dashboard → logout → login oraz oba webhooki HA bez browser cookie. 8A3 nie wymaga migracji ani nowej konfiguracji; head pozostaje `20261006_07`. Istniejący updater/backup/rollback pozostaje bez zmian; wycofanie do 8A2 ponownie otworzy ordinary API dla LAN.
+Przed rolloutem operator powinien potwierdzić istniejące konto, poprawny login, jawne origins oraz `SESSION_COOKIE_SECURE=false` dla obecnego LAN HTTP. Procedura pierwszego update do 8B1-A znajduje się powyżej; obecna produkcja pozostaje LAN-only.
 
-Sesja wygasa dokładnie po **30 dniach od zapisanego `last_seen_at`** albo po **180 dniach od początkowego loginu**, zależnie od tego, co nastąpi wcześniej; na samej granicy jest już nieważna. Activity update nie przedłuża 180 dni. Zwykłe protected API requests wyłącznie walidują sesję i **nie zmieniają `last_seen_at`**, także przy background polling dashboardu i miesięcznych danych. Wyłącznie udany `/api/auth/me`, jako świadomy heartbeat/activity widocznej przeglądarki, zapisuje activity najwyżej raz na godzinę; warunkowy UPDATE nie cofa czasu i nie wskrzesza expired/revoked sesji. Coalescing oznacza, że ostatnie żądanie przed zamknięciem karty może być późniejsze od `last_seen_at` o mniej niż godzinę. HA i pozostałe session-independent wyjątki nie zapisują activity. Ukryta karta nie wysyła okresowego auth heartbeat; jej ewentualny throttled domain polling nie odnawia idle.
+Sesja wygasa dokładnie po **30 dniach od zapisanego `last_seen_at`** albo po **180 dniach od początkowego loginu**, zależnie od tego, co nastąpi wcześniej; na samej granicy jest już nieważna. Activity update nie przedłuża 180 dni. Zwykłe protected API requests i `GET /api/auth/me` wyłącznie walidują sesję i **nie zmieniają `last_seen_at`**. `/me` nie wykonuje cleanup/rotacji ani żadnego Set-Cookie. Wyłącznie udany chroniony `POST /api/auth/heartbeat` zapisuje activity najwyżej raz na godzinę; warunkowy UPDATE nie cofa czasu i nie wskrzesza expired/revoked sesji. Coalescing oznacza, że ostatnie żądanie przed zamknięciem karty może być późniejsze od `last_seen_at` o mniej niż godzinę. HA i pozostałe session-independent wyjątki nie zapisują activity. Ukryta karta nie wysyła heartbeat; background domain polling nie odnawia idle.
 
-Token ma 256 bitów CSPRNG entropy (`secrets.token_urlsafe(32)`); `user_sessions` przechowuje tylko SHA-256, ID, FK do użytkownika i UTC created_at/last_seen_at/expires_at/revoked_at. Nie potrzeba sekretu podpisującego cookie. Każdy poprawny login tworzy nowy token i osobną sesję. Token jest stabilny do logout/expiry; brak okresowej rotacji to świadoma, kompletna polityka 8A2. Transparentna rotacja z race-safe recovery będzie projektowana w 8B1. Logout zapisuje revocation i usuwa cookie; inne urządzenia pozostają zalogowane. Indeks user_id umożliwia późniejsze bulk revocation. Nie ma background cleanup; nieważne rekordy pozostają w bazie i nie dają dostępu.
+Token ma 256 bitów CSPRNG entropy (`secrets.token_urlsafe(32)`); `user_sessions` przechowuje tylko SHA-256, ID, FK do użytkownika i UTC created_at/last_seen_at/expires_at/revoked_at. Nie potrzeba sekretu podpisującego cookie. Każdy poprawny login tworzy nowy token i osobną sesję. Token jest stabilny do logout/expiry; okresowa rotacja/recovery pozostaje poza obowiązkowym planem. Logout zapisuje revocation i usuwa cookie; inne urządzenia pozostają zalogowane. Indeks user_id umożliwia późniejsze bulk revocation. Nie ma background cleanup; nieważne rekordy pozostają w bazie i nie dają dostępu.
 
 Host-only cookie `work_tracker_session` ma `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age=15552000` i `Expires` odpowiadające absolute expiry. Cookie może pozostać w przeglądarce po wcześniejszym idle expiry/revocation, ale serwer go nie akceptuje. `/auth/me` nie usuwa cookie, aby spóźniona odpowiedź nie skasowała świeżego loginu. Login ma ten sam błąd dla błędnego hasła i nieistniejącego konta; brak konta wykonuje dummy Argon2 verification. Hasła/tokens nie trafiają do browser storage, URL-i ani logów aplikacji.
 
@@ -141,7 +175,38 @@ Kod domyślnie używa `SESSION_COOKIE_SECURE=true`. Instalator i updater wymagaj
 
 Produkcja używa same-origin FastAPI/frontend. Istniejący Vite z `VITE_API_BASE_URL=http://localhost:8000` używa wszystkich API requests z `credentials: include` i jawnych `CORS_ORIGINS`; wildcard i origin `null` są odrzucane. Używaj tego samego hostname dla Vite i API (np. `localhost` po obu stronach, albo `127.0.0.1` po obu stronach), ponieważ SameSite=Lax nie służy do cross-site cookies. Przy frontendzie LAN ustaw oba adresy na ten sam hostname/IP, różniący się portem, i dodaj dokładny origin Vite do CORS. Zbudowany frontend production pozostawia `VITE_API_BASE_URL` puste.
 
-Migracja `20261006_07` jest addytywna: dodaje pustą tabelę sesji, bez zmiany istniejących użytkowników lub danych domenowych. Updater zachowuje backup/rollback; starszy kod nie potrzebuje tabeli sesji. Następny etap to 8B1: full CSRF, rate limiting i race-safe transparentna rotacja/recovery oraz dalsze browser hardening, a trusted proxy review — 8B2.
+Migracja `20261006_07` jest addytywna: dodaje pustą tabelę sesji, bez zmiany istniejących użytkowników lub danych domenowych. Updater zachowuje backup/rollback; starszy kod nie potrzebuje tabeli sesji. 8B1-A nie zmienia schematu. Login rate limiting pozostaje planem 8B1-B; trusted proxy/Access i gotowość Internetu należą do 8B2.
+
+### Ochrona mutacji i odpowiedzi (8B1-A)
+
+Każda browser mutacja `/api` (wszystkie metody poza GET/HEAD/OPTIONS, w tym
+login/logout/heartbeat i przyszłe trasy/mounty) wymaga jednego dozwolonego
+`Origin` oraz dokładnie `X-Work-Tracker-Request: 1`. Frontend dodaje znacznik
+centralnie. Brak/null/zły Origin lub znacznik daje 403; nie ma fallbacku do Host,
+Referer, forwarded ani Sec-Fetch headers. Dla operacji z body wymagany jest
+`application/json`, opcjonalnie `charset=UTF-8`; simple types i nieobsługiwane
+kodowania dają 415. Poprawny preflight OPTIONS nadal działa bez sesji.
+Skryptowy klient browser API musi wysyłać te same nagłówki i zachowywać cookie.
+Wyłącznie dwa dokładne webhooki HA są zwolnione z tej polityki i nadal wymagają
+własnego `X-Webhook-Token`, niezależnie od browser cookie/Origin/znacznika.
+
+Login ma strumieniowy limit **16384 bajtów body** przed JSON i Argon2id,
+niezależnie od Content-Length; przekroczenie daje 413. Hasło po unescape
+nadal ma 15–1024 punkty kodowe Unicode, bez trim/normalizacji, NUL i samotnych
+surrogate; również 1024 emoji zapisane jako pary escape mieszczą się w limicie.
+422/401 nie odbijają hasła ani całego inputu.
+
+Pozostałe browser mutations mają limit **1048576 bajtów (1 MiB)**, również
+dla body przesyłanego fragmentami i bez względu na Content-Length. Limit jest
+sprawdzany przed dopisaniem fragmentu do bufora; przekroczenie daje 413 przed
+walidacją JSON i wykonaniem operacji. Buforowanie pozwala odrzucić wadliwy JSON
+również w operacjach ignorujących body. Limit nie obejmuje obu webhooków HA.
+
+Odpowiedzi otrzymują CSP `default-src 'self'; script-src 'self'; style-src 'self';
+object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` oraz
+`X-Frame-Options: DENY`. Auth, prywatne API, CSV/PDF, login HTML i błędy mają
+`Cache-Control: no-store`. Bez HSTS/wymuszania HTTPS w obecnym LAN HTTP.
 
 ## Logs/status/restart
 
@@ -242,7 +307,7 @@ Powyższa komenda nasłuchuje tylko na komputerze lokalnym i jest właściwa do 
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Nie oznacza to publicznego dostępu: nie konfiguruj przekierowania portów, publicznego IP ani tunelu. Dostęp powinien być ograniczony do zaufanej sieci LAN przez konfigurację sieci serwera. Home Assistant nie wymaga CORS; CORS dotyczy wyłącznie przeglądarkowego frontendu. Jeśli frontend Vite działa pod innym adresem LAN, dodaj jego pełny origin do `CORS_ORIGINS`.
+Nie oznacza to publicznego dostępu: nie konfiguruj przekierowania portów, publicznego IP ani tunelu. Dostęp powinien być ograniczony do zaufanej sieci LAN przez konfigurację sieci serwera. Home Assistant nie wymaga CORS; CORS dotyczy wyłącznie przeglądarkowego frontendu. Jeśli frontend Vite działa pod innym adresem LAN, dodaj jego pełny origin do `CORS_ORIGINS` i `BROWSER_ALLOWED_ORIGINS`.
 
 ## Migracje
 
@@ -280,7 +345,8 @@ npm run build
 Poza sześcioma wyjątkami opisanymi powyżej wszystkie endpointy API wymagają session cookie. Klient skryptowy ordinary API musi najpierw zalogować się przez `/api/auth/login` i zachować cookie (np. `curl -c` / `curl -b` z prywatnym plikiem cookie poza checkoutem). Nie przekazuj hasła ani tokenu w URL.
 
 - `POST /api/auth/login` — JSON username/password, nowa trwała sesja i HttpOnly cookie; ogólny błąd HTTP 401 dla nieprawidłowych credentials.
-- `GET /api/auth/me` — username i absolute expires_at bieżącej sesji; invalid/expired/revoked cookie zwraca HTTP 401. Używa wspólnego walidatora z guardem ordinary API.
+- `GET /api/auth/me` — read-only username i absolute expires_at; invalid/expired/revoked cookie zwraca HTTP 401. Bez zapisu aktywności i Set-Cookie.
+- `POST /api/auth/heartbeat` — ważna sesja, dozwolony Origin i znacznik; puste body lub JSON `{}`; 200 username/expires_at, bez Set-Cookie. Odnawia idle najwyżej raz na godzinę, bez zmiany absolute expiry.
 - `POST /api/auth/logout` — HTTP 204, server-side revocation i usunięcie cookie; bez ważnej sesji również bezpieczny no-op.
 
 - `POST /api/webhook/home-assistant` — przyjmuje JSON webhooka, zapisuje immutable raw event i zwraca jego `id`, status oraz dane prezentacyjne; wymaga nagłówka `X-Webhook-Token`.

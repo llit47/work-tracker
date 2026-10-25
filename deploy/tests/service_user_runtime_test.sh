@@ -48,6 +48,7 @@ runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/uvicorn" --version
     runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/python" -c 'import app'
     runuser -u "${SERVICE_USER}" -- env \
         WEBHOOK_TOKEN='service-user-test-token-at-least-32-characters' \
+        BROWSER_ALLOWED_ORIGINS='http://127.0.0.1:8000' \
         DATABASE_URL='sqlite:///:memory:' \
         "${APP_DIR}/backend/.venv/bin/python" \
         -c 'from app.main import app; assert app.title == "Work Tracker API"'
@@ -66,6 +67,7 @@ PORT="$("${APP_DIR}/backend/.venv/bin/python" -c 'import socket; s = socket.sock
     cd "${APP_DIR}/backend"
     exec runuser -u "${SERVICE_USER}" -- env \
         WEBHOOK_TOKEN='service-user-test-token-at-least-32-characters' \
+        BROWSER_ALLOWED_ORIGINS="http://127.0.0.1:${PORT}" \
         DATABASE_URL="sqlite:///${DATABASE_FILE}" \
         .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${PORT}"
 ) >"${TEST_DIR}/uvicorn.log" 2>&1 &

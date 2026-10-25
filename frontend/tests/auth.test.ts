@@ -118,3 +118,83 @@ const count = domainCalls
 await expectStale(protectedAfterLoss('/api/dashboard'), 'new domain requests stop after auth loss')
 assert(domainCalls === count, 'no background request after auth loss')
 console.log('Global 401 and stale response tests passed.')
+
+// Heartbeats require visible user activity; read-only refresh cannot renew idle.
+const heartbeatCalls: { url: string; init?: RequestInit }[] = []
+let activityState: AuthState = INITIAL_AUTH_STATE
+let activityStatus = 200
+let activityFailure = false
+const activityAuth = createAuthController(async (url, init) => {
+  heartbeatCalls.push({ url, init })
+  if (activityFailure) throw new Error('offline')
+  return { ok: activityStatus === 200, status: activityStatus, json: async () => user }
+}, '', (next) => { activityState = next })
+await activityAuth.activity(true, 0)
+assert(heartbeatCalls.length === 0, 'anonymous activity never sends heartbeat')
+await activityAuth.refresh()
+await activityAuth.activity(false, 0)
+assert(heartbeatCalls.length === 1, 'hidden activity never sends heartbeat')
+await Promise.all([activityAuth.activity(true, 0), activityAuth.activity(true, 0)])
+assert(heartbeatCalls.length === 2, 'parallel activity coalesces to one heartbeat')
+await activityAuth.activity(true, 299_999)
+assert(heartbeatCalls.length === 2, 'activity before five minutes is coalesced')
+await activityAuth.refresh(true)
+assert(heartbeatCalls.length === 3 && heartbeatCalls[2].url.endsWith('/me'), 'read-only refresh never sends heartbeat')
+await activityAuth.activity(true, 300_000)
+assert(heartbeatCalls.length === 4, 'exact five-minute boundary permits next heartbeat')
+for (const call of heartbeatCalls.filter(({ url }) => url.endsWith('/heartbeat'))) {
+  assert(call.init?.method === 'POST' && call.init.credentials === 'include', 'heartbeat is authenticated POST')
+  assert(new Headers(call.init?.headers).get('X-Work-Tracker-Request') === '1', 'heartbeat carries browser marker')
+}
+activityFailure = true
+await activityAuth.activity(true, 600_000)
+assert(activityState.user?.username === 'owner', 'heartbeat network failure does not log out')
+activityFailure = false
+activityStatus = 401
+await activityAuth.activity(true, 900_000)
+assert(activityState.user === null && activityState.error === 'Sesja wygasła. Zaloguj się ponownie.', 'current heartbeat 401 loses session globally')
+activityStatus = 200
+await activityAuth.login('owner', 'public-test-password')
+activityAuth.dispose()
+const beforeDisposeActivity = heartbeatCalls.length
+await activityAuth.activity(true, 1_200_000)
+assert(heartbeatCalls.length === beforeDisposeActivity, 'disposed activity cannot send heartbeat')
+
+for (const lateStatus of [200, 401]) {
+  const lateHeartbeat = deferred<Awaited<ReturnType<FetchLike>>>()
+  let currentState: AuthState = INITIAL_AUTH_STATE
+  let heartbeatCount = 0
+  const racingAuth = createAuthController(async (url) => {
+    if (url.endsWith('/heartbeat') && heartbeatCount++ === 0) return lateHeartbeat.promise
+    return { ok: true, status: 200, json: async () => user }
+  }, '', (next) => { currentState = next })
+  await racingAuth.refresh()
+  const pendingHeartbeat = racingAuth.activity(true, 0)
+  await racingAuth.logout()
+  await racingAuth.login('owner', 'public-test-password')
+  await racingAuth.activity(true, 1)
+  assert(heartbeatCount === 2, 'old in-flight heartbeat does not block a new authenticated lifetime')
+  lateHeartbeat.resolve({ ok: lateStatus === 200, status: lateStatus, json: async () => user })
+  await pendingHeartbeat
+  assert(currentState.user?.username === 'owner' && currentState.error === '', 'old heartbeat cannot erase a newer login')
+}
+
+// The central wrapper protects future unsafe methods and preserves caller headers.
+const mutations: RequestInit[] = []
+const centralAuth = createAuthController(async () => ({ ok: true, status: 200, json: async () => user }), '', () => {})
+await centralAuth.refresh()
+const centralFetch = centralAuth.protect(async (_url, init) => { mutations.push(init ?? {}); return new Response('{}') })
+for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'CUSTOM']) {
+  await centralFetch('/api/future', { method, headers: { 'Content-Type': 'application/json', 'X-Work-Tracker-Request': 'bad' } })
+}
+assert(mutations.every((init) => new Headers(init.headers).get('X-Work-Tracker-Request') === '1'), 'all future unsafe methods get the central marker')
+assert(mutations.every((init) => new Headers(init.headers).get('Content-Type') === 'application/json'), 'central marker preserves JSON headers')
+
+const pendingBlob = deferred<Blob>()
+const blobFetch = centralAuth.protect(async () => ({ ok: true, status: 200, blob: async () => pendingBlob.promise }))
+const oldDownload = (await blobFetch('/api/export/monthly.pdf')).blob()
+await centralAuth.logout()
+await centralAuth.login('owner', 'public-test-password')
+pendingBlob.resolve(new Blob(['stale private PDF']))
+await expectStale(oldDownload, 'late blob decoding cannot deliver an export after logout and a new login')
+console.log('Visible activity, heartbeat races and central mutation header tests passed.')

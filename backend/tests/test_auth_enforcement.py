@@ -11,7 +11,7 @@ from test_auth import WEBHOOK_TOKEN, login, setup
 
 
 READ_PATHS = [
-    '/api/openapi.json', '/api/docs', '/api/redoc',
+    '/api/openapi.json',
     '/api/dashboard', '/api/work-events?year=2026&month=10',
     '/api/work-summary?year=2026&month=10', '/api/pay-rates',
     '/api/pay-summary?year=2026&month=10', '/api/application-settings',
@@ -154,6 +154,9 @@ def test_domain_and_ha_requests_validate_without_renewing_idle(setup):
         assert session.scalar(select(UserSession.last_seen_at)) == initial
     assert client.get('/api/auth/me').status_code == 200
     with factory() as session:
+        assert session.scalar(select(UserSession.last_seen_at)) == initial
+    assert client.post('/api/auth/heartbeat').status_code == 200
+    with factory() as session:
         assert session.scalar(select(UserSession.last_seen_at)) == clock[0]
         assert session.scalar(select(UserSession.expires_at)) == initial + auth.ABSOLUTE_LIFETIME
 
@@ -192,7 +195,7 @@ def test_deliberate_heartbeat_renews_idle_without_extending_absolute_expiry(setu
     assert client.get('/api/dashboard').status_code == 200
     with factory() as session:
         assert session.scalar(select(UserSession.last_seen_at)) == initial
-    assert client.get('/api/auth/me').status_code == 200
+    assert client.post('/api/auth/heartbeat').status_code == 200
     # The heartbeat keeps the session valid beyond its original idle deadline.
     for instant in [initial + auth.IDLE_TIMEOUT,
                     heartbeat_at + auth.IDLE_TIMEOUT - timedelta(microseconds=1)]:
@@ -204,6 +207,6 @@ def test_deliberate_heartbeat_renews_idle_without_extending_absolute_expiry(setu
             assert stored.expires_at == initial + auth.ABSOLUTE_LIFETIME
     clock[0] = heartbeat_at + auth.IDLE_TIMEOUT
     assert client.get('/api/dashboard').status_code == 401
-    assert client.get('/api/auth/me').status_code == 401
+    assert client.post('/api/auth/heartbeat').status_code == 401
     with factory() as session:
         assert session.scalar(select(UserSession.last_seen_at)) == heartbeat_at
