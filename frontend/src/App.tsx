@@ -402,15 +402,19 @@ function App() {
     const refresh = () => {
       if (document.visibilityState === 'visible') void auth.refresh(true)
     }
+    const activity = () => { void auth.activity(document.visibilityState === 'visible') }
+    const interactions = ['pointerdown', 'keydown', 'touchstart', 'wheel'] as const
     void auth.refresh()
     const timer = window.setInterval(refresh, AUTH_REFRESH_INTERVAL_MS)
-    window.addEventListener('focus', refresh)
-    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', activity)
+    document.addEventListener('visibilitychange', activity)
+    interactions.forEach((event) => window.addEventListener(event, activity, { passive: true }))
     return () => {
       auth.dispose()
       window.clearInterval(timer)
-      window.removeEventListener('focus', refresh)
-      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', activity)
+      document.removeEventListener('visibilitychange', activity)
+      interactions.forEach((event) => window.removeEventListener(event, activity))
     }
   }, [])
 

@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,6 +20,7 @@ from .application_settings import (
 )
 from .config import Settings, get_settings
 from .auth import BrowserSessionMiddleware, build_auth_router
+from .browser_security import BrowserMutationMiddleware, SecurityHeadersMiddleware, SECURITY_HEADERS
 from .database import build_session_factory, get_session
 from .dashboard import DashboardSummary, calculate_dashboard
 from .corrections import (
@@ -172,19 +175,35 @@ def create_app(
     app = FastAPI(
         title="Work Tracker API", version="0.1.0",
         # Generated documentation inherits the same guarded API namespace.
-        openapi_url="/api/openapi.json", docs_url="/api/docs", redoc_url="/api/redoc",
-        swagger_ui_oauth2_redirect_url="/api/docs/oauth2-redirect",
+        openapi_url="/api/openapi.json", docs_url=None, redoc_url=None,
     )
     app.state.session_factory = build_session_factory(settings.database_url)
+    app.add_middleware(BrowserMutationMiddleware, allowed_origins=settings.browser_origin_list)
     app.add_middleware(BrowserSessionMiddleware, now_provider=dashboard_now_provider)
     # Last added is outermost: CORS handles preflights and decorates guard 401s.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Content-Type", "X-Webhook-Token"],
+        allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-Work-Tracker-Request", "X-Webhook-Token"],
+        expose_headers=["Retry-After"],
     )
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_request, error):
+        # Validation input/ctx may contain a whole password, even with SecretStr.
+        return JSONResponse(status_code=422, content={"detail": [
+            {"type": item["type"], "loc": item["loc"], "msg": "Nieprawidłowa wartość."}
+            for item in error.errors()
+        ]})
+
+    @app.exception_handler(Exception)
+    async def server_error(_request, _error):
+        # ServerErrorMiddleware wraps user middleware; harden its response too.
+        return JSONResponse(status_code=500, content={"detail": "Błąd serwera."},
+                            headers={**SECURITY_HEADERS, "Cache-Control": "no-store"})
     app.include_router(build_auth_router(settings, dashboard_now_provider))
 
     def require_webhook_token(provided_token: str | None) -> None:

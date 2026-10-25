@@ -3,6 +3,8 @@ from pathlib import Path
 from httpx import ASGITransport, AsyncClient
 import pytest
 
+from conftest import BROWSER_HEADERS
+
 from app.config import Settings
 from app.main import create_app
 
@@ -28,7 +30,7 @@ async def test_serves_built_frontend_without_shadowing_api(tmp_path: Path):
     settings = Settings(webhook_token=TOKEN, database_url=f"sqlite:///{tmp_path / 'test.db'}")
     app = create_app(settings, frontend_dist=frontend_dist)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", headers=BROWSER_HEADERS) as client:
         root_response = await client.get("/")
         assert (await client.get("/assets/login.js")).status_code == 200
         assert (await client.get("/assets/login.css")).status_code == 200
@@ -39,5 +41,8 @@ async def test_serves_built_frontend_without_shadowing_api(tmp_path: Path):
         health_response = await client.get("/api/health")
 
     assert root_response.status_code == 200
+    assert root_response.headers['cache-control'] == 'no-store'
+    assert "script-src 'self'" in root_response.headers['content-security-policy']
+    assert root_response.headers['x-frame-options'] == 'DENY'
     assert "Work Tracker production" in root_response.text
     assert health_response.json() == {"status": "ok"}

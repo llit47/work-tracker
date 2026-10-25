@@ -3,6 +3,7 @@ import { JSDOM } from 'jsdom'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { build } from 'vite'
+import { readFile } from 'node:fs/promises'
 
 // Exercise the actual App and effects with its production bundler and a DOM.
 await build({
@@ -16,6 +17,21 @@ await build({
   esbuild: { jsx: 'automatic' },
 })
 const { default: App } = await import('../.test-dist/gate/App.mjs')
+// Audit the actual production entry and its resources against the strict CSP.
+await build({ logLevel: 'silent', build: { outDir: '.test-dist/production', emptyOutDir: true } })
+const builtHtml = await readFile('.test-dist/production/index.html', 'utf8')
+const builtDom = new JSDOM(builtHtml, { url: 'http://localhost/' })
+assert.equal(builtDom.window.document.querySelectorAll('style, [style], [onclick]').length, 0)
+for (const script of builtDom.window.document.querySelectorAll('script')) {
+  assert.ok(script.src && !script.textContent.trim(), 'production scripts are external')
+  assert.equal(new URL(script.src).origin, 'http://localhost', 'production scripts use self')
+}
+for (const link of builtDom.window.document.querySelectorAll('link[rel="stylesheet"]')) {
+  assert.equal(new URL(link.href).origin, 'http://localhost', 'production stylesheets use self')
+  const css = await readFile(`.test-dist/production${new URL(link.href).pathname}`, 'utf8')
+  assert.doesNotMatch(css, /@import|url\(\s*["']?(?:https?:|data:|\/\/)/i, 'CSS needs no external CSP exceptions')
+}
+builtDom.window.close()
 const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/?year=2026&month=10' })
 Object.assign(globalThis, {
   window: dom.window, document: dom.window.document, FormData: dom.window.FormData,
@@ -98,13 +114,17 @@ assert.equal(domainRequests().length, 0)
 assert.equal(isProtected(), false)
 await act(async () => initial.resolve(response({}, 401)))
 assert.ok(container.querySelector('.auth-form'))
+assert.equal(container.querySelectorAll('[style], style').length, 0, 'rendered login needs no inline styles')
 assert.equal(domainRequests().length, 0)
 assert.equal(isProtected(), false)
 await login()
 assert.equal(isProtected(), true, 'successful login mounts Work Tracker')
 assert.match(text(), /Prywatny gabinet/)
+assert.equal(container.querySelectorAll('[style], style').length, 0, 'rendered domain UI needs no inline styles')
 assert.ok(domainRequests().length > 0)
 assert.ok(requests.every(({ init }) => init.credentials === 'include'), 'all APIs carry the opaque cookie')
+assert.ok(requests.filter(({ init }) => init.method === 'POST').every(({ init }) =>
+  new Headers(init.headers).get('X-Work-Tracker-Request') === '1'), 'login/logout carry central browser marker')
 await logout()
 assert.equal(isProtected(), false)
 assert.doesNotMatch(text(), /Prywatny gabinet|1234/)
@@ -147,38 +167,54 @@ for (const failingPath of ['/dashboard', '/application-settings', '/pay-summary'
   await unmount()
 }
 
-// Hidden domain polling is allowed, but only a visible auth heartbeat renews idle.
+// Read-only polling never renews idle. Only visible interactions/focus send POST heartbeat.
 let visibility = 'visible'
+let nowMs = 1_000_000
+const realNow = Date.now
+Date.now = () => nowMs
 Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility })
-await mount((url) => url.endsWith('/auth/me') ? response(user) : response(data(url)))
-const heartbeatRequests = () => requests.filter(({ url }) => url.endsWith('/auth/me')).length
-const initialHeartbeats = heartbeatRequests()
+await mount((url) => url.includes('/auth/') ? response(user) : response(data(url)))
+const heartbeats = () => requests.filter(({ url }) => url.endsWith('/auth/heartbeat'))
+assert.equal(heartbeats().length, 0, 'bootstrap is only a read')
 const initialDomainRequests = domainRequests().length
 visibility = 'hidden'
 await act(async () => {
-  // Simulate throttled browser timers still firing in a hidden tab.
   for (const { callback } of intervals.values()) callback()
   window.dispatchEvent(new window.Event('focus'))
+  window.dispatchEvent(new window.Event('pointerdown'))
+  window.dispatchEvent(new window.Event('keydown'))
   document.dispatchEvent(new window.Event('visibilitychange'))
 })
 await flush()
-assert.equal(heartbeatRequests(), initialHeartbeats, 'hidden timers/focus/visibility events skip auth heartbeat')
-assert.ok(domainRequests().length > initialDomainRequests, 'existing hidden dashboard polling remains supported')
+assert.equal(heartbeats().length, 0, 'hidden activity and timers cannot renew idle')
+assert.ok(domainRequests().length > initialDomainRequests, 'hidden domain polling remains supported')
 visibility = 'visible'
 await act(async () => document.dispatchEvent(new window.Event('visibilitychange')))
 await flush()
-assert.equal(heartbeatRequests(), initialHeartbeats + 1, 'visibility recovery deliberately renews idle')
+assert.equal(heartbeats().length, 1, 'return to visible app sends heartbeat')
+assert.equal(heartbeats()[0].init.method, 'POST')
+assert.equal(new Headers(heartbeats()[0].init.headers).get('X-Work-Tracker-Request'), '1')
+nowMs += 10 * 60_000
 await act(async () => {
-  const heartbeatTimer = [...intervals.values()].find(({ delay }) => delay === 5 * 60_000)
-  assert.ok(heartbeatTimer)
-  heartbeatTimer.callback()
+  for (const { callback } of intervals.values()) callback()
 })
 await flush()
-assert.equal(heartbeatRequests(), initialHeartbeats + 2, 'visible periodic heartbeat still runs')
-await act(async () => window.dispatchEvent(new window.Event('focus')))
+assert.equal(heartbeats().length, 1, 'visible idle tab polling cannot renew idle either')
+await act(async () => window.dispatchEvent(new window.Event('keydown')))
 await flush()
-assert.equal(heartbeatRequests(), initialHeartbeats + 3, 'visible focus deliberately renews idle')
+assert.equal(heartbeats().length, 2, 'keyboard interaction renews idle')
+await act(async () => {
+  window.dispatchEvent(new window.Event('pointerdown'))
+  window.dispatchEvent(new window.Event('focus'))
+})
+await flush()
+assert.equal(heartbeats().length, 2, 'interaction bursts coalesce for five minutes')
+nowMs += 5 * 60_000
+await act(async () => window.dispatchEvent(new window.Event('pointerdown')))
+await flush()
+assert.equal(heartbeats().length, 3, 'new interaction after five minutes sends heartbeat')
 await unmount()
+Date.now = realNow
 
 // Responses from a logged-out lifetime must not affect a subsequent login.
 for (const status of [200, 401]) {
@@ -206,12 +242,24 @@ assert.equal(isProtected(), false)
 assert.match(text(), /Sesja wygasła/)
 await unmount()
 
-// A delayed /me must not erase a newer successful login.
-const staleMe = deferred()
-let checks = 0
-await mount((url) => url.endsWith('/auth/me')
-  ? checks++ === 0 ? response(user) : staleMe.promise : response(data(url)))
+// A delayed heartbeat must not erase a newer successful login.
+const staleHeartbeat = deferred()
+await mount((url) => url.endsWith('/auth/me') ? response(user)
+  : url.endsWith('/auth/heartbeat') ? staleHeartbeat.promise : response(data(url)))
 await act(async () => window.dispatchEvent(new window.Event('focus')))
+assert.ok(requests.some(({ url }) => url.endsWith('/auth/heartbeat')))
+await logout()
+await login()
+await act(async () => staleHeartbeat.resolve(response({}, 401)))
+assert.equal(isProtected(), true)
+await unmount()
+
+// The periodic read-only /me keeps its previous stale-response protection too.
+const staleMe = deferred()
+let meChecks = 0
+await mount((url) => url.endsWith('/auth/me')
+  ? meChecks++ === 0 ? response(user) : staleMe.promise : response(data(url)))
+await act(async () => [...intervals.values()].find(({ delay }) => delay === 5 * 60_000).callback())
 await logout()
 await login()
 await act(async () => staleMe.resolve(response({}, 401)))

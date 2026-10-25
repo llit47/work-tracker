@@ -83,6 +83,8 @@ if [[ ! -e "${CONFIG_FILE}" ]]; then
     app_port="${REPLY}"
     prompt_config_value secret "" "Webhook token (leave empty to generate one)" token
     webhook_token="${REPLY}"
+    prompt_config_value plain "" "BROWSER_ALLOWED_ORIGINS: exact browser URL origins, comma-separated (no wildcard or path)" browser_origins
+    browser_allowed_origins="${REPLY}"
     prompt_config_value plain "" "Browser CORS origins, comma-separated (empty for same-origin)" cors
     cors_origins="${REPLY}"
     prompt_config_value plain "false" "Secure session cookie (true for HTTPS, false only for trusted LAN HTTP)" boolean
@@ -96,6 +98,7 @@ if [[ ! -e "${CONFIG_FILE}" ]]; then
         printf 'WEBHOOK_TOKEN=%s\n' "${webhook_token}"
         printf 'DATABASE_URL=sqlite:////var/lib/work-tracker/work_tracker.db\n'
         printf 'CORS_ORIGINS=%s\n' "${cors_origins}"
+        printf 'BROWSER_ALLOWED_ORIGINS=%s\n' "${browser_allowed_origins}"
         printf 'SESSION_COOKIE_SECURE=%s\n' "${session_cookie_secure}"
     } >"${config_temp}"
     chown root:"${SERVICE_USER}" "${config_temp}"

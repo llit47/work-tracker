@@ -15,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .config import Settings
+from .browser_security import MACHINE_ENDPOINTS
 from .database import get_session
 from .identity import hash_password, normalize_username, password_needs_rehash, verify_password
 from .models import User, UserSession
@@ -59,9 +60,7 @@ SESSION_INDEPENDENT_ENDPOINTS = frozenset({
     ("GET", "/api/auth/me"),
     ("POST", "/api/auth/logout"),
     ("GET", "/api/health"),
-    ("POST", "/api/webhook/home-assistant"),
-    ("POST", "/api/webhook/home-assistant/correction"),
-})
+}) | MACHINE_ENDPOINTS
 
 
 def current_session(
@@ -82,6 +81,7 @@ def current_session(
             session.execute(update(UserSession).where(
                 UserSession.token_hash == digest,
                 UserSession.revoked_at.is_(None),
+                UserSession.created_at <= instant,
                 UserSession.expires_at > instant,
                 UserSession.last_seen_at > instant - IDLE_TIMEOUT,
                 UserSession.last_seen_at <= instant - ACTIVITY_WRITE_INTERVAL,
@@ -194,6 +194,10 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
     @router.get("/me")
     def me(request: Request, response: Response, session: Session = Depends(get_session)):
         response.headers["Cache-Control"] = "no-store"
+        return current_session(request, session, now())
+
+    @router.post("/heartbeat")
+    def heartbeat(request: Request, session: Session = Depends(get_session)):
         return current_session(request, session, now(), touch_activity=True)
 
     @router.post("/logout", status_code=204)

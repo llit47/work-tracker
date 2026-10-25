@@ -50,7 +50,7 @@ printf '%s\n' 'APP_HOST=0.0.0.0' 'APP_PORT=8000' \
     'WEBHOOK_TOKEN=public-test-only-webhook-token-32-characters' \
     'DATABASE_URL=sqlite:////var/lib/work-tracker/work_tracker.db' \
     'UNKNOWN_KEY=preserved' >"${ENV_FILE}"
-printf '\n' >"${INPUT_FILE}"
+printf 'http://192.168.1.50:8000\n\n' >"${INPUT_FILE}"
 exec 3<"${INPUT_FILE}"
 sync_missing_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
 validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
@@ -65,3 +65,31 @@ exec 3</dev/null
 sync_missing_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
 cmp -s "${ENV_FILE}" "${SNAPSHOT_FILE}"
 printf 'Session cookie configuration tests passed.\n'
+
+# 8B1-A has no guessed origin/default. Existing LXC config needs an explicit choice.
+grep -qx 'BROWSER_ALLOWED_ORIGINS=http://192.168.1.50:8000' "${ENV_FILE}"
+for invalid in '' '*' null 'http://host/' 'http://user@host' 'http://host:65536' 'http://host?query'; do
+    ! validate_config_value browser_origins "${invalid}"
+done
+validate_config_value browser_origins 'http://192.168.1.50:8000,https://work.example.com'
+validate_config_value browser_origins 'http://[::1]:8000'
+validate_config_value cors ''
+! validate_config_value cors '*'
+
+# Missing setting with no operator input fails without writing a broad allowlist.
+sed '/^BROWSER_ALLOWED_ORIGINS=/d' "${ENV_FILE}" >"${ENV_FILE}.missing"
+cp "${ENV_FILE}.missing" "${SNAPSHOT_FILE}"
+if (exec 3</dev/null; sync_missing_required_config "${REAL_MANIFEST}" "${ENV_FILE}.missing") >"${OUTPUT_FILE}" 2>&1; then
+    printf 'Missing origin unexpectedly accepted.\n' >&2
+    exit 1
+fi
+grep -q 'BROWSER_ALLOWED_ORIGINS' "${OUTPUT_FILE}"
+cmp -s "${ENV_FILE}.missing" "${SNAPSHOT_FILE}"
+if (validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}.missing") >"${OUTPUT_FILE}" 2>&1; then exit 1; fi
+grep -q 'Missing required configuration key: BROWSER_ALLOWED_ORIGINS' "${OUTPUT_FILE}"
+
+# Optional CORS entries are validated too and cannot widen the mutation allowlist.
+printf 'CORS_ORIGINS=http://unapproved.example\n' >>"${ENV_FILE}"
+if (validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}") >"${OUTPUT_FILE}" 2>&1; then exit 1; fi
+grep -q 'subset' "${OUTPUT_FILE}"
+printf 'Browser origin configuration tests passed.\n'

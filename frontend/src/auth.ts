@@ -6,6 +6,14 @@ export const INITIAL_AUTH_STATE: AuthState = { user: null, loading: true, busy: 
 export const SESSION_EXPIRED_MESSAGE = 'Sesja wygasła. Zaloguj się ponownie.'
 export const AUTH_REFRESH_INTERVAL_MS = 5 * 60_000
 
+function browserRequest(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers)
+  if (!['GET', 'HEAD', 'OPTIONS'].includes((init.method ?? 'GET').toUpperCase())) {
+    headers.set('X-Work-Tracker-Request', '1')
+  }
+  return { ...init, headers, credentials: 'include' }
+}
+
 export function createAuthController(
   fetcher: FetchLike,
   apiBase: string,
@@ -15,6 +23,8 @@ export function createAuthController(
   let version = 0
   let disposed = false
   let refreshing = false
+  let heartbeatVersion: number | null = null
+  let lastHeartbeatAt = -Infinity
   const publish = (patch: Partial<AuthState>) => {
     state = { ...state, ...patch }
     if (!disposed) onChange(state)
@@ -23,6 +33,7 @@ export function createAuthController(
   const loseSession = () => {
     if (disposed) return
     version += 1
+    lastHeartbeatAt = -Infinity
     publish({ user: null, loading: false, busy: false, error: SESSION_EXPIRED_MESSAGE })
   }
   return {
@@ -36,7 +47,7 @@ export function createAuthController(
           if (!isCurrent(requestedVersion) || !state.user) throw new DOMException('Stale session', 'AbortError')
         }
         check()
-        const response = await domainFetch(url, { ...init, credentials: 'include' })
+        const response = await domainFetch(url, browserRequest(init))
         check()
         if (response.status === 401) {
           loseSession()
@@ -57,6 +68,23 @@ export function createAuthController(
             return value.bind(target)
           },
         })
+      }
+    },
+    async activity(visible: boolean, nowMs = Date.now()) {
+      if (!visible || disposed || !state.user || state.busy || heartbeatVersion === version
+          || nowMs - lastHeartbeatAt < AUTH_REFRESH_INTERVAL_MS) return
+      const requestedVersion = version
+      heartbeatVersion = requestedVersion
+      lastHeartbeatAt = nowMs
+      try {
+        const response = await fetcher(`${apiBase}/api/auth/heartbeat`, browserRequest({ method: 'POST' }))
+        if (!isCurrent(requestedVersion)) return
+        if (response.status === 401) loseSession()
+        // No replay on failure. A future interaction may try again after 5 minutes.
+      } catch {
+        // A transient failure does not log out a still valid session.
+      } finally {
+        if (heartbeatVersion === requestedVersion) heartbeatVersion = null
       }
     },
     async refresh(onlyAuthenticated = false) {
@@ -81,13 +109,14 @@ export function createAuthController(
     async login(username: string, password: string) {
       if (disposed || state.busy) return
       version += 1
+      lastHeartbeatAt = -Infinity
       const requestedVersion = version
       publish({ busy: true, loading: false, error: '' })
       try {
-        const response = await fetcher(`${apiBase}/api/auth/login`, {
-          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        const response = await fetcher(`${apiBase}/api/auth/login`, browserRequest({
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username, password }),
-        })
+        }))
         if (response.status === 401) {
           if (isCurrent(requestedVersion)) publish({ error: 'Nieprawidłowa nazwa użytkownika lub hasło.' })
         } else if (!response.ok) {
@@ -108,7 +137,7 @@ export function createAuthController(
       const requestedVersion = version
       publish({ user: null, busy: true, loading: false, error: '' })
       try {
-        const response = await fetcher(`${apiBase}/api/auth/logout`, { method: 'POST', credentials: 'include' })
+        const response = await fetcher(`${apiBase}/api/auth/logout`, browserRequest({ method: 'POST' }))
         if (!response.ok) throw new Error('Logout unavailable')
         if (isCurrent(requestedVersion)) publish({ user: null })
       } catch {

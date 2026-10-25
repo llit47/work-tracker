@@ -16,6 +16,7 @@ python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/python" -I -B -c 'from app.identity import hash_password, verify_password; password = "package-test-only-password"; assert verify_password(password, hash_password(password))'
 "${VENV_DIR}/bin/python" -I -B -m app.manage --help >/dev/null
 WEBHOOK_TOKEN='package-test-token-at-least-32-characters' \
+BROWSER_ALLOWED_ORIGINS='http://127.0.0.1:8000' \
 DATABASE_URL='sqlite:///:memory:' \
     "${VENV_DIR}/bin/python" -c 'from app.main import app as fastapi_app; assert fastapi_app.title == "Work Tracker API"'
 "${VENV_DIR}/bin/uvicorn" --version

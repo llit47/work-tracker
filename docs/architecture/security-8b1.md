@@ -1,18 +1,20 @@
 # Phase 8 — praktyczny projekt bezpieczeństwa 8B1 / 8B2
 
-**Status: PLANNED.** To specyfikacja przyszłych zmian, wyłącznie dokumentacja.
+**Status: 8B1-A IN PROGRESS; 8B1-B / 8B2 PLANNED.**
+8B1-A jest zaimplementowane; pełne testy instalacji pakietu i service-user runtime
+pozostają do potwierdzenia w odpowiednim środowisku. Kontrakty B/B2 są przyszłym planem.
 Phase 8 pozostaje IN PROGRESS; obecna produkcja jest LAN-only.
 Kolejność: **8A3 → 8B1-A → 8B1-B → 8B2 → Phase 9**.
 
-## 1. Stan obecny i decyzja o uproszczeniu
+## 1. Stan wyjściowy 8A3 i decyzja o uproszczeniu
 
 Kod i testy 8A1–8A3 już zapewniają Argon2id, server-side sessions, revocation,
 centralny pure-ASGI default-deny dla całego HTTP /api oraz oddzielny token HA.
 `user_sessions` zawiera tylko ID, user_id, SHA-256 tokenu i daty sesji.
-Head Alembic to `20261006_07`. Nie ma limitera, heartbeat POST, kontroli
+Head Alembic to `20261006_07`. W 8A3 nie było limitera, heartbeat POST, kontroli
 Origin/custom header, keyringu ani okresowej rotacji.
-Obecny GET /me **może zapisać last_seen_at**; frontend używa go co 5 minut
-w widocznej karcie i przy focus. Read-only /me jest dopiero celem 8B1-A.
+W stanie wyjściowym 8A3 GET /me **mógł zapisać last_seen_at**; frontend używał go co 5 minut
+w widocznej karcie i przy focus. Read-only /me wdraża 8B1-A.
 CORS jest już restrykcyjny; nie jest samodzielną ochroną przed CSRF.
 
 Decyzja: bezpieczeństwo proporcjonalne do małego wdrożenia self-hosted.
@@ -21,9 +23,8 @@ prób. Nie projektujemy tokenów CSRF, kluczy HMAC, lease, telemetrycznych tabel
 ani protokołu rotacji/recovery. Działające zabezpieczenia pozostają.
 Późniejszy publiczny dostęp wymaga dodatkowo weryfikacji 8B2.
 
-README nadal opisuje działający 8A3; jego zapowiedzi obowiązkowej rotacji
-w 8B1 są nieaktualne. Zgodnie z zakresem tego PR nie edytujemy README;
-aktualny plan wyznaczają ten dokument, ROADMAP i PROJECT_STATUS.
+README opisuje zaimplementowane kontrakty 8B1-A i konfigurację operatora.
+Status walidacji wyznaczają ROADMAP i PROJECT_STATUS.
 AGENTS wymaga możliwości przyszłej rotacji, nie obowiązku jej wdrożenia teraz.
 
 ## 2. Krótki threat model i zachowane inwarianty
@@ -44,7 +45,7 @@ poza gwarancjami CSRF; CSP i przyszłe HTTPS ograniczają część ryzyka.
 - Nowy login daje nowy token; logout/revocation działają server-side.
   Brak tokenów auth w localStorage, URL-ach, body odpowiedzi lub logach.
 
-## 3. 8B1-A — Lightweight Browser Security (PLANNED)
+## 3. 8B1-A — Lightweight Browser Security (IN PROGRESS)
 
 ### Origin, niestandardowy nagłówek i format żądań
 
@@ -97,7 +98,7 @@ Frontend dodaje znacznik centralnie; nie ma bootstrapu ani storage tokenów CSRF
 |---|---|
 | GET /api/auth/me | 200 username/expires_at lub 401; wyłącznie odczyt, bez last_seen_at, cleanup, rotacji i Set-Cookie, również usuwania cookie. |
 | POST /api/auth/heartbeat | Ważna sesja + Origin + znacznik; puste body lub JSON {}; 200 bez Set-Cookie. Conditional UPDATE last_seen_at najwyżej raz na godzinę, bez revival expired/revoked i bez zmiany expires_at. Nigdy anonimowy wyjątek. |
-| POST /api/auth/login | Origin + znacznik + JSON + limiter; nowa sesja/cookie albo ogólne 401, 429 + Retry-After lub 503 przy awarii/przeciążeniu. |
+| POST /api/auth/login | Origin + znacznik + JSON; nowa sesja/cookie albo ogólne 401. Limiter, 429 + Retry-After i 503 przy przeciążeniu dopiero w 8B1-B. |
 | POST /api/auth/logout | Origin + znacznik nawet bez sesji; zachować idempotentne 204, revocation wskazanej sesji i usunięcie cookie. |
 | Ordinary /api, docs/schema | Zachować centralny session guard; dodatkowo 1–3 przy unsafe requests. Nieprawidłowa sesja 401, błąd polityki 403 przed efektem. |
 | GET /api/health, dwa istniejące POST webhooki HA | Dokładne obecne wyjątki; minimalny health i niezależne uwierzytelnianie HA. Bez nowych prefix exceptions. |
@@ -124,9 +125,8 @@ Podstawowy production CSP: default-src 'self'; script-src 'self';
 style-src 'self'; object-src 'none'; base-uri 'none';
 frame-ancestors 'none'; form-action 'self'. Bez unsafe-eval i szerokich CDN
 wyjątków; testować rzeczywisty build. Obecne Swagger/ReDoc używają CDN/inline:
-dla prostoty planujemy wyłączyć ich interaktywny HTML w production,
-pozostawiając chronione OpenAPI JSON; development docs nadal wymagają sesji.
-To jawna przyszła zmiana pomocniczego UI, nie usunięcie działającej ochrony.
+dla prostoty ich interaktywny HTML jest wyłączony (również development),
+pozostawiając chronione OpenAPI JSON. Nie dodajemy wyjątków CSP dla CDN/inline.
 Nosniff, Referrer-Policy: no-referrer, X-Frame-Options: DENY.
 Auth/private API/CSV/PDF i ich błędy: Cache-Control: no-store;
 login shell również no-store. Publiczne hash assets mogą być cache'owane.
@@ -263,13 +263,15 @@ do płatnych funkcji. Bez dowodu skutecznej ochrony Access brak zgody na Phase 9
 ## 7. Minimalny DB/config, wdrożenie i rollback
 
 Ten PR niczego nie migruje ani nie wdraża.
-8B1-A: tylko BROWSER_ALLOWED_ORIGINS w przyszłym manifest/config oraz zmiany
+8B1-A: wymagane BROWSER_ALLOWED_ORIGINS w manifest/config oraz zmiany
 guardu/klienta/headers; zero nowych kluczy i pól sesji.
 8B1-B: jedna addytywna migracja login_attempts z indeksami; istniejące dane
 pracy, użytkownicy i sesje bez zmian. Semafor/progi są stałymi, nie zestawem
 nowych ustawień. Nowe wymagania proxy/Access należą do osobnego PR 8B2.
-Dzisiejszy unit nie przypina jawnie workerów/proxy trust; common.sh nie ma
-validatora nowej allowlist — przyszła implementacja musi objąć deploy tests.
+Unit nie przypina jeszcze jawnie workerów/proxy trust (zakres B/B2).
+common.sh i backend współdzielą już validator origins, objęty deploy tests.
+Brak allowlisty nie uruchamia nowej wersji: operator musi podać dokładne origins;
+przy braku odpowiedzi update uruchamia rollback przed migracją, bez restore DB.
 
 Wdrożenie A, następnie B w LAN: zachować clean-worktree, backup SQLite przed
 update, fast-forward-only, migracje jako service user i rollback updatera.

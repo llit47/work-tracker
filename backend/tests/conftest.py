@@ -1,6 +1,10 @@
 import os
 
 os.environ.setdefault("WEBHOOK_TOKEN", "test-secret-that-is-at-least-32-characters")
+os.environ.setdefault("BROWSER_ALLOWED_ORIGINS", "http://testserver,https://testserver,http://localhost:5173,http://127.0.0.1:5173")
+os.environ.setdefault("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+
+BROWSER_HEADERS = {"Origin": "http://testserver", "X-Work-Tracker-Request": "1"}
 
 
 def authenticated_client(app, **kwargs):
@@ -27,4 +31,5 @@ def authenticated_client(app, **kwargs):
                                 created_at=now, last_seen_at=now,
                                 expires_at=now + ABSOLUTE_LIFETIME))
         session.commit()
+    kwargs.setdefault("headers", BROWSER_HEADERS)
     return AsyncClient(transport=ASGITransport(app=app), cookies={COOKIE_NAME: token}, **kwargs)

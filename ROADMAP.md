@@ -409,27 +409,27 @@ Ukończony zakres:
 
 Dodatkowe acceptance criteria 8A3:
 
-- [x] Pure-ASGI guard całej przestrzeni HTTP `/api` i `/api/...`, przed routingiem/body; nowe route i mount automatycznie chronione. Wspólny walidator z `/auth/me` zachowuje kompletną politykę sesji 8A2: ordinary protected API traffic tylko waliduje sesję bez odnawiania idle; wyłącznie deliberate `/api/auth/me` heartbeat/activity widocznej przeglądarki może wykonać coalesced update `last_seen_at`. Hidden background domain polling nie podtrzymuje sesji.
+- [x] Pure-ASGI guard całej przestrzeni HTTP `/api` i `/api/...`, przed routingiem/body; nowe route i mount automatycznie chronione. Wspólny walidator z `/auth/me` zachowuje kompletną politykę sesji 8A2: ordinary protected API traffic tylko waliduje sesję bez odnawiania idle; od 8B1-A wyłącznie osobny chroniony POST `/api/auth/heartbeat` po aktywności widocznej przeglądarki może wykonać coalesced update `last_seen_at`; GET `/me` jest read-only. Hidden background domain polling nie podtrzymuje sesji.
 - [x] Centralna lista dokładnych par: `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`, `GET /api/health`, `POST /api/webhook/home-assistant`, `POST /api/webhook/home-assistant/correction`. Brak prefix exceptions; HA nie wymaga cookie ani nie akceptuje go zamiast tokenu.
-- [x] Publiczny static frontend pozwala zawsze załadować login; schema/docs FastAPI przeniesione pod chronione `/api`. CORS preflight obsługiwany przez zewnętrzną warstwę bez sesji i bez rozszerzania origins.
+- [x] Publiczny static frontend pozwala zawsze załadować login; schema/docs FastAPI przeniesione pod chronione `/api`. CORS preflight obsługiwany przez zewnętrzną warstwę bez sesji i bez rozszerzania origins. Od 8B1-A HTML Swagger/ReDoc jest wyłączony dla ścisłego CSP; chroniony OpenAPI JSON pozostaje dostępny.
 - [x] Frontend checking/login/authenticated gate nie pobiera domain data przed auth. Logout/globalny 401 usuwa lokalny protected state i zatrzymuje polling; polski komunikat expiry, login po utracie sesji i stale-response/JSON/blob guards.
 - [x] Regresje anonymous/authenticated reads i writes, session failure/expiry, nowe trasy/mounty, dokładne wyjątki, HA, static i CORS oraz wyrenderowany frontend gate. Bez migracji (head `20261006_07`), nowego configu, zmian danych ani public exposure.
 
-Origin/header CSRF, login rate limiting i response hardening pozostają planem 8B1; Cloudflare Access i Internet-readiness review należą do 8B2. Okresowa rotacja nie jest obowiązkowym zakresem. 8A3 nie dodaje nowych domain mutation paths.
+Origin/header CSRF i response hardening implementuje 8B1-A; login rate limiting pozostaje planem 8B1-B; Cloudflare Access i Internet-readiness review należą do 8B2. Okresowa rotacja nie jest obowiązkowym zakresem. 8A3 nie dodaje nowych domain mutation paths.
 
 ### Phase 8B1 — Browser security hardening
 
-**Status: PLANNED**
+**Status: IN PROGRESS**
 
 [Praktyczny projekt bezpieczeństwa 8B1 / 8B2](docs/architecture/security-8b1.md)
 zastępuje rozbudowany projekt własnych tokenów/rotacji prostszym modelem
 proporcjonalnym do ryzyka małego self-hosted wdrożenia.
-To plan, nie opis działających nowych mechanizmów; obecny GET /me nadal
-może odnawiać last_seen_at. Kolejność: **8A3 → 8B1-A → 8B1-B → 8B2**.
+8B1-A jest zaimplementowane z końcową walidacją deploymentu do potwierdzenia;
+GET /me jest już read-only, a activity odnawia osobny POST heartbeat. Kolejność: **8A3 → 8B1-A → 8B1-B → 8B2**.
 
 #### Phase 8B1-A — Lightweight Browser Security
 
-**Status: PLANNED**
+**Status: IN PROGRESS**
 
 Dependencies: ukończone 8A1–8A3. Bez nowej tabeli ani kluczy kryptograficznych.
 
@@ -449,14 +449,19 @@ Dependencies: ukończone 8A1–8A3. Bez nowej tabeli ani kluczy kryptograficznyc
 
 Acceptance criteria:
 
-- [ ] A1–A6 i X1–X2 z projektu: cross-site GET /me nie zapisuje żadnego stanu;
+- [x] A1–A6 i X1 z projektu: cross-site GET /me nie zapisuje żadnego stanu;
   heartbeat wymaga sesji, a hidden polling nie odnawia idle.
-- [ ] Simple requests/formularze, brak/null/zły Origin, brak znacznika i błędne
+- [x] Simple requests/formularze, brak/null/zły Origin, brak znacznika i błędne
   CORS/JSON nie mutują; LAN HTTP bez Sec-Fetch-* działa bez bypass.
-- [ ] Testy granic 16384 bajtów i 1024 znaków Unicode jako escape/surrogate
+- [x] Testy granic 16384 bajtów i 1024 znaków Unicode jako escape/surrogate
   pairs oraz rzeczywistego frontend CSP/cache i centralnej ochrony.
-- [ ] HA ingest i tokenowa timestamp correction działają bez browser cookie,
+- [x] HA ingest i tokenowa timestamp correction działają bez browser cookie,
   Origin i znacznika; raw events pozostają immutable.
+
+- [ ] X2: pełny test instalowanego pakietu i runtime jako service user na Debianie/Ubuntu.
+  Obecne środowisko nie ma ensurepip, a sudo wymaga hasła. Pozostałe testy X2
+  (upgrade/head, konfiguracja, rollback przed/po migracji i layout uprawnień)
+  przechodzą. Status nie jest DONE do potwierdzenia tych dwóch sprawdzeń.
 
 #### Phase 8B1-B — Simple Login Rate Limiting
 
