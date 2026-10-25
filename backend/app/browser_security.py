@@ -15,6 +15,8 @@ MACHINE_ENDPOINTS = frozenset({
     ("POST", "/api/webhook/home-assistant/correction"),
 })
 LOGIN_BODY_LIMIT = 16384
+# Room for settings JSON; every buffered browser body must have a finite cap.
+BROWSER_MUTATION_BODY_LIMIT = 1024 * 1024
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; "
        "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 SECURITY_HEADERS = {
@@ -36,8 +38,9 @@ def reject_constant(_value: str):
 class BrowserMutationMiddleware:
     """Default deny for every unsafe API method except the two exact HA POSTs.
 
-    Runs after session validation, before routing/body parsing/Argon2. Login
-    bodies are bounded while streaming, regardless of Content-Length.
+    Runs after session validation, before routing/body parsing/Argon2. All
+    browser bodies are bounded while streaming, regardless of Content-Length.
+    Validate JSON before dispatch, including handlers that ignore their body.
     """
 
     def __init__(self, app: ASGIApp, allowed_origins: list[str]):
@@ -75,14 +78,15 @@ class BrowserMutationMiddleware:
             await reject(415, "Wymagany format application/json.")
             return
         login = endpoint == ("POST", "/api/auth/login")
+        body_limit = LOGIN_BODY_LIMIT if login else BROWSER_MUTATION_BODY_LIMIT
         body = bytearray()
         while True:
             message = await receive()
             if message["type"] == "http.disconnect":
                 return
             chunk = message.get("body", b"")
-            if login and len(body) + len(chunk) > LOGIN_BODY_LIMIT:
-                await reject(413, "Zbyt duże żądanie logowania.")
+            if len(body) + len(chunk) > body_limit:
+                await reject(413, "Zbyt duże żądanie logowania." if login else "Zbyt duże żądanie.")
                 return
             if chunk and not json_type:
                 await reject(415, "Wymagany format application/json.")

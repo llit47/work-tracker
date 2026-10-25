@@ -196,6 +196,12 @@ nadal ma 15–1024 punkty kodowe Unicode, bez trim/normalizacji, NUL i samotnych
 surrogate; również 1024 emoji zapisane jako pary escape mieszczą się w limicie.
 422/401 nie odbijają hasła ani całego inputu.
 
+Pozostałe browser mutations mają limit **1048576 bajtów (1 MiB)**, również
+dla body przesyłanego fragmentami i bez względu na Content-Length. Limit jest
+sprawdzany przed dopisaniem fragmentu do bufora; przekroczenie daje 413 przed
+walidacją JSON i wykonaniem operacji. Buforowanie pozwala odrzucić wadliwy JSON
+również w operacjach ignorujących body. Limit nie obejmuje obu webhooków HA.
+
 Odpowiedzi otrzymują CSP `default-src 'self'; script-src 'self'; style-src 'self';
 object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` oraz
