@@ -22,7 +22,7 @@
   - **Phase 8A3 — Protect browser UI and API: DONE**
   - **Phase 8B1 — Browser security hardening: IN PROGRESS**
     - **Phase 8B1-A — Lightweight Browser Security: IN PROGRESS**
-    - **Phase 8B1-B — Simple Login Rate Limiting: PLANNED**
+    - **Phase 8B1-B — Simple Login Rate Limiting: IN PROGRESS**
   - **Phase 8B2 — Cloudflare Access and Internet Readiness: PLANNED**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
@@ -35,7 +35,7 @@ Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md
 - Dokładne session-independent wyjątki: `POST /api/auth/login`, `GET /api/auth/me` (własna walidacja 200/401), `POST /api/auth/logout`, `GET /api/health`, `POST /api/webhook/home-assistant` i `POST /api/webhook/home-assistant/correction`. HA wymaga wyłącznie własnego `X-Webhook-Token`, niezależnie od browser cookie. CORS pozostaje zewnętrzną warstwą z jawnymi origins i preflight bez sesji.
 - Publiczny statyczny HTML/JS/CSS/assets umożliwia render loginu; `/api/openapi.json` jest chroniony. HTML Swagger/ReDoc jest wyłączony (także w development) dla ścisłego CSP. Frontend sprawdza sesję przed montowaniem domain UI i przed ordinary requests.
 - Globalny 401 lub logout odmontowuje aplikację, usuwa lokalny stan chronionych danych i zatrzymuje domain polling. Expiry pokazuje „Sesja wygasła. Zaloguj się ponownie.”; nowe logowanie ponownie otwiera aplikację. Wersjonowanie odpowiedzi i dekodowania JSON/blob odrzuca stare dane i stare 401 po nowym loginie. Błąd logout nie przywraca lokalnych danych.
-- 8A3 nie zmienia schematu ani konfiguracji wdrożenia; Alembic head pozostaje `20261006_07`. Dane raw events/corrections/pay pozostają bez zmian.
+- 8A3 nie zmienia schematu ani konfiguracji wdrożenia; 8B1-B podnosi bieżący Alembic head z `20261006_07` do `20261025_08`. Dane raw events/corrections/pay pozostają bez zmian.
 - `user_sessions`: ID, user_id, unikalny SHA-256 tokenu, created_at/last_seen_at/expires_at/revoked_at UTC. Każdy login tworzy nowy token (256 bitów CSPRNG), przechowywany tylko w host-only HttpOnly cookie. Stabilny token to zamierzona polityka 8A2, zachowana w uproszczonym 8B1; okresowa rotacja jest opcjonalna, poza obowiązkowym planem.
 - Sesje: dokładnie 30 dni idle od ostatniego zapisanego `last_seen_at`, maksymalnie 180 dni od początkowego loginu. Wspólny walidator chroni `/auth/me`, heartbeat i ordinary API. GET `/auth/me` oraz ordinary API nie zapisują aktywności; wyłącznie POST `/api/auth/heartbeat` odnawia idle najwyżej raz na godzinę. Niezapisana końcowa aktywność może być późniejsza o mniej niż godzinę. Widoczna karta wysyła heartbeat po interakcji/focus/powrocie, najwyżej raz na 5 minut; sam polling również widocznej karty nie odnawia idle. HA nie dotyka sesji. Anonimowy gate nie wykonuje background domain requests.
 - Logout odwołuje sesję w bazie i usuwa cookie; expired/revoked/invalid token jest odrzucany. Rehash Argon2 po poprawnym loginie ma warunek zachowania poprzedniego hasha.
@@ -206,11 +206,34 @@ root, ponieważ sudo wymaga hasła. Te dwa wymagane sprawdzenia pozostają do
 potwierdzenia na Debianie/Ubuntu z python3-venv i uprawnieniami roota.
 Nie wykonano deploymentu ani zmian produkcyjnej bazy.
 
-Następny **8B1-B — Simple Login Rate Limiting (PLANNED)** przewiduje jedną
-tabelę SQLite, 8 błędów/login i 30 prób/IP w 15 minut, dwa sloty Argon2id,
-trwałość liczników i ograniczenie rozmiaru. Mały wyścig konta (do 9 błędów)
-oraz nieznany wynik najwyżej dwóch weryfikacji po crash są jawne w projekcie.
-Nie dodano tych mechanizmów w 8A3 i nadal nie są zaimplementowane.
+**8B1-B — Simple Login Rate Limiting (IN PROGRESS)**
+
+Zaimplementowano jedną tabelę `login_attempts` (migracja `20261025_08`,
+AUTOINCREMENT, login SHA-256, IP key, UTC attempted_at/failed_at i trzy indeksy).
+Atomowe 30 prób/IP i 8 zapisanych błędów/login w ruchomym oknie 900 s;
+sukces nie resetuje błędów. Unknown/dummy mają tę samą politykę. 429 z
+Retry-After dla wszystkich blokujących okien; brak slotu/IP, DB failure,
+niepewny commit i tabela pełna dają 503 bez cookie. Cleanup start/login,
+pułap 4096 rekordów bez kasowania aktywnych liczników; przyszłe daty liczą się
+konserwatywnie. Liczniki są trwałe; bez haseł, tokenów i body w tej tabeli.
+
+Dwa sloty procesowego semafora obejmują real/dummy verification, rehash i
+commit, również po anulowaniu HTTP. Brak write locka podczas Argon2id.
+Limit konta świadomie dopuszcza wyścig do 9 błędów; rzeczywisty crash procesu
+może pozostawić dwa nieznane wyniki, z zachowanymi próbami IP. LAN używa peer
+IPv4 /32, IPv6 /64, mapped IPv4 → IPv4. Unit przypina workers=1 i wyłącza proxy
+headers. Brak zmian sesji/heartbeat/logout/CSRF i mechanizmów domenowych.
+Frontend pokazuje polskie komunikaty 401/429/503 oraz Retry-After.
+
+Automatyczne regresje obejmują B1–B5/X1, anulowanie HTTP, realny crash,
+atomową współbieżność IP, rehash, SQLite busy/niepewny commit, pułap/cleanup,
+Uvicorn/proxy spoofing, wyrenderowany formularz i oba webhooki HA podczas
+wyczerpania limitów. Pełny backend, frontend/build, migracje i testy powłoki,
+konfiguracji, rollbacku oraz layoutu uprawnień przechodzą.
+**X2 pozostaje niepełne:** ponowiony package-install test zatrzymuje się na
+braku ensurepip; service-user runtime nie wykonano jako root, bo sudo wymaga
+hasła. Faza nie jest DONE; 8B1-A także nadal nie ma pełnej walidacji
+produkcyjnej. Żadnego deploymentu, release ani zmian produkcyjnej bazy.
 
 **8B2 — Cloudflare Access and Internet Readiness (PLANNED)** przygotuje
 i zweryfikuje politykę Access, ochronę prywatnego originu, HTTPS/Secure,
@@ -237,7 +260,7 @@ Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfej
 - brak nadgodzin, dodatków, podatków i przeliczeń walut,
 - brak live estymacji wynagrodzenia dla niezakończonej zmiany,
 - brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
-- login rate limiting pozostaje planem 8B1-B; końcowa walidacja deploymentu 8B1-A wymaga środowiska z python3-venv i rootem,
+- 8B1-A/B wymagają końcowej walidacji instalowanego pakietu/service-user runtime z python3-venv i rootem; wyczerpanie login/IP/tabeli może czasowo blokować nowe logowanie,
 - okresowa rotacja sesji jest opcjonalna i nie należy do obowiązkowego zakresu przed Phase 9,
 - brak eksportu XLSX/Excel,
 - brak publicznego dostępu do aplikacji w obecnym wdrożeniu (plan: Phase 9 po Phase 8),

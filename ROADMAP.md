@@ -415,7 +415,7 @@ Dodatkowe acceptance criteria 8A3:
 - [x] Frontend checking/login/authenticated gate nie pobiera domain data przed auth. Logout/globalny 401 usuwa lokalny protected state i zatrzymuje polling; polski komunikat expiry, login po utracie sesji i stale-response/JSON/blob guards.
 - [x] Regresje anonymous/authenticated reads i writes, session failure/expiry, nowe trasy/mounty, dokładne wyjątki, HA, static i CORS oraz wyrenderowany frontend gate. Bez migracji (head `20261006_07`), nowego configu, zmian danych ani public exposure.
 
-Origin/header CSRF i response hardening implementuje 8B1-A; login rate limiting pozostaje planem 8B1-B; Cloudflare Access i Internet-readiness review należą do 8B2. Okresowa rotacja nie jest obowiązkowym zakresem. 8A3 nie dodaje nowych domain mutation paths.
+Origin/header CSRF i response hardening implementuje 8B1-A; login rate limiting implementuje 8B1-B (końcowa walidacja X2 pozostaje otwarta); Cloudflare Access i Internet-readiness review należą do 8B2. Okresowa rotacja nie jest obowiązkowym zakresem. 8A3 nie dodaje nowych domain mutation paths.
 
 ### Phase 8B1 — Browser security hardening
 
@@ -465,7 +465,7 @@ Acceptance criteria:
 
 #### Phase 8B1-B — Simple Login Rate Limiting
 
-**Status: PLANNED**
+**Status: IN PROGRESS**
 
 Dependencies: 8B1-A. Jedna tabela SQLite historii prób, bez zmian schematu sesji.
 
@@ -484,14 +484,19 @@ Dependencies: 8B1-A. Jedna tabela SQLite historii prób, bez zmian schematu sesj
 
 Acceptance criteria:
 
-- [ ] B1–B5 i X1–X2: progi, okna, Retry-After, restart/crash, bounded concurrency
+- [x] B1–B5 i X1 oraz lokalna część X2 (addytywna migracja/head, config, rollback, layout): progi, okna, Retry-After, restart/crash, bounded concurrency
   i jawny wyścig są testowalne; 30/IP atomowo, najwyżej dwie kosztowne weryfikacje.
-- [ ] Sukcesy, account-blocked i overload poprawnie liczą IP; zablokowane
+- [x] Sukcesy, account-blocked i overload poprawnie liczą IP; zablokowane
   żądania nie dopisują błędów hasła, a sukces nie zeruje aktualnych okien.
-- [ ] Normalizacja IPv6 /64 i spoofed headers, unknown login, SQLite busy
+- [x] Normalizacja IPv6 /64 i spoofed headers, unknown login, SQLite busy
   oraz pełna tabela mają bezpieczne, jednoznaczne zachowanie.
-- [ ] Test celowego wyczerpywania limitu potwierdza czasowy DoS nowych loginów,
+- [x] Test celowego wyczerpywania limitu potwierdza czasowy DoS nowych loginów,
   ale dalsze działanie istniejących sesji i HA, bez ujawniania credentials.
+
+- [ ] X2: pełna instalacja pakietu i runtime jako service user na Debianie/Ubuntu.
+  Ponowiono próbę: brak ensurepip zatrzymuje package-install test; sudo wymaga
+  hasła, więc test service-user nie został wykonany jako root. Bez DONE i bez
+  deklaracji produkcyjnej walidacji 8B1-A/B. Nie wykonano wdrożenia.
 
 #### Okresowa rotacja sesji — opcjonalny kierunek
 

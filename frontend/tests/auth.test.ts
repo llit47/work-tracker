@@ -198,3 +198,22 @@ await centralAuth.login('owner', 'public-test-password')
 pendingBlob.resolve(new Blob(['stale private PDF']))
 await expectStale(oldDownload, 'late blob decoding cannot deliver an export after logout and a new login')
 console.log('Visible activity, heartbeat races and central mutation header tests passed.')
+
+
+// Rate limit and overload responses keep generic Polish messages and never replay.
+for (const [responseStatus, retryAfter, expected] of [
+  [429, '900', 'za 900 s.'], [429, '1', 'za 1 s.'],
+  [429, null, 'później'], [429, 'invalid', 'później'],
+  [503, null, 'chwilowo niedostępne'],
+] as const) {
+  let result: AuthState = INITIAL_AUTH_STATE
+  let count = 0
+  const limited = createAuthController(async () => {
+    count += 1
+    return { ok: false, status: responseStatus, headers: new Headers(retryAfter ? { 'Retry-After': retryAfter } : {}),
+      json: async () => ({ detail: 'must not reveal which limiter or account' }) }
+  }, '', (next) => { result = next })
+  await limited.login('owner', 'public-test-password')
+  assert(result.user === null && !result.busy && result.error.includes(expected), 'login shows rate limit/overload timing')
+  assert(!result.error.includes('account') && count === 1, 'no enumeration or automatic retry')
+}

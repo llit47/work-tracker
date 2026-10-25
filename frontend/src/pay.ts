@@ -45,6 +45,7 @@ export type PayRateFormValues = {
 export type PayRateFormErrors = Partial<Record<keyof PayRateFormValues, string>>
 
 type FetchResponse = {
+  headers?: Pick<Headers, 'get'>
   ok: boolean
   status: number
   json: () => Promise<unknown>

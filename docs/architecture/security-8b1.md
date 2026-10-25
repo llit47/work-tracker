@@ -1,8 +1,8 @@
 # Phase 8 — praktyczny projekt bezpieczeństwa 8B1 / 8B2
 
-**Status: 8B1-A IN PROGRESS; 8B1-B / 8B2 PLANNED.**
-8B1-A jest zaimplementowane; pełne testy instalacji pakietu i service-user runtime
-pozostają do potwierdzenia w odpowiednim środowisku. Kontrakty B/B2 są przyszłym planem.
+**Status: 8B1-A / 8B1-B IN PROGRESS; 8B2 PLANNED.**
+8B1-A/B są zaimplementowane; pełne testy instalacji pakietu i service-user runtime
+pozostają do potwierdzenia w odpowiednim środowisku. Kontrakt B2 pozostaje przyszłym planem.
 Phase 8 pozostaje IN PROGRESS; obecna produkcja jest LAN-only.
 Kolejność: **8A3 → 8B1-A → 8B1-B → 8B2 → Phase 9**.
 
@@ -132,11 +132,11 @@ Auth/private API/CSV/PDF i ich błędy: Cache-Control: no-store;
 login shell również no-store. Publiczne hash assets mogą być cache'owane.
 HSTS dopiero w profilu HTTPS po 8B2, bez wymuszania HTTPS w LAN.
 
-## 4. 8B1-B — Simple Login Rate Limiting (PLANNED)
+## 4. 8B1-B — Simple Login Rate Limiting (IN PROGRESS)
 
 ### Jedna tabela i ograniczenie zasobów
 
-Planowana tabela `login_attempts`: id INTEGER PRIMARY KEY AUTOINCREMENT
+Tabela `login_attempts` (migracja `20261025_08`): id INTEGER PRIMARY KEY AUTOINCREMENT
 (bez ponownego użycia ID), login_key, ip_key, attempted_at UTC,
 nullable failed_at UTC; indeksy (ip_key, attempted_at), (login_key, failed_at)
 oraz attempted_at do cleanup. Brak FK do users; unknown login działa identycznie.
@@ -147,7 +147,7 @@ ip_key: kanoniczne IPv4 /32, IPv6 /64, IPv4-mapped IPv6 → IPv4.
 W LAN używać peer IP; wyłączyć niezaufane przepisanie go przez Uvicorn.
 Brak poprawnego źródła IP daje 503; nagłówki proxy dopiero według §6.
 
-Wdrożenie ma **jeden worker Uvicorn**, jawnie utrwalony w przyszłym unicie;
+Wdrożenie ma **jeden worker Uvicorn**, jawnie utrwalony w unicie;
 procesowy semafor ma **2 sloty**, wspólne dla real/dummy Argon2id i rehash.
 Bez nieograniczonej kolejki; brak slotu daje 503, a nie wykonanie hashowania.
 Slot zwalnia się dopiero po zakończeniu rzeczywistej pracy i zapisie wyniku,
@@ -262,13 +262,18 @@ do płatnych funkcji. Bez dowodu skutecznej ochrony Access brak zgody na Phase 9
 
 ## 7. Minimalny DB/config, wdrożenie i rollback
 
-Ten PR niczego nie migruje ani nie wdraża.
+Implementacja dostarcza migrację do wykonania przez operatora; nie wykonano
+wdrożenia ani migracji produkcyjnej.
 8B1-A: wymagane BROWSER_ALLOWED_ORIGINS w manifest/config oraz zmiany
 guardu/klienta/headers; zero nowych kluczy i pól sesji.
 8B1-B: jedna addytywna migracja login_attempts z indeksami; istniejące dane
 pracy, użytkownicy i sesje bez zmian. Semafor/progi są stałymi, nie zestawem
 nowych ustawień. Nowe wymagania proxy/Access należą do osobnego PR 8B2.
-Unit nie przypina jeszcze jawnie workerów/proxy trust (zakres B/B2).
+Unit 8B1-B przypina `--workers 1 --no-proxy-headers`: LAN korzysta z peer IP.
+Login jest synchronicznym handlerem; sesja SQLite i semafor są własnością
+wykonującego pracę wątku, więc anulowanie HTTP nie zwalnia ich przed końcem
+weryfikacji i zapisu wyniku. Pełna tabela daje 503 przed kontrolą budżetów.
+Zaufana ścieżka proxy/Access pozostaje zakresem 8B2.
 common.sh i backend współdzielą już validator origins, objęty deploy tests.
 Brak allowlisty nie uruchamia nowej wersji: operator musi podać dokładne origins;
 przy braku odpowiedzi update uruchamia rollback przed migracją, bez restore DB.
