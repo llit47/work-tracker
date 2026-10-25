@@ -1,8 +1,9 @@
 # Phase 8 — praktyczny projekt bezpieczeństwa 8B1 / 8B2
 
-**Status: 8B1-A / 8B1-B IN PROGRESS; 8B2 PLANNED.**
-8B1-A/B są zaimplementowane; pełne testy instalacji pakietu i service-user runtime
-pozostają do potwierdzenia w odpowiednim środowisku. Kontrakt B2 pozostaje przyszłym planem.
+**Status: 8B1-A / 8B1-B DONE (potwierdzenie operatora); 8B2 IN PROGRESS.**
+Operator potwierdził wdrożenie A/B, package-install i service-user runtime na Debianie 13 LXC.
+8B2 ma implementację i lokalne dowody ingress/JWT; lokalna ponowna walidacja
+package/runtime X2 pozostaje BLOCKED. Publiczne E2E i aktywacja należą do Phase 9.
 Phase 8 pozostaje IN PROGRESS; obecna produkcja jest LAN-only.
 Kolejność: **8A3 → 8B1-A → 8B1-B → 8B2 → Phase 9**.
 
@@ -45,7 +46,7 @@ poza gwarancjami CSRF; CSP i przyszłe HTTPS ograniczają część ryzyka.
 - Nowy login daje nowy token; logout/revocation działają server-side.
   Brak tokenów auth w localStorage, URL-ach, body odpowiedzi lub logach.
 
-## 3. 8B1-A — Lightweight Browser Security (IN PROGRESS)
+## 3. 8B1-A — Lightweight Browser Security (DONE — operator-confirmed)
 
 ### Origin, niestandardowy nagłówek i format żądań
 
@@ -132,7 +133,7 @@ Auth/private API/CSV/PDF i ich błędy: Cache-Control: no-store;
 login shell również no-store. Publiczne hash assets mogą być cache'owane.
 HSTS dopiero w profilu HTTPS po 8B2, bez wymuszania HTTPS w LAN.
 
-## 4. 8B1-B — Simple Login Rate Limiting (IN PROGRESS)
+## 4. 8B1-B — Simple Login Rate Limiting (DONE — operator-confirmed)
 
 ### Jedna tabela i ograniczenie zasobów
 
@@ -215,50 +216,96 @@ jako osobny projekt po ocenie ryzyka; nie jest warunkiem Phase 9.
 Kradzież działającego cookie nadal wymaga revocation; sam nowy login nie
 odwołuje innych sesji. To zaakceptowane ryzyko długowiecznych zaufanych urządzeń.
 
-## 6. 8B2 — Cloudflare Access and Internet Readiness (PLANNED)
+## 6. 8B2 — Cloudflare Access and Internet Readiness (IN PROGRESS)
 
-Cel: przygotować i zweryfikować konfigurację/testy, **bez publikacji produkcji**.
-Docelowo: Browser → Cloudflare Access → Cloudflare Tunnel → Work Tracker.
-Pozostaje również login Work Trackera; Access nie tworzy jego sesji.
+Zaimplementowano **nieaktywny, opt-in** profil `INGRESS_PROFILE=split`.
+Domyślny `lan` zachowuje dotychczasowy transport i brak zaufania do proxy headers.
+Nginx/Access/tunnel/firewall nie są instalowane ani aktywowane przez updater.
+Szczegółowy [runbook Phase 9](../deployment/phase9-ingress.md) opisuje placeholdery,
+konfigurację, cutover bez zmiany HA URL, powrót do LAN i natychmiastową izolację
+browser path. [Macierz dowodów C1–C2/X1–X2](security-8b2-verification.md) oddziela
+PASS lokalny od BLOCKED w rzeczywistym Cloudflare oraz lokalnych ograniczeń X2.
 
-- Access: jawna allowlista osób/tożsamości, default-deny, bez Bypass/Everyone.
-  Zweryfikować pokrycie całego browser hostname/API, aliasów i metod.
-  Preferować `Protect with Access` w cloudflared: walidacja Access JWT
-  z właściwym team/issuer, audience, podpisem i expiry; sam nagłówek nie wystarcza.
-  Brak/błędny token musi zostać odrzucony także przy błędnym routingu edge.
-  [Cloudflare opisuje walidację na origin path](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/#3-validate-the-access-token).
-- Origin: browser listener dostępny tylko kontrolowanej ścieżce cloudflared;
-  firewall/bind bez publicznego portu, zapasowego DNS/hostname omijającego Access.
-  Oddzielna prywatna ścieżka HA dopuszcza tylko dwa istniejące endpointy
-  i zaufane źródło LAN, nadal z X-Webhook-Token. Publiczny ingress wyklucza je
-  **również dla zalogowanej osoby w Access**; sprawdzić normalizację path.
-- HTTPS użytkownika, Secure=true, jawny publiczny Origin i trusted hosts.
-  Łącze cloudflared→origin lokalne/chronione; przy przejściu przez sieć użyć TLS
-  z weryfikacją certyfikatu. Bez automatycznego zaufania do Forwarded.
-- Uvicorn: jawne workers=1, zaufane proxy peers ograniczone do właściwego
-  transportu cloudflared, nigdy forwarded-allow-ips='*'. Zachować surowy peer
-  do rozróżnienia ingressów; samo scope.client po przepisaniu nie jest dowodem.
-- **Access nie naprawia wspólnego peer IP tunelu.** Zdefiniować jeden sposób
-  pobrania client IP: CF-Connecting-IP wyłącznie na potwierdzonej ścieżce
-  edge→własny tunnel→origin, gdzie klientowskie nagłówki są nadpisywane.
-  Nie brać pierwszego X-Forwarded-For. Bez Workers modyfikujących IP i bez
-  Pseudo IPv4 Overwrite Headers; zachować rzeczywiste IPv6 i normalizację /64.
-  Brak/wielokrotny/błędny nagłówek na zaufanej trasie: login 503, bez losowego
-  fallbacku do wspólnego peera; na bezpośredniej LAN trasie nagłówki ignorować.
-  [Semantyka CF-Connecting-IP i wyjątki](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip)
-  wymagają testów rzeczywistego przebiegu, nie tylko deklaracji configu.
-- Backupy DB, env, tunnel credentials i dane Access poza checkoutem;
-  sprawdzić uprawnienia service user/root oraz brak dostępu przez static mount.
-  Access nie chroni kopii plików udostępnionych inną drogą.
+```text
+Browser HTTPS → Access [default-deny, jawne osoby] → własny Tunnel
+  → cloudflared LXC [Protect with Access: podpis/JWKS, issuer, expiry, AUD]
+  → TLS z weryfikacją CA/SAN → WT LXC Nginx browser [ACL: tylko connector]
+  → TCP source 127.0.0.2 → Uvicorn 127.0.0.1:BACKEND_PORT → SQLite
+HA LAN HTTP + X-Webhook-Token → WT LXC Nginx HA [ACL: tylko HA]
+  → TCP source 127.0.0.3 → ten sam Uvicorn (1 worker, no-proxy-headers)
+```
 
-Zweryfikowano online 2026-10-25: [Access ma wariant Free](https://www.cloudflare.com/sase/products/access/),
-a [plan Zero Trust Free ma limit 50 użytkowników](https://www.cloudflare.com/plans/).
-[WAF Free rate limiting](https://developers.cloudflare.com/waf/rate-limiting-rules/#availability)
-ma 1 regułę, zliczanie po IP, okres i mitigation po 10 s; nie odtwarza
-limitera aplikacji 15 minut/login. WAF jest opcjonalnym dodatkiem.
-Przed wdrożeniem ponownie sprawdzić plan konta, polityki Access/IdP i dostępność
-`Protect with Access` w używanej wersji cloudflared; nie zakładać uprawnień
-do płatnych funkcji. Bez dowodu skutecznej ochrony Access brak zgody na Phase 9.
+### Granice zaufania i separacja
+
+cloudflared jest w osobnym LXC; nie zakładamy jego loopbacku/IP. Nginx na WT
+ma dwa różne listenery z dokładnymi źródłowymi ACL i firewallem na obu rodzinach
+IP. Backend nie słucha na LAN. Źródłowy `proxy_bind` rozróżnia wejścia bez
+nagłówka „ingress”, bez zaufania do arbitralnego Host i bez modyfikacji
+`scope.client`. Peer 127.0.0.2/.3 pozostaje niezmieniony przez Uvicorn.
+Pozostałe peery backendu (także 127.0.0.1), WebSocket i niekanoniczne raw path
+są odrzucane przed CORS, sesją, body i routerem. Zaufani operatorzy/procesy LXC
+pozostają granicą bezpieczeństwa; kod nie chroni przed przejęciem takiego LXC.
+
+Browser blokuje całą przestrzeń `/api/webhook*` niezależnie od metody/cookie/Access.
+HA dopuszcza tylko dwa dokładne istniejące POST, bez redirectu i bez reszty API/UI.
+Procent encoding (w tym podwójny), backslash, repeated slash i dot segments nie
+przechodzą origin guardu; Nginx `proxy_pass` bez URI zachowuje raw target.
+Nie istnieje publiczny Bypass dla HA. Token, kontrakty JSON i raw events są
+niezmienione. Prywatna ścieżka nie kontaktuje się z Cloudflare/Access i nie
+przechodzi przez browser limiter. Alias hosta i HTTP scheme na browser ingress
+nie są akceptowane. Sam nagłówek JWT nie jest uwierzytelnieniem aplikacji.
+
+### Access i rzeczywisty client IP
+
+Konfiguracje local i remote wymagają Protect with Access dla całego hostname,
+prawidłowego team i jednego AUD, z catch-all 404; brak path exceptions, Everyone,
+Bypass i alternatywnego hosta. JWTValidator pobiera JWKS organizacji i sprawdza
+podpis, issuer, expiry oraz audience. Dodatkowy login/sesja WT są wymagane.
+Allowlista osób jest polityką Edge, nie sprawdzeniem email w JWTValidator.
+Lokalny test rzeczywistego walidatora nie potwierdza polityki operatora.
+
+Sprawdzono dokumentację i upstream 2026.10.0: Protect with Access jest obsługiwane
+również w remotely-managed originRequest.access. Lokalna binarka parsuje YAML;
+remote efektywne config/version wszystkich connectorów wymaga Phase 9.
+`TUNNEL_DISABLE_PATH_NORMALIZATION=false` jawnie na każdej replice (2026.10.0
+ma default off). Normalizacja matching nie zmienia raw path do originu.
+Źródła: [parametry originu](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/origin-parameters/),
+[remote API](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/),
+[normalizacja](https://developers.cloudflare.com/changelog/post/2026-10-22-cloudflared-path-normalization/).
+
+CF-Connecting-IP jest używany tylko po potwierdzonej trasie connector ACL → Nginx
+→ browser peer. Nginx usuwa XFF/Forwarded/X-Real-IP. W LAN nadal ignorujemy
+wszystkie nagłówki proxy. Publiczny IP trafia tylko do klucza limitera, nie do
+transport peer. Brak/błędny/wielokrotny IP → login 503 bez fallbacku do wspólnego
+connectora. IPv4 /32, IPv6 /64 i mapped IPv4 używają istniejącej normalizacji;
+progi 8/login, 30/IP/15min, dwa sloty i trwała historia są bez zmian.
+Zapisane próby nie są resetowane przy przejściu na HTTPS.
+
+Wymagane wyłączenie Workers/subrequests modyfikujących visitor IP, Pseudo IPv4
+Overwrite Headers, Remove visitor IP headers i transformów IP. CF-Worker,
+znany cross-zone Worker IP oraz pseudo IPv4 240/4 są dodatkowo odrzucane.
+Zwykły klient nie może wybierać bucketu przez CF/XFF/Forwarded; rzeczywiste
+nadpisanie CF headers i brak wyjątków trzeba potwierdzić przez Edge.
+[Semantyka Cloudflare headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/).
+Opcjonalny WAF może uzupełniać ochronę, nie zastępuje aplikacyjnego limitera.
+
+### HTTPS, konfiguracja i rollback
+
+Split wymaga jednego dokładnego HTTPS origin na 443, Secure=true i pustego CORS.
+Host-only HttpOnly/SameSite=Lax, CSRF i 30 dni idle/180 dni absolute bez zmian.
+Nginx akceptuje tylko dokładny Host, właściwy TLS/SNI i visitor scheme HTTPS.
+Nie ma fallbacku do HTTP UI. Obecne security headers/cache pozostają; opcjonalne
+`BROWSER_HSTS_SECONDS=0` domyślnie, po walidacji HTTPS stopniowo 300 → 86400 →
+31536000, bez includeSubDomains/preload. Oba klucze manifestu są opcjonalne.
+Spójność profilu sprawdza wspólny stdlib validator runtime/updatera przed migracją.
+Brak nowej migracji, tabeli, sekretu, protokołu sesji czy CSRF.
+
+Konsola/SSH i kopia LAN env/unit/firewalla chronią przed odcięciem. Cutover
+zachowuje dotychczasowy HA IP/port; Nginx zajmuje stary port, backend przechodzi
+na loopback na inny port. Rollback publiczny zamyka tylko browser port/route,
+pozostawia WT split i HA aktywne. Powrót do LAN UI dopiero po wyłączeniu
+publicznego routingu, bez cofania DB i liczników. Pliki infrastruktury operatora
+są poza Git i wymagają osobnych kopii/odtworzenia; updater nie zarządza nimi.
 
 ## 7. Minimalny DB/config, wdrożenie i rollback
 
@@ -268,12 +315,12 @@ wdrożenia ani migracji produkcyjnej.
 guardu/klienta/headers; zero nowych kluczy i pól sesji.
 8B1-B: jedna addytywna migracja login_attempts z indeksami; istniejące dane
 pracy, użytkownicy i sesje bez zmian. Semafor/progi są stałymi, nie zestawem
-nowych ustawień. Nowe wymagania proxy/Access należą do osobnego PR 8B2.
+nowych ustawień. Opcjonalny profil proxy/Access opisuje §6; bieżący LAN pozostaje domyślny.
 Unit 8B1-B przypina `--workers 1 --no-proxy-headers`: LAN korzysta z peer IP.
 Login jest synchronicznym handlerem; sesja SQLite i semafor są własnością
 wykonującego pracę wątku, więc anulowanie HTTP nie zwalnia ich przed końcem
 weryfikacji i zapisu wyniku. Pełna tabela daje 503 przed kontrolą budżetów.
-Zaufana ścieżka proxy/Access pozostaje zakresem 8B2.
+Profil 8B2 zachowuje no-proxy-headers także za Nginx.
 common.sh i backend współdzielą już validator origins, objęty deploy tests.
 Brak allowlisty nie uruchamia nowej wersji: operator musi podać dokładne origins;
 przy braku odpowiedzi update uruchamia rollback przed migracją, bez restore DB.
@@ -295,7 +342,8 @@ jako sposobu „naprawy” problemów. Nie cofać ochrony do anonimowego 8A2.
 
 ## 8. Testy akceptacyjne i regresyjne
 
-Poniższe scenariusze są wymaganiami implementacji, nie raportem wykonanych testów.
+Poniższe scenariusze definiują kontrakt. Raport wykonania 8B2 i granice dowodów:
+[macierz weryfikacji](security-8b2-verification.md).
 
 | ID | Wymagany dowód |
 |---|---|
@@ -330,7 +378,7 @@ nie dodajemy osobnego systemu telemetrycznego ani dobowej polityki blokad.
 CSRF bez tokenu zależy od Origin/CORS/JS i bezpieczeństwa dozwolonych origins;
 nie rozwiązuje XSS. LAN HTTP, kradzież cookie i długi lifetime są ryzykami.
 
-**Realne blokery przed Phase 9:** brak implementacji/testów A/B, dowodu
+**Realne blokery przed Phase 9:** lokalne X2 8B2, potwierdzenie skutecznej konfiguracji i dowodu
 szczelności Access/origin/private HA oraz poprawnego client IP/HTTPS i ochrony
 backupów. Wspólny peer tunelu bez bezpiecznej identyfikacji IP nie spełnia C2.
 Brak okresowej rotacji nie jest blokerem. Nie ma zgody na publiczny rollout

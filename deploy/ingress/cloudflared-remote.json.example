@@ -1,0 +1,21 @@
+{
+  "config": {
+    "ingress": [
+      {
+        "hostname": "<PUBLIC_HOSTNAME>",
+        "service": "https://<WORK_TRACKER_LAN_IP>:<BROWSER_TLS_PORT>",
+        "originRequest": {
+          "originServerName": "<ORIGIN_TLS_NAME>",
+          "caPool": "<CA_PEM_PATH_ON_CLOUDFLARED_LXC>",
+          "noTLSVerify": false,
+          "access": {
+            "required": true,
+            "teamName": "<ACCESS_TEAM_SLUG>",
+            "audTag": ["<ACCESS_APPLICATION_AUD>"]
+          }
+        }
+      },
+      {"service": "http_status:404"}
+    ]
+  }
+}

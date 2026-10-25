@@ -20,10 +20,10 @@
   - **Phase 8A1 — Identity foundation: DONE**
   - **Phase 8A2 — Server-side sessions and login UX: DONE**
   - **Phase 8A3 — Protect browser UI and API: DONE**
-  - **Phase 8B1 — Browser security hardening: IN PROGRESS**
-    - **Phase 8B1-A — Lightweight Browser Security: IN PROGRESS**
-    - **Phase 8B1-B — Simple Login Rate Limiting: IN PROGRESS**
-  - **Phase 8B2 — Cloudflare Access and Internet Readiness: PLANNED**
+  - **Phase 8B1 — Browser security hardening: DONE (operator-confirmed)**
+    - **Phase 8B1-A — Lightweight Browser Security: DONE (operator-confirmed)**
+    - **Phase 8B1-B — Simple Login Rate Limiting: DONE (operator-confirmed)**
+  - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (local X2 BLOCKED)**
 - **Phase 9 — Cloudflare public deployment: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
@@ -127,6 +127,7 @@ Aktualne endpointy:
 ## Production/deployment state
 
 - Środowisko: Debian 13 LXC na Proxmox, obecnie wyłącznie w sieci LAN; brak publicznego UI, Cloudflare Tunnel i Google Calendar integration.
+- Operator potwierdził baseline main `de963ae`, head `20261025_08`, wdrożone 8B1-A/B i pozytywne testy pakietu/runtime; to nie samodzielny test Codexa. Cloudflared jest w osobnym LXC; WT nie ma aktywnej trasy publicznej.
 - Proces: `work-tracker.service`; autostart po restarcie LXC i restart po awarii.
 - Instalacja: `install.sh`.
 - Aktualizacja: `update.sh` z backupem SQLite i rollbackiem.
@@ -177,71 +178,45 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 8B1-A — Lightweight Browser Security (IN PROGRESS)**
+**Phase 8B2 — implementacja ingress/readiness gotowa; lokalna walidacja X2 BLOCKED.**
 
-Implementacja obejmuje read-only GET `/api/auth/me` bez zapisów i Set-Cookie,
-osobny uwierzytelniony POST heartbeat oraz centralne Origin +
-`X-Work-Tracker-Request: 1` i JSON dla wszystkich unsafe browser API methods.
-Sześć dokładnych wyjątków sesyjnych pozostaje bez zmian; heartbeat nie jest
-wyjątkiem. Oba webhooki HA zachowują samodzielny `X-Webhook-Token` i działają
-bez browser cookie/Origin/znacznika, również przy błędnych browser nagłówkach.
-Bez tokenów CSRF, HMAC, nonce, keyringu, nowych tabel i migracji.
+8B1-A/B są DONE na podstawie potwierdzenia operatora: Debian 13 LXC na Proxmox,
+main de963ae, head 20261025_08, jeden Uvicorn worker/no-proxy-headers,
+package-install i service-user runtime pozytywne, działające UI/login/dane.
+Codex nie łączył się z produkcyjnym LXC i nie deklaruje własnej walidacji tam.
 
-Wymagane `BROWSER_ALLOWED_ORIGINS` nie ma domyślnej allowlisty. Backend i deploy
-współdzielą walidator origins; CORS jest podzbiorem. Instalator pyta o dokładne
-origins, updater waliduje je przed zależnościami/migracją/restartem. Brak odpowiedzi
-przerywa update i uruchamia dotychczasowy rollback, przed migracją bez restore DB.
-Limit loginu to 16384 bajty strumieniowo przed JSON/Argon2; Unicode po unescape
-zachowuje limit 15–1024 punktów kodowych. CSP self, nosniff, no-referrer, DENY
-oraz no-store chronią odpowiedzi i błędy; Swagger/ReDoc HTML wyłączony,
-OpenAPI JSON pozostaje chroniony. Frontend zachowuje globalne 401 i stale-response
-guards; heartbeat pochodzi wyłącznie z widocznej aktywności, nigdy samego pollingu.
+8B2 dostarcza opt-in INGRESS_PROFILE=split, domyślnie nieaktywne. Nginx w WT LXC
+rozdziela TLS browser (ACL tylko osobny cloudflared LXC) i prywatny HTTP HA
+(ACL tylko HA, ten sam dotychczasowy URL). Backend tylko loopback, zachowane
+transport peers przez proxy_bind 127.0.0.2/.3; bez Uvicorn proxy headers.
+Guard blokuje wszystkie publiczne webhooki i niekanoniczne raw path, a prywatnie
+dopuszcza tylko dwa dokładne POST. Dane pracy i kontrakty HA są bez zmian.
 
-Testy backendu, frontendu/build, powłoki, konfiguracji, rollbacku i layoutu
-uprawnień przechodzą. Testy obejmują faktyczny build Vite i wyrenderowany React
-bez potrzeby wyjątków CSP. **Nie oznaczono DONE**: pełny
-`deploy/tests/backend_package_install_test.sh` zatrzymał się na braku ensurepip
-w Pythonie środowiska; `service_user_runtime_test.sh` nie został wykonany jako
-root, ponieważ sudo wymaga hasła. Te dwa wymagane sprawdzenia pozostają do
-potwierdzenia na Debianie/Ubuntu z python3-venv i uprawnieniami roota.
-Nie wykonano deploymentu ani zmian produkcyjnej bazy.
+Protect with Access local/remote dla całego hostname, allowlista osób i default-deny,
+JWT podpis/JWKS/issuer/expiry/AUD; dodatkowy login WT pozostaje. Przykłady dla
+cloudflared 2026.10.0 z jawną normalizacją oraz TLS z weryfikacją między LXC.
+CF-Connecting-IP tylko po potwierdzonej ścieżce, bez zmiany transport peer;
+błędny/brak/wielokrotny IP zamyka login 503, nigdy fallback do connectora.
+XFF/Forwarded ignorowane. Limity, dwa sloty, /64/mapped, SQLite history bez zmian.
 
-**8B1-B — Simple Login Rate Limiting (IN PROGRESS)**
+Split wymaga jednego HTTPS origin, Secure=true, pustego CORS i exact Host/scheme.
+Cookie HttpOnly/Lax/host-only i sesje 30/180 dni oraz CSRF bez nowego mechanizmu.
+HSTS opcjonalny, domyślnie 0; wspólna walidacja runtime/updater przed migracjami.
+Manifest ma dwa opcjonalne klucze, nie wymusza zmiany obecnego LAN. Brak migracji.
 
-Zaimplementowano jedną tabelę `login_attempts` (migracja `20261025_08`,
-AUTOINCREMENT, login SHA-256, IP key, UTC attempted_at/failed_at i trzy indeksy).
-Atomowe 30 prób/IP i 8 zapisanych błędów/login w ruchomym oknie 900 s;
-sukces nie resetuje błędów. Unknown/dummy mają tę samą politykę. 429 z
-Retry-After dla wszystkich blokujących okien; brak slotu/IP, DB failure,
-niepewny commit i tabela pełna dają 503 bez cookie. Cleanup start/login,
-pułap 4096 rekordów bez kasowania aktywnych liczników; przyszłe daty liczą się
-konserwatywnie. Liczniki są trwałe; bez haseł, tokenów i body w tej tabeli.
+Lokalnie: pełny backend 751 PASS (w tym C1/C2 policy/X1 i Alembic), frontend
+test/build PASS, prawdziwy Nginx→Uvicorn TCP/TLS 8 PASS, rzeczywisty walidator
+cloudflared RSA/JWKS 6 PASS, config templates/binarka 4 PASS, config/updater/
+rollback/layout/bash PASS. **BLOCKED:** package-install zatrzymał się na braku
+ensurepip; runtime service user zgłosił skip, brak roota/no-new-privileges.
+Nie zaliczamy tych dwóch jako PASS; 8B2 pozostaje IN PROGRESS do ich wykonania.
 
-Dwa sloty procesowego semafora obejmują real/dummy verification, rehash i
-commit, również po anulowaniu HTTP. Brak write locka podczas Argon2id.
-Limit konta świadomie dopuszcza wyścig do 9 błędów; rzeczywisty crash procesu
-może pozostawić dwa nieznane wyniki, z zachowanymi próbami IP. LAN używa peer
-IPv4 /32, IPv6 /64, mapped IPv4 → IPv4. Unit przypina workers=1 i wyłącza proxy
-headers. Brak zmian sesji/heartbeat/logout/CSRF i mechanizmów domenowych.
-Frontend pokazuje polskie komunikaty 401/429/503 oraz Retry-After.
-
-Automatyczne regresje obejmują B1–B5/X1, anulowanie HTTP, realny crash,
-atomową współbieżność IP, rehash, SQLite busy/niepewny commit, pułap/cleanup,
-Uvicorn/proxy spoofing, wyrenderowany formularz i oba webhooki HA podczas
-wyczerpania limitów. Pełny backend, frontend/build, migracje i testy powłoki,
-konfiguracji, rollbacku oraz layoutu uprawnień przechodzą.
-**X2 pozostaje niepełne:** ponowiony package-install test zatrzymuje się na
-braku ensurepip; service-user runtime nie wykonano jako root, bo sudo wymaga
-hasła. Faza nie jest DONE; 8B1-A także nadal nie ma pełnej walidacji
-produkcyjnej. Żadnego deploymentu, release ani zmian produkcyjnej bazy.
-
-**8B2 — Cloudflare Access and Internet Readiness (PLANNED)** przygotuje
-i zweryfikuje politykę Access, ochronę prywatnego originu, HTTPS/Secure,
-proxy/client IP oraz backupy. Access pozostanie dodatkową warstwą obok
-loginu Work Trackera; jego wdrożenie nie zastępuje aplikacyjnego limitera.
-Home Assistant zachowuje X-Webhook-Token i kontrolowaną prywatną ścieżkę LAN;
-oba webhooki będą wykluczone z publicznego ingressu.
-Przez cały Phase 8 produkcja pozostaje LAN-only; publiczny rollout to Phase 9.
+Publiczne testy Edge/Access (w tym wykluczony użytkownik), effective remote
+config, prawdziwe IP/Workers/Pseudo IPv4, docelowy firewall/permissions i wyłączenie
+trasy bez HA: **BLOCKED / REQUIRES PHASE 9 VERIFICATION**. Przygotowano live probes,
+nie wykonano ich. Nie utworzono DNS/tunelu/Access, nie wdrożono kodu, nie zmieniono HA.
+[Macierz każdego wymagania](docs/architecture/security-8b2-verification.md) i
+[runbook operatora/rollback](docs/deployment/phase9-ingress.md) zawierają dowody i kroki.
 
 8B1-C usunięto z obowiązkowego planu: obecne 30 dni idle, 180 dni absolute,
 hash-only token i revocation pozostają podstawą. Okresowa rotacja może wrócić
@@ -260,7 +235,7 @@ Calendar ma być projekcją poprawnych zakończonych sesji i dodatkowym interfej
 - brak nadgodzin, dodatków, podatków i przeliczeń walut,
 - brak live estymacji wynagrodzenia dla niezakończonej zmiany,
 - brak WebSocket/SSE; dashboard celowo korzysta z prostego pollingu,
-- 8B1-A/B wymagają końcowej walidacji instalowanego pakietu/service-user runtime z python3-venv i rootem; wyczerpanie login/IP/tabeli może czasowo blokować nowe logowanie,
+- lokalna ponowna walidacja X2 8B2 wymaga python3-venv i roota; baseline A/B potwierdzony przez operatora; wyczerpanie login/IP/tabeli może czasowo blokować nowe logowanie,
 - okresowa rotacja sesji jest opcjonalna i nie należy do obowiązkowego zakresu przed Phase 9,
 - brak eksportu XLSX/Excel,
 - brak publicznego dostępu do aplikacji w obecnym wdrożeniu (plan: Phase 9 po Phase 8),

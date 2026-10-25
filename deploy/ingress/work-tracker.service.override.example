@@ -1,0 +1,5 @@
+# PHASE 9 ONLY: /etc/systemd/system/work-tracker.service.d/ingress.conf
+# Replace <BACKEND_PORT>; different from the existing HA LAN port.
+[Service]
+ExecStart=
+ExecStart=/opt/work-tracker/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port <BACKEND_PORT> --workers 1 --no-proxy-headers

@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 import hmac
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
@@ -23,6 +24,7 @@ from .application_settings import (
 from .config import Settings, get_settings
 from .auth import BrowserSessionMiddleware, build_auth_router
 from .login_limits import cleanup
+from .ingress import SplitIngressMiddleware
 from .browser_security import BrowserMutationMiddleware, SecurityHeadersMiddleware, SECURITY_HEADERS
 from .database import build_session_factory, get_session
 from .dashboard import DashboardSummary, calculate_dashboard
@@ -208,6 +210,10 @@ def create_app(
         allow_headers=["Content-Type", "X-Work-Tracker-Request", "X-Webhook-Token"],
         expose_headers=["Retry-After"],
     )
+    if settings.ingress_profile == "split":
+        app.add_middleware(SplitIngressMiddleware,
+                           browser_host=urlsplit(settings.browser_origin_list[0]).netloc,
+                           hsts_seconds=settings.browser_hsts_seconds)
     app.add_middleware(SecurityHeadersMiddleware)
 
     @app.exception_handler(RequestValidationError)

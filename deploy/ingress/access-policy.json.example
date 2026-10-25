@@ -1,0 +1,12 @@
+{
+  "name": "Work Tracker browser",
+  "domain": "<PUBLIC_HOSTNAME>",
+  "type": "self_hosted",
+  "policies": [
+    {
+      "name": "Explicit Work Tracker users",
+      "decision": "allow",
+      "include": [{"email": {"email": "<ALLOWED_USER_EMAIL>"}}]
+    }
+  ]
+}
