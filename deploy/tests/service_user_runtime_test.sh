@@ -59,7 +59,7 @@ runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/uvicorn" --version
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="sqlite:///${DATABASE_FILE}" \
         .venv/bin/alembic upgrade head
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="sqlite:///${DATABASE_FILE}" \
-        .venv/bin/alembic current | grep -q '20261006_07 (head)'
+        .venv/bin/alembic current | grep -q '20261025_08 (head)'
 )
 
 PORT="$("${APP_DIR}/backend/.venv/bin/python" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
@@ -69,7 +69,7 @@ PORT="$("${APP_DIR}/backend/.venv/bin/python" -c 'import socket; s = socket.sock
         WEBHOOK_TOKEN='service-user-test-token-at-least-32-characters' \
         BROWSER_ALLOWED_ORIGINS="http://127.0.0.1:${PORT}" \
         DATABASE_URL="sqlite:///${DATABASE_FILE}" \
-        .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${PORT}"
+        .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${PORT}" --workers 1 --no-proxy-headers
 ) >"${TEST_DIR}/uvicorn.log" 2>&1 &
 SERVER_PID="$!"
 

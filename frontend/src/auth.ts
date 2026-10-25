@@ -119,6 +119,14 @@ export function createAuthController(
         }))
         if (response.status === 401) {
           if (isCurrent(requestedVersion)) publish({ error: 'Nieprawidłowa nazwa użytkownika lub hasło.' })
+        } else if (response.status === 429) {
+          const retryAfter = response.headers?.get('Retry-After')
+          const seconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : NaN
+          const retryMessage = Number.isSafeInteger(seconds) && seconds > 0
+            ? ` Możesz ponowić próbę za ${seconds} s.` : ' Spróbuj ponownie później.'
+          if (isCurrent(requestedVersion)) publish({ error: `Zbyt wiele prób logowania.${retryMessage}` })
+        } else if (response.status === 503) {
+          if (isCurrent(requestedVersion)) publish({ error: 'Logowanie jest chwilowo niedostępne. Spróbuj ponownie później.' })
         } else if (!response.ok) {
           throw new Error('Login unavailable')
         } else {

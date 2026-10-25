@@ -365,7 +365,7 @@ def test_sessions_upgrade_preserves_existing_user_and_domain_data(tmp_path, monk
         with engine.connect() as connection:
             return {table: list(connection.execute(text(f'SELECT * FROM {table} ORDER BY 1'))) for table in tables}
     before = snapshot()
-    command.upgrade(config, 'head')
+    command.upgrade(config, '20261006_07')
     schema = inspect(engine)
     assert set(schema.get_table_names()) == tables | {'alembic_version', 'user_sessions'}
     assert snapshot() == before
@@ -383,7 +383,7 @@ def test_sessions_upgrade_preserves_existing_user_and_domain_data(tmp_path, monk
                     last_seen_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
                     expires_at=datetime(2030, 6, 30, tzinfo=timezone.utc)))
         session.commit()
-    command.upgrade(config, 'head')
+    command.upgrade(config, '20261006_07')
     assert snapshot() == before
     for invalid in [
         {'user_id': 999}, {'token_hash': 'raw-token'}, {'token_hash': 'g' * 64},
@@ -399,4 +399,46 @@ def test_sessions_upgrade_preserves_existing_user_and_domain_data(tmp_path, monk
     command.downgrade(config, '20261006_06')
     assert snapshot() == before
     assert 'user_sessions' not in inspect(engine).get_table_names()
+    engine.dispose()
+
+
+def test_login_attempts_additive_upgrade_head_and_model(tmp_path, monkeypatch):
+    from alembic.script import ScriptDirectory
+    from app.models import LoginAttempt
+
+    url = f"sqlite:///{tmp_path / 'login-upgrade.db'}"
+    monkeypatch.setenv('DATABASE_URL', url)
+    config = alembic_config(Path(__file__).resolve().parents[1], url)
+    command.upgrade(config, '20261006_07')
+    engine = build_engine(url)
+    tables = set(inspect(engine).get_table_names()) - {'alembic_version'}
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO users VALUES (1, 'owner', 'unchanged', '2030-01-01T00:00:00+00:00')"))
+        connection.execute(text("INSERT INTO user_sessions VALUES (1, 1, :digest, '2030-01-01T00:00:00+00:00', "
+            "'2030-01-01T00:00:00+00:00', '2030-06-01T00:00:00+00:00', NULL)"), {'digest': 'a' * 64})
+        connection.execute(text("INSERT INTO work_events VALUES (1, 'entry', 'office', "
+            "'2030-01-01T00:00:00+00:00', '2030-01-01T00:00:00+00:00', '2030-01-01T00:00:00+00:00', 'home_assistant')"))
+    def snapshot():
+        with engine.connect() as connection:
+            return {table: list(connection.execute(text(f'SELECT * FROM {table} ORDER BY 1'))) for table in tables}
+    before = snapshot()
+    command.upgrade(config, 'head')
+    command.upgrade(config, 'head')
+    assert snapshot() == before
+    assert ScriptDirectory.from_config(config).get_heads() == ['20261025_08']
+    schema = inspect(engine)
+    assert set(schema.get_table_names()) == tables | {'alembic_version', 'login_attempts'}
+    assert {c['name'] for c in schema.get_columns('login_attempts')} == set(LoginAttempt.__table__.columns.keys())
+    assert {tuple(i['column_names']) for i in schema.get_indexes('login_attempts')} == {
+        ('ip_key', 'attempted_at'), ('login_key', 'failed_at'), ('attempted_at',)}
+    assert not schema.get_foreign_keys('login_attempts')
+    with engine.begin() as connection:
+        assert connection.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '20261025_08'
+        ddl = connection.execute(text("SELECT sql FROM sqlite_master WHERE name='login_attempts'")).scalar_one()
+        assert 'AUTOINCREMENT' in ddl
+        assert connection.execute(text('SELECT count(*) FROM login_attempts')).scalar_one() == 0
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(text("INSERT INTO login_attempts (login_key, ip_key, attempted_at) VALUES ('not-a-digest', '127.0.0.1/32', '2030-01-01T00:00:00+00:00')"))
+    command.downgrade(config, '20261006_07')
+    assert snapshot() == before and 'login_attempts' not in inspect(engine).get_table_names()
     engine.dispose()

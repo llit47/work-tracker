@@ -101,7 +101,8 @@ w widocznej karcie, korektę, eksporty i oba webhooki HA bez browser cookie.
 Po zmianie DHCP/hosta/portu uaktualnij obie listy i zrestartuj usługę, sprawdź nowy
 adres, potem usuń stary origin. Zmiana hosta wymaga nowego loginu; w razie zmiany
 adresu backendu popraw również URL integracji HA. Brak nowego originu daje 403.
-8B1-A nie wymaga migracji, tabeli ani nowego sekretu; head to `20261006_07`.
+8B1-A nie wymaga migracji, tabeli ani nowego sekretu. 8B1-B dodaje migrację
+`20261025_08`; jest to bieżący head Alembic.
 
 ## Utworzenie pierwszego użytkownika (Phase 8A1)
 
@@ -175,7 +176,7 @@ Kod domyślnie używa `SESSION_COOKIE_SECURE=true`. Instalator i updater wymagaj
 
 Produkcja używa same-origin FastAPI/frontend. Istniejący Vite z `VITE_API_BASE_URL=http://localhost:8000` używa wszystkich API requests z `credentials: include` i jawnych `CORS_ORIGINS`; wildcard i origin `null` są odrzucane. Używaj tego samego hostname dla Vite i API (np. `localhost` po obu stronach, albo `127.0.0.1` po obu stronach), ponieważ SameSite=Lax nie służy do cross-site cookies. Przy frontendzie LAN ustaw oba adresy na ten sam hostname/IP, różniący się portem, i dodaj dokładny origin Vite do CORS. Zbudowany frontend production pozostawia `VITE_API_BASE_URL` puste.
 
-Migracja `20261006_07` jest addytywna: dodaje pustą tabelę sesji, bez zmiany istniejących użytkowników lub danych domenowych. Updater zachowuje backup/rollback; starszy kod nie potrzebuje tabeli sesji. 8B1-A nie zmienia schematu. Login rate limiting pozostaje planem 8B1-B; trusted proxy/Access i gotowość Internetu należą do 8B2.
+Migracja `20261006_07` jest addytywna: dodaje pustą tabelę sesji, bez zmiany istniejących użytkowników lub danych domenowych. Updater zachowuje backup/rollback; starszy kod nie potrzebuje tabeli sesji. 8B1-A nie zmienia schematu. 8B1-B dodaje wyłącznie tabelę `login_attempts` (opis poniżej); trusted proxy/Access i gotowość Internetu należą do 8B2.
 
 ### Ochrona mutacji i odpowiedzi (8B1-A)
 
@@ -207,6 +208,71 @@ object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` oraz
 `X-Frame-Options: DENY`. Auth, prywatne API, CSV/PDF, login HTML i błędy mają
 `Cache-Control: no-store`. Bez HSTS/wymuszania HTTPS w obecnym LAN HTTP.
+
+### Limity logowania (8B1-B)
+
+`POST /api/auth/login` ma dwa niezależne ruchome okna **(teraz − 900 s, teraz]**:
+8 zakończonych, zapisanych błędów na kanoniczny login oraz 30 dopuszczonych
+prób na IP. Sukces nie zeruje błędów i również zużywa IP. Nieznane konta mają
+te same limity, dummy Argon2id i ogólne komunikaty; nie ma informacji, który
+limit zadziałał. Błędne hasła poza kontraktem długości/Unicode zwracają ogólne
+401 bez Argon2id, ale zapisują błąd. Odrzucenia HTTP/body/JSON
+403/413/415/422 nie są próbami credentials.
+
+- **401**: nieprawidłowe dane logowania.
+- **429**: wyczerpane konto lub IP, bez weryfikacji hasła; `Retry-After` to
+  zaokrąglona w górę liczba sekund (minimum 1) do zwolnienia wszystkich
+  blokujących limitów po zapisaniu próby IP. Przy 9 błędach konta muszą wygasnąć
+  dwa najstarsze. Ponawianie zablokowanych prób IP nie przesuwa deadline.
+- **503**: brak slotu weryfikacji, pełna tabela, brak poprawnego peer IP,
+  błąd SQLite (w tym busy/niepewny commit) lub utrata rekordu trwającej próby.
+  Bez cookie; nie wykonywać automatycznych ponowień. Blokada konta i brak slotu
+  zużywają IP, ale nie zapisują błędu hasła. Pełna tabela/błąd DB/niepoprawny IP
+  nie pozwalają przyjąć nowej próby. Przy pełnej tabeli 503 ma pierwszeństwo.
+
+Jedna tabela `login_attempts`: `id INTEGER PRIMARY KEY AUTOINCREMENT`,
+`login_key` (64-znakowy SHA-256 ASCII `login:` + kanoniczny login, albo
+SHA-256 `invalid-username`), `ip_key` (IPv4 /32, IPv6 /64, mapped IPv4 → IPv4),
+`attempted_at` UTC i nullable `failed_at` UTC. Indeksy: `(ip_key, attempted_at)`,
+`(login_key, failed_at)`, `attempted_at`. Bez FK do kont, haseł, tokenów i body.
+Sprawdzenie/zapis IP i pułapu 4096 rekordów następuje w krótkiej transakcji
+`BEGIN IMMEDIATE`. Cleanup na starcie i przy loginie usuwa rekordy dopiero,
+gdy obie daty nie należą już do aktywnego okna; nie usuwa przyszłych dat po
+cofnięciu zegara. Zapisane liczniki przeżywają restart. Wymagany poprawny UTC/NTP.
+
+Procesowy semafor dopuszcza dwa sloty bez oczekiwania na slot. Slot obejmuje
+real/dummy Argon2id, rehash i commit wyniku, także po anulowaniu HTTP.
+Weryfikacja odbywa się poza transakcją SQLite. Dwie równoległe weryfikacje mogą
+zakończyć się 9 zamiast 8 błędami konta; crash może pozostawić najwyżej dwa
+nieznane wyniki, z zachowanymi próbami IP. Wyczerpanie konta/IP/tabeli może
+czasowo uniemożliwić nowy login. Istniejące sesje i oba webhooki HA działają dalej.
+Brak stałych blokad, limitów dobowych, progresji kar i dodatkowych tabel.
+
+Unit systemd jawnie uruchamia **`--workers 1 --no-proxy-headers`**. W LAN
+limiter bierze wyłącznie peer IP, ignoruje X-Forwarded-For, Forwarded i
+CF-Connecting-IP, również od localhost. Nie uruchamiać dodatkowych workerów ani
+instancji. Klienci za wspólnym NAT lub w tym samym IPv6 /64 współdzielą budżet.
+Nie dodano ustawień manifestu ani sekretów; to nadal LAN-only, bez proxy/tunelu.
+Frontend pokazuje polskie komunikaty 401/429/503 i czas z `Retry-After`.
+Sesje, heartbeat, logout i ochrona CSRF 8B1-A pozostają bez zmian.
+
+Bezpieczne wdrożenie po merge i walidacji środowiska: potwierdzić origins,
+`SESSION_COOKIE_SECURE=false` dla LAN HTTP, konto oraz backupy poza checkoutem.
+Użyć istniejącego `sudo /opt/work-tracker/update.sh`: czysty checkout, backup
+SQLite, fast-forward, wspólny build klienta/backendu, stop usługi, addytywna
+migracja jako service user i restart z nowym unitem. Potwierdzić head
+`20261025_08`, jeden worker, login/logout/heartbeat, eksporty i oba webhooki HA.
+Ten PR nie wykonuje wdrożenia. Test instalacji pakietu i runtime jako service
+user nadal wymagają środowiska z `python3-venv` i uprawnieniami roota;
+8B1-A/B nie są oznaczone jako w pełni zweryfikowane produkcyjnie.
+
+Rollback updatera przed migracją zachowuje DB; po rozpoczęciu migracji stosuje
+dotychczasowy restore z backupu przy zatrzymanej usłudze. Przy późniejszym ręcznym
+rollbacku cofnąć backend/frontend/unit razem, pozostawić addytywną tabelę i
+bieżące dane pracy. Nie odtwarzać starej DB kosztem nowych raw events/korekt.
+Jeżeli konieczny jest restore, odwołać odtworzone sesje i odczekać pełne 15 minut
+przed ponownym dopuszczeniem loginów. Powrót do 8B1-A usuwa limiter, więc
+wyłącznie awaryjnie w izolowanym LAN.
 
 ## Logs/status/restart
 
@@ -287,7 +353,7 @@ Terminal backendu (z aktywnym środowiskiem wirtualnym):
 
 ```bash
 cd backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-proxy-headers
 ```
 
 Terminal frontendu:
@@ -304,7 +370,7 @@ Otwórz adres wyświetlony przez Vite (zwykle `http://localhost:5173`).
 Powyższa komenda nasłuchuje tylko na komputerze lokalnym i jest właściwa do pracy developerskiej. Gdy Home Assistant działa na innym hoście LAN, uruchom backend na wszystkich interfejsach serwera:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-proxy-headers
 ```
 
 Nie oznacza to publicznego dostępu: nie konfiguruj przekierowania portów, publicznego IP ani tunelu. Dostęp powinien być ograniczony do zaufanej sieci LAN przez konfigurację sieci serwera. Home Assistant nie wymaga CORS; CORS dotyczy wyłącznie przeglądarkowego frontendu. Jeśli frontend Vite działa pod innym adresem LAN, dodaj jego pełny origin do `CORS_ORIGINS` i `BROWSER_ALLOWED_ORIGINS`.

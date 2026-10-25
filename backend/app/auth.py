@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, SecretStr
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -17,8 +18,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from .config import Settings
 from .browser_security import MACHINE_ENDPOINTS
 from .database import get_session
-from .identity import hash_password, normalize_username, password_needs_rehash, verify_password
+from .identity import hash_password, password_needs_rehash, verify_password
 from .models import User, UserSession
+from .login_limits import VERIFICATION_SLOTS, admit, login_identity, peer_ip_key, record_result, unavailable
 
 COOKIE_NAME = "work_tracker_session"
 IDLE_TIMEOUT = timedelta(days=30)
@@ -140,7 +142,9 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
         )
         response.headers["Cache-Control"] = "no-store"
 
-    def login_failure() -> JSONResponse:
+    def login_failure(session: Session, attempt_id: int) -> JSONResponse:
+        record_result(session, attempt_id, now(), failed=True)
+        session.commit()
         return JSONResponse(
             status_code=401,
             content={"detail": "Nieprawidłowa nazwa użytkownika lub hasło."},
@@ -148,11 +152,27 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
         )
 
     @router.post("/login")
-    def login(payload: LoginRequest, response: Response, session: Session = Depends(get_session)):
+    def login(payload: LoginRequest, request: Request, response: Response):
+        # This synchronous handler owns both the session and slot in its worker
+        # thread. HTTP cancellation cannot close/release either during real work.
+        acquired = VERIFICATION_SLOTS.acquire(blocking=False)
         try:
-            username = normalize_username(payload.username)
-        except ValueError:
-            username = None
+            with request.app.state.session_factory() as session:
+                username, login_key = login_identity(payload.username)
+                ip_key = peer_ip_key(request.client.host if request.client else None)
+                attempt_id = admit(session, login_key, ip_key, now())
+                if not acquired:
+                    raise unavailable()
+                return authenticate(payload, response, session, username, attempt_id)
+        except SQLAlchemyError:
+            # Includes uncertain commits: never issue a cookie or retry a write.
+            raise unavailable() from None
+        finally:
+            if acquired:
+                VERIFICATION_SLOTS.release()
+
+    def authenticate(payload: LoginRequest, response: Response, session: Session,
+                     username: str | None, attempt_id: int):
         credentials = session.execute(
             select(User.id, User.username, User.password_hash).where(User.username == username)
         ).first()
@@ -161,7 +181,7 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
         password = payload.password.get_secret_value()
         verified = verify_password(password, credentials.password_hash if credentials else _DUMMY_HASH)
         if not verified or credentials is None:
-            return login_failure()
+            return login_failure(session, attempt_id)
         new_hash = hash_password(password) if password_needs_rehash(credentials.password_hash) else None
         if new_hash is not None:
             changed = session.execute(update(User).where(
@@ -174,10 +194,11 @@ def build_auth_router(settings: Settings, now_provider: Callable[[], datetime]) 
                 current_hash = session.scalar(select(User.password_hash).where(User.id == credentials.id))
                 session.rollback()
                 if not verify_password(password, current_hash):
-                    return login_failure()
+                    return login_failure(session, attempt_id)
         instant = now()
         raw_token = secrets.token_urlsafe(32)
         expires_at = instant + ABSOLUTE_LIFETIME
+        record_result(session, attempt_id, instant, failed=False)
         session.add(UserSession(
             user_id=credentials.id, token_hash=token_hash(raw_token),
             created_at=instant, last_seen_at=instant, expires_at=expires_at,

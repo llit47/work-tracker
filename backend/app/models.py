@@ -205,7 +205,7 @@ class User(Base):
 
 
 class UTCDateTime(AwareDateTime):
-    """Fixed-width UTC text for exact SQLite session deadline comparisons."""
+    """Fixed-width UTC text for exact SQLite authentication deadline comparisons."""
 
     cache_ok = True
 
@@ -240,3 +240,23 @@ class UserSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "length(login_key) = 64 AND login_key NOT GLOB '*[^0-9a-f]*'",
+            name="ck_login_attempts_login_key",
+        ),
+        Index("ix_login_attempts_ip", "ip_key", "attempted_at"),
+        Index("ix_login_attempts_login", "login_key", "failed_at"),
+        Index("ix_login_attempts_cleanup", "attempted_at"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    login_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip_key: Mapped[str] = mapped_column(String(43), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    failed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

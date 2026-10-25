@@ -72,13 +72,13 @@ const container = document.getElementById('root')
 const text = () => container.textContent
 const isProtected = () => container.querySelector('.month-navigation') !== null
 const flush = async () => { await act(async () => { await new Promise((resolve) => setImmediate(resolve)) }) }
-async function mount(onRequest, strict = false) {
+async function mount(onRequest, strict = false, loginResponse = () => response(user)) {
   requests = []
   handler = onRequest
   globalThis.fetch = async (url, init) => {
     requests.push({ url, init })
     if (url.endsWith('/auth/logout')) return new Response(null, { status: 204 })
-    if (url.endsWith('/auth/login')) return response(user)
+    if (url.endsWith('/auth/login')) return loginResponse()
     return await handler(url, init)
   }
   root = createRoot(container)
@@ -131,6 +131,19 @@ assert.doesNotMatch(text(), /Prywatny gabinet|1234/)
 assert.ok(container.querySelector('.auth-form'))
 assert.ok(![...intervals.values()].some(({ delay }) => delay === 30_000), 'dashboard polling stops')
 await unmount()
+
+// Real login form renders generic 401, rate-limit timing, and overload messages.
+for (const [status, expected] of [[401, /Nieprawidłowa/], [429, /za 125 s/], [503, /chwilowo niedostępne/]]) {
+  await mount(() => response({}, 401), false, () => new Response('{}', {
+    status, headers: status === 429 ? { 'Retry-After': '125' } : {},
+  }))
+  await login()
+  assert.match(container.querySelector('[role="alert"]').textContent, expected)
+  assert.equal(isProtected(), false)
+  assert.equal(domainRequests().length, 0)
+  assert.equal(requests.filter(({ url }) => url.endsWith('/auth/login')).length, 1)
+  await unmount()
+}
 
 // Session restoration, loss from any ordinary request, late 200/401, and relogin.
 for (const failingPath of ['/dashboard', '/application-settings', '/pay-summary', '/work-summary', '/pay-rates']) {

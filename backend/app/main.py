@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 import hmac
 from pathlib import Path
@@ -10,8 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from .application_settings import (
     APPLICATION_SETTINGS_ID,
@@ -20,6 +22,7 @@ from .application_settings import (
 )
 from .config import Settings, get_settings
 from .auth import BrowserSessionMiddleware, build_auth_router
+from .login_limits import cleanup
 from .browser_security import BrowserMutationMiddleware, SecurityHeadersMiddleware, SECURITY_HEADERS
 from .database import build_session_factory, get_session
 from .dashboard import DashboardSummary, calculate_dashboard
@@ -172,7 +175,23 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     dashboard_now_provider = now_provider or (lambda: datetime.now(timezone.utc))
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        def prune_login_attempts():
+            try:
+                with app.state.session_factory() as session:
+                    cleanup(session, dashboard_now_provider().astimezone(timezone.utc))
+                    session.commit()
+            except SQLAlchemyError:
+                # A limiter DB failure closes login, not existing sessions/HA.
+                # Every login retries cleanup and must persist its admission.
+                pass
+        await run_in_threadpool(prune_login_attempts)
+        yield
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Work Tracker API", version="0.1.0",
         # Generated documentation inherits the same guarded API namespace.
         openapi_url="/api/openapi.json", docs_url=None, redoc_url=None,
