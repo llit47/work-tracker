@@ -313,6 +313,22 @@ oddziela testy ASGI, prawdziwe Nginx/Uvicorn, walidator JWT cloudflared i
 **BLOCKED / REQUIRES PHASE 9 VERIFICATION** dla rzeczywistego konta/Edge.
 Brak nowej migracji; Alembic head pozostaje 20261025_08.
 
+## Opcjonalne przygotowanie Nginx (9B1)
+
+`python3 deploy/nginx_provision.py` udostępnia `plan`/`validate` bez zmian,
+`prepare` nieaktywnej konfiguracji, `verify`, oddzielne `activate` i `rollback`.
+Przygotowanie nie zajmuje dotychczasowego portu HA i nie zmienia Uvicorna.
+Wymaga jawnego JSON operatora i istniejącego Nginx; nie instaluje pakietów.
+Pliki, kopie TLS i backupy są poza checkoutem, z kontrolą właściciela/uprawnień.
+Aktywacja osobnej usługi jest blokowana bez dowodów izolacji IPv4/IPv6,
+wyłączonej publicznej trasy i gotowego backendu split. Brak enable/autostartu.
+
+[Instrukcja 9B1](docs/deployment/phase9b1-nginx.md) opisuje zależności, wymagane
+wejścia, backup/dziennik/rollback oraz granice testów. Instalator nadal domyślnie
+instaluje LAN; integracja LAN/HTTPS i bezpieczny bootstrap pakietów to 9B2.
+`update.sh` nie wywołuje narzędzia i nie przełącza sieci ani HTTPS.
+Nie wykonano deploymentu ani zmian współdzielonego cloudflared operatora.
+
 ## Logs/status/restart
 
 ```bash
@@ -450,6 +466,7 @@ poza checkoutem, testy nie uruchamiają tunelu):
 
 ```bash
 WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/ingress_security_test.py -q
+WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/nginx_provision_test.py -q
 WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN> backend/.venv/bin/pytest deploy/tests/cloudflared_config_test.py deploy/tests/ingress_config_test.py -q
 CLOUDFLARED_SOURCE_DIR=<SOURCE_2026.10.0> WORK_TRACKER_GO_BIN=<GO_BIN> deploy/tests/cloudflared_access_test.sh
 git diff --check

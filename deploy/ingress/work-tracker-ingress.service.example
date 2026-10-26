@@ -1,0 +1,22 @@
+[Unit]
+Description=Work Tracker isolated ingress (explicit activation only)
+After=network-online.target work-tracker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Group=www-data
+ExecStart=<NGINX_BIN> -e stderr -p <RUNTIME_DIR>/ -c <GENERATION_DIR>/nginx.conf
+KillSignal=SIGQUIT
+TimeoutStopSec=10
+Restart=no
+RuntimeDirectory=work-tracker-ingress
+RuntimeDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=<RUNTIME_DIR>
+
+# Deliberately no Install section: 9B1 does not enable boot activation.

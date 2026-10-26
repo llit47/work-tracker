@@ -5,6 +5,10 @@ Status implementacji: przygotowano profil opt-in, przykłady i lokalne testy.
 Publiczny rollout i wszystkie dowody rzeczywistego Edge są osobną Phase 9.
 Nie wykonano deploymentu, zmian produkcyjnego LXC, HA, DNS ani tunelu.
 
+Fundament provisioning Nginx z 9B1 ma osobne
+[dowody i ograniczenia](../deployment/phase9b1-nginx.md#dowody-lokalne-i-pozostała-praca).
+Lokalne testy cyklu usługi nie zamykają X2 ani żadnego dowodu E poniżej.
+
 Poziomy dowodu nie są zamienne:
 
 - **U** — backend ASGI/polityka z kontrolowanym peer; nie dowodzi Access ani ACL sieci.

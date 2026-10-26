@@ -5,6 +5,13 @@ Nie utworzono DNS, tunelu ani aplikacji Access. Obecny LAN HTTP działa z
 `INGRESS_PROFILE=lan` (domyślne), dotychczasowymi origins i Secure=false.
 Aktualizacja kodu sama nie instaluje Nginx i nie zmienia listenerów/firewalla.
 
+**9B1:** dostępne jest osobne [narzędzie przygotowania Nginx](phase9b1-nginx.md).
+To jedyny ukończony fundament Phase 9, bez aktywacji produkcji. Kroki cutover,
+Access/tunnel/DNS poniżej pozostają planem 9B2/9C/9D, nie instrukcją do wykonania
+w PR 9B1. Nie łączyć ręcznego generic Nginx z osobną instancją narzędzia.
+Cloudflared operatora 2026.10.3 ma współdzielony local config w LXC 102;
+9B1 nie zmienia żadnych jego plików, tras ani usług.
+
 Stan bazowy potwierdzony przez operatora: Debian 13 LXC na Proxmox, main
 `de963ae`, head `20261025_08`, jeden worker z `--no-proxy-headers`, działające
 8B1-A/B, login, UI i dane; package-install/service-user runtime zaliczone przez
@@ -139,10 +146,12 @@ Access i czas sesji Access, niezależnie od niezmienionych 30/180 dni WT.
 
 ## 4. Odrębne wejścia i firewall
 
-Zainstalować Nginx na WT LXC. Wypełnić
-[`nginx.conf.example`](../../deploy/ingress/nginx.conf.example) i włączyć wewnątrz
-`http {}`. Usunąć inne generic proxy/listenery WT. `nginx -t` przed reload.
-Przy IPv6 dodać konkretne listen/allow i te same restrykcje firewalla; brak
+Nginx na WT LXC przygotować według [9B1](phase9b1-nginx.md), z osobną instancją
+i bez aktywacji generic proxy/listenerów. Narzędzie używa
+[`nginx.conf.example`](../../deploy/ingress/nginx.conf.example) we własnym
+`http {}`; `nginx -t` wykonuje wyłącznie w prywatnym stagingu podczas prepare.
+Nie przejmuje obcych listenerów. 9B1 nie dopuszcza listenerów IPv6; przyszłe
+rozszerzenie wymaga konkretnych listen/allow i tych samych restrykcji firewalla; brak
 reguły IPv6 nie może pozostawiać alternatywnej ścieżki do aplikacji.
 Nginx browser słucha TLS tylko z connectora; HA słucha prywatnego HTTP tylko z HA.
 Nie przekazuje Cookie/Origin/CSRF/Access do HA. Token HA jest nadal sprawdzany
@@ -213,7 +222,9 @@ bez udziału przeglądarki. W krótkim oknie serwisowym, nadal bez publicznej tr
    [`work-tracker.service.override.example`](../../deploy/ingress/work-tracker.service.override.example).
    Stały backend bind 127.0.0.1 na innym porcie; APP_HOST/PORT w env mogą pozostać
    jako poprzednie wartości do kontrolowanego rollbacku, drop-in je zastępuje.
-4. `systemctl daemon-reload`, uruchomić WT i Nginx, sprawdzić bindy oraz ACL.
+4. `systemctl daemon-reload`, uruchomić WT, a prywatny Nginx przez jawne
+   `nginx_provision.py activate --evidence <RAPORT_0600>` po wszystkich bramkach
+   [9B1](phase9b1-nginx.md). Sprawdzić bindy oraz ACL.
    Nie uruchamiać dwóch aplikacji/workerów do tej samej DB.
 5. Z HA sprawdzić dotychczasowy URL entry/exit/correction, dobry/zły/brak tokenu,
    bez Cookie/Origin/Access. Nie zmieniać istniejącej konfiguracji HA.

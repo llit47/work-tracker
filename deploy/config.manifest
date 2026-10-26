@@ -1,4 +1,7 @@
 # KEY|required|visibility|safe_default|prompt|validator
+# Optional infrastructure has a separate all-explicit JSON contract:
+# deploy/ingress/provision.json.example, validated by deploy/nginx_provision.py.
+# Never load it as app env or invoke provisioning from the updater.
 APP_HOST|required|plain|0.0.0.0|Backend listen address|host
 APP_PORT|required|plain|8000|Backend port|port
 WEBHOOK_TOKEN|required|secret||Webhook token (leave empty to generate one)|token
