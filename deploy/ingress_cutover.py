@@ -17,6 +17,8 @@ import time
 
 import nginx_provision as p
 from ingress_bootstrap import Bootstrap
+from ingress_artifacts import migrate
+from env_file import parse as parse_env, EnvError
 
 APP = 'work-tracker.service'
 RECOVERY = 'work-tracker-ingress-recovery.service'
@@ -35,14 +37,10 @@ class Layout(p.Layout):
 
 
 def values(data):
-    result = {}
-    for line in data.decode().splitlines():
-        if not line or line.startswith('#'):
-            continue
-        match = re.fullmatch(r'([A-Z][A-Z0-9_]*)=(.*)', line)
-        p.require(match is not None and match[1] not in result, 'Niejednoznaczny env; użyj prostych KEY=value bez duplikatów.')
-        result[match[1]] = match[2]
-    return result
+    try:
+        return parse_env(data)
+    except EnvError as error:
+        raise p.Refusal(str(error)) from None
 
 
 def split_env(data, config):
@@ -77,26 +75,31 @@ class Cutover:
         with path.open('rb') as stream:
             os.fsync(stream.fileno())
 
-    def recovery_bytes(self):
-        return (f'[Unit]\nDescription=Recover interrupted Work Tracker ingress transaction\n'
+    def recovery_bytes(self, version=2):
+        content = (f'[Unit]\nDescription=Recover interrupted Work Tracker ingress transaction\n'
                 f'After=local-fs.target\nBefore={APP} {p.SERVICE}\n'
                 f'[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/python3 /opt/work-tracker/deploy/ingress_cutover.py recover --boot\n'
                 f'UMask=0077\n[Install]\nWantedBy=multi-user.target\n').encode()
+        return content if version == 1 else b'# Work Tracker recovery format 2\n' + content
 
     def install_recovery(self):
-        unit = self.layout.recovery_unit
-        if unit.exists() or unit.is_symlink():
-            self.layout.check(unit)
-            p.require(unit.read_bytes() == self.recovery_bytes(), 'Obca/zmieniona usługa odzyskiwania.')
-        else:
-            self.write(unit, self.recovery_bytes())
-        self.link(self.layout.recovery_link, unit)
-        self.host.control('daemon-reload')
+        with self.tool.lock():
+            unit = self.layout.recovery_unit
+            migrate(self.tool, 'recovery-unit', unit, {v: self.recovery_bytes(v) for v in (1, 2)}, 2, 0o644)
+            self.link(self.layout.recovery_link, unit)
+            self.host.control('daemon-reload')
+
+    def check_recovery(self):
+        self.layout.check(self.layout.recovery_unit)
+        p.require(self.layout.recovery_unit.read_bytes() in (self.recovery_bytes(1), self.recovery_bytes(2))
+                  and self.layout.recovery_link.is_symlink()
+                  and os.readlink(self.layout.recovery_link) == str(self.layout.recovery_unit), 'Brak poprawnego boot recovery.')
 
     def link(self, path, target):
         if not path.parent.exists():
             self.layout.check(path.parent.parent, directory=True)
             path.parent.mkdir(mode=0o755)
+            path.parent.chmod(0o755)  # mkdir is filtered by the CLI umask 077.
             p.fsync_dir(path.parent.parent)
         self.layout.check(path.parent, directory=True)
         if path.is_symlink():
@@ -172,7 +175,8 @@ class Cutover:
             generation, directory, config, drops = self.plan(evidence)
             confirm(config)
             # Recheck after the operator's window confirmation.
-            self.plan(evidence)
+            generation, directory, config, drops = self.plan(evidence)
+            self.check_recovery()
             original = self.snapshot(self.layout.env)
             unit_before = self.snapshot(self.layout.app_unit)
             replacement = split_env(self.layout.env.read_bytes(), config)
@@ -188,6 +192,7 @@ class Cutover:
                 self.host.checkpoint('journal')
                 if not self.layout.dropins.exists():
                     self.layout.dropins.mkdir(mode=0o755)
+                    self.layout.dropins.chmod(0o755)
                     p.fsync_dir(self.layout.dropins.parent)
                 self.write(self.dropin, dropin)
                 self.host.checkpoint('dropin')
@@ -207,6 +212,8 @@ class Cutover:
                 confirm_ha(config)  # Real HA peer, invalid tokenless POST: expect 422, never a test event.
                 self.tool.postcheck(config, (directory / 'service').read_bytes())
                 self.host.private_probes(config)
+                self.check_recovery()
+                self.verify_unchanged(transaction, dict(env=original, unit=unit_before, dropins=drops))
                 self.link(self.layout.ingress_link, self.layout.unit)
                 self.host.control('daemon-reload')
                 self.host.checkpoint('enabled')
@@ -248,9 +255,23 @@ class Cutover:
                 yield
         return locked()
 
-    def transaction(self):
+    def journal_state(self):
         self.layout.check(self.journal, private=True)
         transaction = p.read_json(self.journal)
+        p.require(set(transaction) == {'phase', 'generation', 'config', 'backup', 'backup_sha', 'env_sha', 'dropin_sha'},
+                  'Nieobsługiwany format journala cutover.')
+        p.require(transaction['phase'] in ('pending', 'active', 'rolling-back', 'lan-restored'), 'Nieznana faza cutover.')
+        for key in ('generation', 'backup_sha', 'env_sha', 'dropin_sha'):
+            p.require(isinstance(transaction[key], str) and re.fullmatch('[0-9a-f]{64}', transaction[key]),
+                      'Nieprawidłowy hash w journalu.')
+        p.require(isinstance(transaction['config'], dict) and set(transaction['config']) == p.FIELDS,
+                  'Nieprawidłowa konfiguracja journala.')
+        p.require(isinstance(transaction['backup'], str) and Path(transaction['backup']).parent == self.layout.backups,
+                  'Backup poza zarządzanym katalogiem.')
+        return transaction
+
+    def transaction(self, transaction=None):
+        transaction = self.journal_state() if transaction is None else transaction
         path = Path(transaction['backup'])
         p.require(path.parent == self.layout.backups, 'Backup poza zarządzanym katalogiem.')
         self.layout.check(path, private=True)
@@ -308,10 +329,42 @@ class Cutover:
         with self.deployment_lock(), self.coordinator_lock(), self.tool.lock():
             if not self.journal.exists():
                 return
-            transaction, _ = self.transaction()
+            transaction = self.journal_state()
             if transaction['phase'] == 'active' and not rollback:
+                # Availability of a committed service does not depend on an
+                # archive. Restoration still requires its full validation.
+                try:
+                    self.transaction(transaction)
+                except (p.Refusal, OSError, ValueError, KeyError, TypeError):
+                    print('ALARM: backup cutover niedostępny lub uszkodzony; automatyczny rollback NIEDOSTĘPNY. '
+                          'Aktywny split pozostaje bez zmian. Sprawdź verify i prywatne backupy.', file=sys.stderr)
                 return
             self.rollback_locked(boot)
+
+    def check_update(self, manifest_sha, incoming=False):
+        """Read-only hook; updater already owns the shared deployment lock.
+
+        A split update cannot rebase an archived LAN unit or silently migrate a
+        manifest/generation. Reject incompatible releases before merge/restart.
+        """
+        p.require(isinstance(manifest_sha, str) and re.fullmatch('[0-9a-f]{64}', manifest_sha), 'Brak kontraktu manifestu update.')
+        transaction, backup = self.transaction()
+        p.require(transaction['phase'] == 'active', 'Najpierw recover niedokończonego cutoveru.')
+        self.verify_unchanged(transaction, backup)
+        self.check_recovery()
+        self.tool.prepared()
+        p.require(not list(self.layout.state.glob('*-migration.json')), 'Najpierw dokończ migrację własnych artefaktów.')
+        def content(name):
+            if incoming:
+                return p.execute(['git', '-C', str(p.ROOT), 'show', f'origin/main:{name}'])
+            return (p.ROOT / name).read_bytes()
+        p.require(content('deploy/work-tracker.service') == self.layout.app_unit.read_bytes(),
+                  'Update split zmienia bazowy unit: wymagany jawny powrót do LAN przed aktualizacją.')
+        p.require(p.digest(content('deploy/config.manifest')) == manifest_sha,
+                  'Update split zmienia manifest: wymagany jawny powrót do LAN przed aktualizacją.')
+        for name in ('nginx.conf.example', 'work-tracker-ingress.service.example'):
+            p.require(content('deploy/ingress/' + name) == (p.ROOT / 'deploy/ingress' / name).read_bytes(),
+                      'Update split zmienia wzorce generacji: wymagany jawny powrót do LAN.')
 
     def verify(self):
         transaction, _ = self.transaction()
@@ -319,10 +372,7 @@ class Cutover:
         p.require(self.tool.prepared()[0] == transaction['generation'], 'Wskaźnik generacji zmieniony.')
         p.require(p.digest(self.layout.env.read_bytes()) == transaction['env_sha'] and self.dropin.exists(),
                   'Aktywna transakcja wymaga env/drop-in split.')
-        self.layout.check(self.layout.recovery_unit)
-        p.require(self.layout.recovery_unit.read_bytes() == self.recovery_bytes()
-                  and self.layout.recovery_link.is_symlink()
-                  and os.readlink(self.layout.recovery_link) == str(self.layout.recovery_unit), 'Brak poprawnego boot recovery.')
+        self.check_recovery()
         active = p.read_json(self.layout.state / 'active.json')
         p.require(active['phase'] == 'active' and active['generation'] == transaction['generation'], 'Niezgodny dziennik 9B1.')
         self.verify_unchanged(*self.transaction())
@@ -375,9 +425,11 @@ def configure(tool):
 
 def main():
     parser = argparse.ArgumentParser(description='Prywatny ingress WT: przygotowanie, kontrolowany cutover i pełny LAN rollback.')
-    parser.add_argument('operation', choices=['bootstrap', 'configure', 'prepare', 'plan', 'activate', 'verify', 'recover', 'rollback-lan'])
+    parser.add_argument('operation', choices=['bootstrap', 'configure', 'prepare', 'plan', 'activate', 'verify', 'recover', 'rollback-lan', 'update-check', 'update-verify'])
     parser.add_argument('--config', type=Path)
     parser.add_argument('--evidence', type=Path)
+    parser.add_argument('--manifest-sha')
+    parser.add_argument('--incoming', action='store_true')
     parser.add_argument('--boot', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
@@ -405,7 +457,9 @@ def main():
         elif args.operation == 'activate':
             p.require(args.evidence is not None, 'Wymagany --evidence.')
             cutover.activate(args.evidence, confirmation, ha_confirmation)
-        elif args.operation == 'verify':
+        elif args.operation == 'update-check':
+            cutover.check_update(args.manifest_sha, args.incoming)
+        elif args.operation in ('verify', 'update-verify'):
             cutover.verify()
         else:
             cutover.recover(args.boot, args.operation == 'rollback-lan')

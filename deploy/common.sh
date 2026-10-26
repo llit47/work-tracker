@@ -78,9 +78,7 @@ env_has_key() {
 read_env_value() {
     local env_file="$1"
     local key="$2"
-    local line
-    line="$(grep -m1 -E "^${key}=" "${env_file}")" || return 1
-    REPLY="${line#*=}"
+    REPLY="$(python3 "${WORK_TRACKER_DEPLOY_DIR}/env_file.py" "${env_file}" "${key}")"
 }
 
 validate_config_value() {

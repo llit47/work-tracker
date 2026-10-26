@@ -58,7 +58,7 @@ Przy domyślnym `APP_HOST=0.0.0.0` aplikacja nasłuchuje na interfejsach serwera
 http://<adres-IP-serwera-w-LAN>:8000
 ```
 
-FastAPI serwuje zbudowany frontend z `frontend/dist`, więc osobny Vite, nginx ani reverse proxy nie są potrzebne. CORS nie dotyczy webhooka Home Assistanta; jest potrzebny tylko wtedy, gdy przeglądarkowy frontend pochodzi z innego originu.
+W trybie LAN FastAPI serwuje zbudowany frontend z `frontend/dist`; osobny Vite ani Nginx nie są potrzebne. W docelowym profilu HTTPS/split Nginx jest wymaganym elementem prywatnego ingressu. CORS nie dotyczy webhooka Home Assistanta; jest potrzebny tylko wtedy, gdy przeglądarkowy frontend pochodzi z innego originu.
 
 Instalator nie otwiera firewalla i nie konfiguruje routera, publicznego IP ani tunelu. Dostęp należy pozostawić wyłącznie w zaufanej sieci LAN.
 
@@ -347,7 +347,9 @@ dodając trwały dziennik env/systemd, pełną kompensację i ordered boot recov
 Dopiero po kontrolach i potwierdzeniu z rzeczywistego HA aktywuje autostart proxy.
 Przygotowane generacje nie startują same. Zwykły updater nie przełącza profilu
 ani generacji; wspólna blokada zapobiega równoległemu update/cutoverowi, a
-niedokończony cutover blokuje update do czasu `recover`.
+niedokończony cutover blokuje update do czasu `recover`. W aktywnym splicie
+updater zachowuje bazowy unit i przed merge odmawia wydania zmieniającego unit,
+manifest lub wzorce ingressu. Wtedy wymagany jest jawny powrót do LAN i nowy cutover.
 Nie wykonano deploymentu ani zmian Cloudflare/firewalla/HA.
 
 ## Logs/status/restart
@@ -495,8 +497,14 @@ git diff --check
 
 Brak rzeczywistych binarek jest błędem tych testów, nie cichym PASS/skip.
 Testy 9B2 symulują apt/systemd/reboot; nie zastępują testu na nowym systemie.
+Dodatkowe regresje audytu: `ingress_audit_test.py`, `host_validation_test.py`
+i `split_update_test.py` w `deploy/tests/` (ten sam runner pytest).
+Runner `service_user_runtime_test.sh` bez roota zwraca **77 = SKIP/NOT RUN**,
+nie PASS. Przerwij raportowanie tego kroku jako sukcesu.
 Opcjonalna prywatna denylista: `WT_PRIVATE_INFRASTRUCTURE_DENYLIST` wskazuje
 plik 0600 poza checkoutem; skan prywatności nie drukuje dopasowanych wartości.
+Heurystyki obejmują IP obu rodzin oraz hostname w URL i typowych polach konfiguracji;
+nie zastępują ręcznego przeglądu ani prywatnej denylisty operatora.
 Źródło/tag, checksum i granice dowodów opisuje macierz weryfikacji. Live probes
 `deploy/tests/access_live_test.py` są przygotowane wyłącznie dla operatora
 Phase 9 z prywatnymi fixtures; nie uruchamiać ich jako części lokalnego pytest.

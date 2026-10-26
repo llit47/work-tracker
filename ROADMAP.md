@@ -607,7 +607,7 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 
 #### Phase 9B2 — Fresh install and complete private cutover
 
-**Status: DONE — implementacja i lokalne testy; realne pakiety/systemd/reboot wymagają 9C**
+**Status: IN PROGRESS — implemented / locally tested; real infrastructure NOT VERIFIED (9C)**
 
 - [x] Domyślny LAN i opcjonalne przygotowanie HTTPS w instalatorze; kontrolowany
   bootstrap Nginx z trwałą maską/policy, bez startu generic Nginx i przejmowania obcych usług.
@@ -619,6 +619,12 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 - [x] Regresje prawdziwego Nginx/OpenSSL/Uvicorn, izolowanej SQLite, błędów i kill;
   apt/systemd/reboot symulowane, rzeczywiste kontrole jawnie przekazane do 9C.
 - [x] Neutralne przykłady publicznego repo, trwała zasada prywatności i skan regresyjny.
+
+- [x] Audyt: aktywny boot recovery bez zależności od archiwum, alarm utraty rollbacku,
+  finalny snapshot po potwierdzeniu, wersjonowanie własnych artefaktów, ścisły kontrakt ExecStart.
+- [x] Test rzeczywistego update.sh na lokalnych repo Git, z Uvicorn/Nginx/SQLite,
+  awariami i późniejszym LAN rollback; niezgodne unit/manifest/wzorce blokowane przed merge.
+- [ ] Weryfikacja rzeczywistego apt/systemd/root-worker/reboot i izolacji sieci — Phase 9C.
 
 Procedury i ograniczenia: [runbook 9B2](docs/deployment/phase9b2-cutover.md).
 Brak aktywacji produkcji, zmian HA/Cloudflare/firewalla ani migracji SQLite.

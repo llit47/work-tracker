@@ -51,7 +51,10 @@ Kontrola listenerów przed apt korzysta z `/proc/net/tcp{,6}`, więc działa
 także bez iproute2. Maska i polityka pozostają po rollbacku, SIGKILL i awarii apt: chronią restart
 systemu i późniejsze aktualizacje pakietu. Ponów `bootstrap`, nie usuwaj osłon.
 Nie zmienia `/etc/nginx` ani `sites-enabled`, nie wykonuje globalnego reload.
-Nie usuwa pakietów/usług. Wykrywa nowe listenery 80/443 obu rodzin po instalacji.
+Nie usuwa pakietów/usług. Wykrywa nowe listenery 80/443 obu rodzin po instalacji. Przy błędzie podaje
+etap apt i kod/timeout bez wypisywania wyjścia pakietów. Operator sprawdza
+`dpkg --audit`, `/var/log/dpkg.log` i `/var/log/apt/term.log`; częściowe pakiety
+naprawia świadomie, zachowując osłony. Narzędzie nie zatrzymuje obcych usług.
 
 Istniejący pakiet Nginx jest używany wyłącznie odczytowo, jeśli zależności już są.
 Jego konfiguracja i cykl życia należą do administratora. Jeśli brakuje zależności,
@@ -59,6 +62,22 @@ operator uzupełnia je osobno — narzędzie odmawia apt mogącego restartować 
 Przy nowej instalacji obca jednostka/maska lub dowolna istniejąca policy-rc.d
 blokuje bootstrap. Nie nadpisujemy polityki administratora ani nie zatrzymujemy
 jego listenerów; konflikt portu blokuje przygotowanie/aktywację.
+
+### Znane wersje własnych artefaktów
+
+`bootstrap` obsługuje dokładne bajty znanej policy v1/v2 i recovery unitu v1/v2.
+Poprzednia policy wymaga również zaufanego markera bootstrapu. Sama nazwa pliku
+lub komentarz nie stanowi własności. Nieznana treść/wersja/właściciel/uprawnienia
+blokują migrację; cudza policy nadal nie jest nadpisywana.
+
+Przejście znanej wersji do bieżącej: niezmienny prywatny backup → fsync rekordu
+`*-migration.json` → atomowa wymiana pliku z jawnym trybem → fsync → usunięcie
+rekordu. Po przerwaniu ponów `bootstrap` zgodną wersją narzędzia. Akceptuje tylko
+zapisane bajty starej lub docelowej wersji; obca zmiana blokuje ponowienie.
+Backupy pozostają w `/var/backups/work-tracker/ingress`. Migracja idzie do przodu;
+nie usuwa pakietów ani nie przywraca globalnego domyślnego Nginx. Znany starszy
+recovery unit jest nadal rozpoznawany przez verify. Zwykły updater nie przeprowadza
+tej migracji automatycznie; jawne `bootstrap` może zaktualizować własne artefakty.
 
 [Debian Policy](https://www.debian.org/doc/debian-policy/ch-opersys.html#running-init-scripts)
 wymaga respektowania invoke-rc.d przez skrypty pakietów. Maska systemd jest
@@ -87,6 +106,14 @@ także na innym IPv4/IPv6. Backend musi mieć trwały autostart (`enabled`, nie 
 Unit musi pochodzić ze standardowej ścieżki systemowej;
 wszystkie efektywne drop-iny muszą znajdować się w jego katalogu `.service.d`.
 Niestandardowy/vendor/runtime layout blokuje migrację, wymaga osobnego planu.
+Bazowy unit musi być zgodny z dostarczonym plikiem. Preflight sprawdza również
+efektywne ExecStart (dokładny Uvicorn, zmienne APP_HOST/PORT, jeden worker,
+no-proxy-headers), użytkownika/grupę, WorkingDirectory, EnvironmentFile, brak
+innych poleceń start/stop i inline env, oraz wymagane właściwości ochrony systemd.
+Przed pierwszym cutoverem obsługiwane są tylko dodatkowe resource drop-iny
+Nice/CPUWeight/IOWeight/MemoryHigh/MemoryMax/TasksMax; inne wymagają osobnego planu.
+Nie przeładowuj i nie edytuj równolegle konfiguracji poza narzędziem. Po potwierdzeniu
+okna preflight i wszystkie snapshoty są zbierane ponownie.
 Zachowane są niepowiązane ustawienia i drop-iny; nie nadpisujemy zmian administratora.
 
 Operator potwierdza faktyczny transport peer HA i connectora, uwzględniając SNAT.
@@ -164,7 +191,21 @@ Po udanym cutoverze `work-tracker.service.wants/work-tracker-ingress.service`
 przyciąga proxy przy starcie backendu. Ingress Requires/After backend i PartOf
 propagują stop/restart; Restart=on-failure ponawia awarię proxy. Zwykły updater
 zatrzymuje backend przed migracją i uruchamia go ponownie, co przyciąga ingress.
-Nie zmienia profilu, env, generacji, firewalli ani tras. Recovery oneshot z
+Nie zmienia profilu, env, generacji, firewalli ani tras. W aktywnym splicie
+nie zastępuje bazowego unitu. Przed merge sprawdza nową gałąź origin/main:
+unit musi pozostać identyczny z zainstalowanym i z snapshotem LAN, manifest
+z poprzednim manifestem, a wzorce ingressu z bieżącymi. Również uszkodzony backup
+lub niedokończona migracja artefaktów blokują update przed zatrzymaniem aplikacji.
+Po pobraniu kodu powtarza kontrolę przed zależnościami/migracją; po restarcie
+sprawdza split/backend/health/proxy. Dotychczasowy rollback updatera pozostaje,
+łącznie z SQLite backupem i odtworzeniem tylko po rozpoczęciu migracji.
+
+Zmiana kontraktu unitu/manifestu/wzorców wymaga jawnego okna: rollback-lan →
+zwykły update → bootstrap/prepare według potrzeb → nowe evidence → activate.
+Nie rebasujemy archiwalnego snapshotu w tle i nie przełączamy automatycznie na LAN.
+To świadoma blokada kompatybilności, a nie obietnica obsługi dowolnego przyszłego unitu.
+
+Recovery oneshot z
 RemainAfterExit=yes wykonuje się przed aplikacją przy boot, bez oczekiwania na
 start usług za nim. Ingress ma ConditionPathExists na dziennik aktywacji 9B1:
 cofnięta transakcja nie uruchomi proxy nawet przy wcześniej zakolejkowanym starcie.
@@ -184,7 +225,15 @@ SIGTERM/Ctrl-C/błąd wywołują kompensację. SIGKILL/zasilanie pozostawiają t
 journal. Ponowienie narzędzia lub ordered recovery przy reboot odtwarza LAN.
 Boot recovery przywraca pliki przed startem backendu; pozostawia `lan-restored`
 do późniejszego `recover`, które sprawdza `/api/health` i zamyka dziennik.
-Commit `active` przetrwa reboot bez cofnięcia. Nie ma automatycznego cofania już
+Commit `active` przetrwa reboot bez cofnięcia. Recovery najpierw bezpiecznie
+sprawdza format/fazę/właściciela/uprawnienia journala. Dla active brak, zły SHA
+lub uszkodzone permissions archiwum wypisują **ALARM: automatyczny rollback NIEDOSTĘPNY**
+do stderr/journald, ale zwracają sukces bez restartu i bez blokowania Requires
+backendu. Tak samo działa ręczne recover. Nie oznacza to sprawnego rollbacku:
+verify oraz rollback-lan nadal odmawiają przy takim backupie, zanim zatrzymają
+usługę lub zmienią pliki. Odtwórz zaufany oryginalny backup/rozstrzygnij na konsoli;
+nie poprawiaj SHA na ślepo ani nie usuwaj journala. Dla niedokończonej transakcji
+brak poprawnego backupu pozostaje błędem recovery i blokuje niebezpieczne odtwarzanie. Nie ma automatycznego cofania już
 zatwierdzonego split z powodu awarii browsera/certyfikatu.
 
 Rollback usuwa własny link autostartu, zatrzymuje własny ingress, usuwa jego unit,
@@ -194,8 +243,9 @@ Bazowy unit i obce drop-iny pozostają identyczne z zapisanymi kopiami.
 Sprawdza PID, poprzedni listener i `/api/health`. Błąd zostawia dziennik do ponowienia.
 Zmieniony przez administratora env/unit/drop-in/link jest blokadą: zachowaj pliki,
 porównaj prywatny backup i rozstrzygnij konflikt na konsoli. Narzędzie nie zgaduje,
-które późniejsze zmiany administratora można zniszczyć. Dotyczy to także przyszłej
-aktualizacji zmieniającej bazowy unit; wymaga wtedy osobnego planu odtworzenia.
+które późniejsze zmiany administratora można zniszczyć. Zgodny updater zachowuje unit i tę zdolność rollbacku.
+Niezgodny przyszły release zostaje odrzucony przed merge; zastosuj wyżej opisany
+jawny powrót do LAN przed aktualizacją.
 
 Nie potrzeba oryginalnego wejścia JSON ani działającego/ważnego TLS do cofnięcia.
 Backupy 0700/0600 są w `/var/backups/work-tracker/ingress`, generacje i dzienniki
@@ -219,6 +269,17 @@ Kopie TLS i generacje pozostają do audytu. To świadomie konserwatywna wymiana
 z dwoma krótkimi oknami zmiany listenera HA, bez hot reload i bez utraty konfiguracji.
 W razie problemu pozostaje działający LAN. Brak ACME/zewnętrznej CA automatycznie;
 CA na connectorach aktualizuje operator osobno, bez publikacji trasy w 9B2.
+
+### EnvironmentFile i uprawnienia
+
+Deploy czyta pojedyncze KEY=value bez wykonywania shella. Obsługuje zwykłe,
+single/double quoted wartości i reguły backslash dla pojedynczej linii zgodnie z
+[EnvironmentFile](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#EnvironmentFile=).
+Token po odczycie ma tę samą wartość co runtime; oryginalne bajty env pozostają
+w backupie. Nie wyświetlamy wartości. Duplikaty, multiline/konkatenacja i
+niedomknięte quotes są bezpiecznie odrzucane jako nieobsługiwany kontrakt deploy.
+Nowe katalogi systemd .wants i .service.d otrzymują jawnie 0755 także przy umask 077;
+obce istniejące katalogi nie są chmodowane. Prywatne backupy pozostają 0700/0600.
 
 ## 8. Walidacja i bramka 9C
 
@@ -247,12 +308,63 @@ Przed rzeczywistą aktywacją operator wykonuje na odizolowanym Debianie/Ubuntu:
 9D osobno: Access/IdP/JWT/Edge, DNS/tunnel, dwie prawdziwe sieci i spoofing,
 publiczna odmowa HA, HSTS i wyłączenie wyłącznie trasy browsera.
 
-Wykonanie lokalne 9B2: backend **751 PASS**; deploy/ingress **117 PASS**
-(55 provisioning 9B1, 48 cutover/bootstrap 9B2, 2 privacy, 8 proxy security,
-3 kontrakt ingress, 1 cloudflared config); JWT **6 PASS**; frontend test/build,
-config/update-rollback/permissions shell, bash syntax i diff-check **PASS**.
-`backend_package_install_test.sh`: **BLOCKED**, brak ensurepip/python3-venv.
-`service_user_runtime_test.sh`: **NOT RUN**, runner zgłasza wymaganie roota.
-Rzeczywiste apt/systemd/root-worker/reboot, firewall i zewnętrzne probes:
-**NOT RUN / REQUIRES 9C**. Access/IdP/Edge i publiczny rollout: **NOT RUN / 9D**.
-Nie ma końcowych FAIL; ograniczenia środowiska nie są zaliczone jako PASS.
+Aktualna walidacja lokalna po audycie:
+
+| Zestaw | Wynik |
+|---|---|
+| Backend, pełny pytest | **PASS: 751**, 27 istniejących ostrzeżeń Alembic |
+| Deploy/ingress, pełny zestaw poniżej | **PASS: 225** |
+| 9B1 provisioning / 9B2 cutover | **PASS: 55 / 48** |
+| Regresje audytu / walidatory Host | **PASS: 42 / 59** |
+| Rzeczywisty update.sh + LAN rollback na lokalnym Git/proxy/SQLite | **PASS: 6**, systemd/build/package adapters symulowane |
+| Privacy / proxy security / ingress config / cloudflared config | **PASS: 3 / 8 / 3 / 1** |
+| JWTValidator cloudflared | **PASS: 6 scenariuszy**, lokalny JWKS TLS, bez tunelu |
+| Frontend npm test i npm run build | **PASS** |
+| config_update / update_rollback / application_permissions shell | **PASS** |
+| bash syntax, py_compile, diff-check, Alembic heads | **PASS**, head nadal 20261025_08 |
+| backend_package_install_test.sh | **BLOCKED**, brak ensurepip/python3-venv |
+| service_user_runtime_test.sh | **SKIP / NOT RUN**, brak roota, exit **77**, nie PASS |
+| Rzeczywiste apt/systemd/root-worker/reboot/firewall/probes | **NOT RUN / REQUIRES 9C** |
+| Access/IdP/Edge i publiczny rollout | **NOT RUN / 9D** |
+
+Z root repo (binarki mogą być wypakowane poza checkoutem):
+
+```bash
+WORK_TRACKER_NGINX_BIN=<NGINX_BIN> WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN> \
+  backend/.venv/bin/pytest deploy/tests/nginx_provision_test.py \
+  deploy/tests/ingress_cutover_test.py deploy/tests/ingress_audit_test.py \
+  deploy/tests/host_validation_test.py deploy/tests/split_update_test.py \
+  deploy/tests/infrastructure_privacy_test.py deploy/tests/ingress_security_test.py \
+  deploy/tests/ingress_config_test.py deploy/tests/cloudflared_config_test.py -q
+```
+
+Walidatory Host wykonują właściwy kod na kontrolowanych obserwacjach systemd i
+plikach proc. HTTP status fragmentation korzysta z prawdziwego TCP. Test updatera
+uruchamia staged update.sh, realne lokalne Git fetch/FF/reset, SQLite backup,
+Uvicorn/Nginx i tokenowe webhooki/korekty na tymczasowej DB. Uprawnienia systemowe,
+systemd, instalacja zależności, build oraz wywołania Alembic w tym teście mają adaptery;
+pełne migracje są osobno w backend pytest. Nie są to testy produkcyjnego boot.
+Migracje artefaktów sprawdzają ponowienie po błędzie przed/po atomowej wymianie;
+cutover nadal sprawdza rzeczywiste SIGTERM/SIGKILL osobnego procesu.
+Nie ma końcowych FAIL; brak możliwości wykonania testu nie oznacza PASS.
+
+## 9. Rozstrzygnięcie audytu
+
+| Punkt | Status i rozwiązanie |
+|---|---|
+| P1 active recovery a archiwum | **FIXED**: ścisły journal przed decyzją, alarm utraty rollbacku, sukces aktywnego boot/manual recover bez stopu; rollback nadal wymaga backupu |
+| P1 finalny snapshot | **FIXED**: wszystkie wyniki drugiego planu przypisane; ponowna kontrola recovery i ochrona zmian po snapshot |
+| P2 znane wersje własnych artefaktów | **FIXED**: dokładne v1/v2, prywatny backup i dziennik, atomowe ponowienie; obce/nieznane pliki odrzucane |
+| P2 ExecStart/properties | **FIXED**: ścisły kontrakt pliku i obserwowanej konfiguracji, resource overrides tylko z jawnej listy; odmowa utraty flag |
+| P2 updater w split | **FIXED**: zgodny update zachowuje unit/archiwum/generację, niezgodny blokowany przed merge; test success, build/migration/restart failure i LAN rollback |
+| Pokrycie Host | **FIXED**: pozytywne/negatywne testy wszystkich wskazanych metod; obserwacje systemd/proc są kontrolowane, a nie dowodem realnego systemd |
+| HTTP / umask / EnvironmentFile | **FIXED**: pełna ograniczona linia statusu, nowe katalogi 0755, dekodowanie quotes/escaping bez shella i ujawniania wartości |
+| Diagnostyka apt / SKIP | **FIXED**: etap i kod/timeout, operator naprawia dpkg; brak roota zwraca 77 |
+| Privacy / docs | **FIXED**: IPv4/IPv6 oraz hostname w URL/polach, prywatna denylista, skan bez wartości; LAN/HTTPS oraz lokalne/realne dowody rozdzielone |
+| Rzeczywiste apt/systemd/root/boot i sieć | **DEFERRED do 9C**, środowisko bez roota i docelowej infrastruktury; wymagana checklista powyżej |
+
+Skan prywatności jest heurystyką: nie wykrywa dowolnej obfuskacji ani każdego
+hostname poza rozpoznanymi kontekstami. Zachowaj prywatną denylistę i ręczny
+przegląd przed publikacją. Nie przebudowywano historii Git ani danych domenowych.
+Nie poprawiano nieistniejącego curl health-checku updatera; nowy hook sprawdza
+wymaganą gotowość split po restarcie. Brak deploymentu, merge i automatycznego review.

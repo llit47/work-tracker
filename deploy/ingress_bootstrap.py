@@ -9,13 +9,17 @@ import shutil
 import subprocess
 
 import nginx_provision as p
+from ingress_artifacts import migrate
 
-POLICY = b'''#!/bin/sh
+POLICY_V1 = b'''#!/bin/sh
 # Work Tracker owned: prevent generic nginx startup, including package upgrades.
 while [ "${1#-}" != "$1" ]; do shift; done
 case "$1" in nginx|nginx.service) exit 101 ;; esac
 exit 0
 '''
+
+POLICY = POLICY_V1.replace(b'# Work Tracker owned:', b'# Work Tracker policy format 2; owned:')
+POLICIES = {1: POLICY_V1, 2: POLICY}
 
 
 class Bootstrap:
@@ -39,8 +43,13 @@ class Bootstrap:
                 subprocess.run(args, check=True, timeout=600, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL,
                                env=os.environ | {'DEBIAN_FRONTEND': 'noninteractive', 'NEEDRESTART_MODE': 'l'})
-            except (OSError, subprocess.SubprocessError):
-                raise p.Refusal('Instalacja zależności nieudana; blokady generic Nginx zachowano. Ponów bootstrap.') from None
+            except (OSError, subprocess.SubprocessError) as error:
+                reason = ('timeout 600 s' if isinstance(error, subprocess.TimeoutExpired) else
+                          f'kod {error.returncode}' if isinstance(error, subprocess.CalledProcessError) else 'błąd uruchomienia')
+                raise p.Refusal(f'Etap apt-get {args[1]}: {reason}. Osłony Nginx pozostają. '
+                                'Sprawdź /var/log/apt/term.log, /var/log/dpkg.log i dpkg --audit; '
+                                'administrator musi naprawić przerwany dpkg przed ponowieniem bootstrap. '
+                                'Nie zdejmuj maski/policy i nie zatrzymuj obcych usług.') from None
 
     def available(self):
         return self.layout.nginx.is_file() and all(shutil.which(x) for x in ('openssl', 'ip', 'ss'))
@@ -52,13 +61,13 @@ class Bootstrap:
             installed = self.installed()
             if owned:
                 self.layout.check(marker, private=True)
-                p.require(p.read_json(marker) == {'policy_sha': p.digest(POLICY)}, 'Nieznany bootstrap.')
+                p.require(p.read_json(marker) in ({'policy_sha': p.digest(content)} for content in POLICIES.values()), 'Nieznany bootstrap.')
             elif installed:
                 p.require(self.available(), 'Obcy Nginx: uzupełnij zależności osobno; odmowa zmiany pakietów/usługi.')
                 self.layout.check(self.layout.nginx)
                 return 'existing'  # No policy, mask, reload, stop, enable or apt.
             else:
-                p.require(not self.layout.nginx.exists(), 'Nginx poza dpkg: odmowa przejęcia.')
+                p.require(not self.layout.nginx.exists(), 'Nginx poza gotową instalacją dpkg: odmowa przejęcia. Sprawdź dpkg --audit i napraw częściowe pakiety osobno.')
                 p.require(not self.mask.exists() and not self.mask.is_symlink(), 'Obca jednostka/maska nginx.service.')
                 p.require(not self.policy.exists() and not self.policy.is_symlink(), 'Obca policy-rc.d: przygotuj zależności osobno.')
                 p.require(not self.tool.host.generic_active() and not self.tool.host.generic_known(), 'Obca jednostka/usługa Nginx.')
@@ -72,11 +81,8 @@ class Bootstrap:
                 p.require(not self.mask.exists(), 'Obca jednostka Nginx.')
                 self.mask.symlink_to('/dev/null')
                 p.fsync_dir(self.mask.parent)
-            if self.policy.exists() or self.policy.is_symlink():
-                self.layout.check(self.policy)
-                p.require(self.policy.read_bytes() == POLICY and os.access(self.policy, os.X_OK), 'Obca policy-rc.d.')
-            else:
-                p.atomic(self.policy, POLICY, 0o755)
+            migrate(self.tool, 'nginx-policy', self.policy, POLICIES, 2, 0o755)
+            p.atomic(marker, p.encoded({'policy_sha': p.digest(POLICY)}))
             self.tool.host.control('daemon-reload')
             before = self.tool.host.bootstrap_listeners()
             if not installed or not self.available():

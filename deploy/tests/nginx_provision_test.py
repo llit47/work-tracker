@@ -187,7 +187,7 @@ def test_read_only_plan_validation_and_ha_busy_prepare(setup):
 
 @pytest.mark.parametrize('field,value', [
     ('lan_ip', '0.0.0.0'), ('lan_ip', '2001:db8::1'), ('ha_source_ip', '10.123.45.0/24'),
-    ('ha_source_ip', '10.123.45.20'), ('cloudflared_source_ip', '8.8.8.8'),
+    ('ha_source_ip', '10.123.45.20'), ('cloudflared_source_ip', '203.0.113.8'),
     ('browser_port', True), ('browser_port', 443), ('ha_port', '8000'),
     ('public_hostname', 'foo;include /tmp/evil'), ('public_hostname', '*.example.com'),
     ('origin_tls_name', 'Origin.example.invalid'), ('private_key', '/tmp/key;evil'),

@@ -26,7 +26,7 @@
   - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (local X2 BLOCKED)**
 - **Phase 9 — Cloudflare public deployment: IN PROGRESS (tylko przygotowanie)**
   - **Phase 9B1 — Safe Nginx provisioning: DONE (lokalnie, bez aktywacji)**
-  - **Phase 9B2 — Fresh install/private cutover: DONE (lokalnie; realne 9C wymagane)**
+  - **Phase 9B2 — Fresh install/private cutover: IN PROGRESS (implemented / locally tested; real 9C NOT VERIFIED)**
   - **Phase 9C/9D — Real infrastructure/public rollout: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
@@ -181,7 +181,7 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 9B1/9B2 — lokalna implementacja gotowa; następny etap 9C.**
+**Phase 9B2 — implemented / locally tested; niezależna weryfikacja i 9C pozostają wymagane.**
 
 9B2 rozszerza generacje, walidację i bramki 9B1 o opcjonalny bootstrap Nginx
 oraz transakcję całej aplikacji. Instalator nadal domyślnie uruchamia LAN;
@@ -190,10 +190,19 @@ dowodów izolacji obu rodzin, potwierdzenia okna i rzeczywistego wejścia z HA.
 Trwały journal, kopie env/unit/drop-in i idempotentny rollback przywracają
 poprzedni LAN bez odtwarzania DB. Ordered recovery obsługuje przerwany cutover
 przy boot, a zatwierdzony ingress startuje i restartuje wraz z backendem.
-Updater zachowuje profil i generację, współdzieli blokadę operacji systemowych.
+Updater zachowuje profil, generację i bazowy unit, współdzieli blokadę operacji
+systemowych. Niezgodny unit/manifest/wzorce blokuje przed merge i restartem.
+Aktywny recovery nie zależy od archiwum: brak/uszkodzenie backupu zgłasza alarm
+utraty rollbacku bez zatrzymania aplikacji. Jawny rollback nadal rygorystycznie
+sprawdza journal, hash, uprawnienia i backup. Snapshot po potwierdzeniu jest świeży,
+własne artefakty mają znane wersje z atomową migracją i prywatną kopią.
+Preflight odmawia niestandardowego polecenia/properties systemd. Testy wykonują
+walidatory Host na kontrolowanych obserwacjach systemd/proc, oraz rzeczywisty
+updater na lokalnych repo Git z żywymi proxy; apt/systemd pozostają symulowane.
 
-Lokalnie: backend 751 PASS, deploy/ingress 117 PASS, JWT 6 PASS, frontend
-test/build i shell config/rollback/permissions PASS.
+Aktualne komendy i wyniki regresji audytu: [runbook 9B2](docs/deployment/phase9b2-cutover.md#8-walidacja-i-bramka-9c).
+Pełny backend 751 PASS, deploy/ingress 225 PASS, JWT 6 PASS, frontend test/build
+i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
 Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
 osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.
 Rzeczywista instalacja/upgrade pakietów, uprawnienia root/www-data, systemd,

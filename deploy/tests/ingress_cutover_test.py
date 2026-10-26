@@ -229,7 +229,7 @@ def test_reboot_and_update_service_dependency_contract():
     assert f'WantedBy={c.APP}' in unit and 'Restart=on-failure' in unit
     assert 'nginx.service' not in unit and 'reload' not in unit
     update = (p.ROOT / 'update.sh').read_text()
-    assert 'check_ingress_update_state' in update and 'ingress_cutover.py' not in update
+    assert 'check_ingress_update_state' in update and 'update-verify' in update and 'update-check' in update
 
 
 @pytest.fixture

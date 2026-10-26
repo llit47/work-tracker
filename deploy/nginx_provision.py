@@ -5,6 +5,7 @@ No package installation, application changes, generic nginx reloads or public
 routing. CLI paths are fixed; tests inject a Layout/Host without a CLI bypass.
 """
 import argparse
+import configparser
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
@@ -134,6 +135,8 @@ class Layout:
 
 
 class Host:
+    proc = Path('/proc')  # Test kernels may be represented by private fixture files.
+
     def ingress_pid(self):
         return execute(['systemctl', 'show', '-p', 'MainPID', '--value', SERVICE]).decode().strip()
 
@@ -146,7 +149,7 @@ class Host:
         # before apt, so dependency installation never depends on missing ss.
         result = set()
         for name in ('tcp', 'tcp6'):
-            path = Path('/proc/net') / name
+            path = self.proc / 'net' / name
             if name == 'tcp6' and not path.exists():
                 continue
             for line in path.read_text().splitlines()[1:]:
@@ -200,8 +203,9 @@ class Host:
 
     def app_permissions(self, layout):
         import grp
+        layout.check(layout.env)
         info = layout.env.stat()
-        require(info.st_uid == 0 and info.st_gid == grp.getgrnam('work-tracker').gr_gid
+        require(info.st_uid == layout.uid and info.st_gid == grp.getgrnam('work-tracker').gr_gid
                 and stat.S_IMODE(info.st_mode) == 0o640, 'Env wymaga root:work-tracker 0640.')
 
     def app_layout_ready(self, layout):
@@ -209,6 +213,42 @@ class Host:
         require(fragment == str(layout.app_unit), 'Unit aplikacji poza obsługiwanym layoutem.')
         paths = execute(['systemctl', 'show', '-p', 'DropInPaths', '--value', 'work-tracker.service']).decode().split()
         require(all(Path(path).parent == layout.dropins for path in paths), 'Drop-in poza backupem; odmowa migracji.')
+        # The on-disk launch contract must agree with the loaded unit. Only
+        # resource scheduling drop-ins are supported before a first cutover.
+        layout.check(layout.app_unit)
+        require(layout.app_unit.read_bytes() == (ROOT / 'deploy/work-tracker.service').read_bytes(),
+                'Niestandardowy bazowy unit: wymagany osobny plan migracji.')
+        if layout.dropins.exists():
+            for path in layout.dropins.iterdir():
+                layout.check(path)
+                parser = configparser.ConfigParser(interpolation=None, strict=True)
+                parser.optionxform = str
+                try:
+                    parser.read_string(path.read_text())
+                except configparser.Error:
+                    raise Refusal('Nieobsługiwany drop-in systemd.') from None
+                require(parser.sections() == ['Service'] and not parser.defaults() and
+                        set(parser['Service']) <= {'Nice', 'CPUWeight', 'IOWeight', 'MemoryHigh', 'MemoryMax', 'TasksMax'} and
+                        all('\n' not in value and '\\' not in value for value in parser['Service'].values()),
+                        'Drop-in zmienia kontrakt uruchomienia; odmowa utraty ustawień administratora.')
+        properties = {'Type': 'simple', 'User': 'work-tracker', 'Group': 'work-tracker',
+                      'WorkingDirectory': '/opt/work-tracker/backend',
+                      'EnvironmentFiles': '/etc/work-tracker/work-tracker.env (ignore_errors=no)',
+                      'Environment': '', 'PassEnvironment': '', 'UnsetEnvironment': '',
+                      'RootDirectory': '', 'RootImage': '', 'DynamicUser': 'no',
+                      'NoNewPrivileges': 'yes', 'PrivateTmp': 'yes', 'ProtectSystem': 'strict',
+                      'ProtectHome': 'yes', 'ReadWritePaths': '/var/lib/work-tracker',
+                      'ExecStartPre': '', 'ExecStartPost': '', 'ExecCondition': '', 'ExecStop': '', 'ExecStopPost': ''}
+        for key, expected in properties.items():
+            actual = execute(['systemctl', 'show', '-p', key, '--value', 'work-tracker.service']).decode().strip()
+            require(actual == expected, 'Efektywne właściwości systemd poza wspieranym kontraktem.')
+        command = execute(['systemctl', 'show', '-p', 'ExecStart', '--value', 'work-tracker.service']).decode().strip()
+        launches = re.findall(r'\{ path=([^;]+?) ; argv\[\]=([^;]+?) ; ignore_errors=(yes|no) ;', command)
+        expected = ['/opt/work-tracker/backend/.venv/bin/uvicorn', 'app.main:app', '--host', '${APP_HOST}',
+                    '--port', '${APP_PORT}', '--workers', '1', '--no-proxy-headers']
+        require(len(launches) == 1 and command.count('{ path=') == 1 and command.endswith('}') and
+                launches[0][0] == expected[0] and launches[0][1].split() == expected and launches[0][2] == 'no',
+                'Niestandardowy efektywny ExecStart: odmowa usunięcia parametrów administratora.')
         enabled = execute(['systemctl', 'is-enabled', 'work-tracker.service']).decode().strip()
         require(enabled == 'enabled', 'Backend wymaga trwałego autostartu przed migracją.')
 
@@ -218,14 +258,19 @@ class Host:
             request = (f'{method} {target} HTTP/1.1\r\nHost: {host}\r\n{headers}'
                        f'Connection: close\r\nContent-Length: {len(body.encode())}\r\n\r\n{body}')
             connection.sendall(request.encode())
-            status = connection.recv(4096).split(b'\r\n', 1)[0].split()
-            require(len(status) >= 2, 'Brak odpowiedzi HTTP.')
-            return int(status[1])
+            line = bytearray()
+            while not line.endswith(b'\r\n'):
+                chunk = connection.recv(1)
+                require(chunk and len(line) < 8192, 'Niepełna lub zbyt długa linia statusu HTTP.')
+                line.extend(chunk)
+            match = re.fullmatch(rb'HTTP/1\.[01] ([1-5][0-9]{2}) [^\r\n]*\r\n', line)
+            require(match is not None, 'Nieprawidłowa linia statusu HTTP.')
+            return int(match[1])
 
     def app_config_preserved(self, expected):
         pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
         require(pid.isdigit() and int(pid) > 1, 'Brak PID aplikacji.')
-        environment = dict(v.split('=', 1) for v in (Path('/proc') / pid / 'environ').read_bytes().decode().split('\0') if '=' in v)
+        environment = dict(v.split('=', 1) for v in (self.proc / pid / 'environ').read_bytes().decode().split('\0') if '=' in v)
         require(all(environment.get(key) == expected.get(key) for key in ('DATABASE_URL', 'WEBHOOK_TOKEN')),
                 'Runtime musi zachować DB i token HA.')
 
@@ -245,11 +290,15 @@ class Host:
     def lan_ready(self, config):
         pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
         require(pid.isdigit() and int(pid) > 1, 'Brak PID działającego LAN.')
-        process = Path('/proc') / pid
+        process = self.proc / pid
         argv = process.joinpath('cmdline').read_bytes().decode().split('\0')
-        require('--host' in argv and argv[argv.index('--host') + 1] in ('0.0.0.0', config['lan_ip'])
-                and '--port' in argv and argv[argv.index('--port') + 1] == str(config['ha_port'])
-                and 'app.main:app' in argv, 'Proces LAN ma niezgodne parametry.')
+        for flag, expected in (('--host', None), ('--port', str(config['ha_port'])), ('--workers', '1')):
+            require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv), 'Proces LAN ma niezgodne argumenty.')
+            actual = argv[argv.index(flag) + 1]
+            require(actual in ('0.0.0.0', config['lan_ip']) if expected is None else actual == expected,
+                    'Proces LAN ma niezgodne parametry.')
+        require(argv.count('app.main:app') == 1 and argv.count('--no-proxy-headers') == 1 and '--proxy-headers' not in argv,
+                'LAN wymaga jednego Uvicorn bez proxy headers.')
         environment = dict(v.split('=', 1) for v in process.joinpath('environ').read_bytes().decode().split('\0') if '=' in v)
         require(environment.get('INGRESS_PROFILE', 'lan') == 'lan', 'Proces nie działa w profilu LAN.')
         sockets = [s for s in self.listeners() if s[1] == config['ha_port']]
@@ -260,13 +309,13 @@ class Host:
 
     def ingress_permissions(self, pid):
         import pwd
-        process = Path('/proc') / pid
+        process = self.proc / pid
         master = re.search(r'^Uid:\s+(.*)$', (process / 'status').read_text(), re.M)
         require(master is not None and set(master[1].split()) == {'0'}, 'Nginx master wymaga UID root.')
         children = (process / 'task' / pid / 'children').read_text().split()
         worker_uid = str(pwd.getpwnam('www-data').pw_uid)
         require(len(children) == 1, 'Wymagany jeden worker Nginx.')
-        worker = re.search(r'^Uid:\s+(.*)$', (Path('/proc') / children[0] / 'status').read_text(), re.M)
+        worker = re.search(r'^Uid:\s+(.*)$', (self.proc / children[0] / 'status').read_text(), re.M)
         require(worker is not None and set(worker[1].split()) == {worker_uid}, 'Worker Nginx wymaga www-data.')
 
     def tls_probe(self, config, ca):
@@ -278,10 +327,10 @@ class Host:
     def backend_ready(self, config):
         pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
         require(pid.isdigit() and int(pid) > 1, 'Backend systemd nie działa.')
-        process = Path('/proc') / pid
+        process = self.proc / pid
         argv = process.joinpath('cmdline').read_bytes().decode().split('\0')
         for flag, value in [('--host', '127.0.0.1'), ('--port', str(config['backend_port'])), ('--workers', '1')]:
-            require(argv.count(flag) == 1 and argv[argv.index(flag) + 1] == value, 'Backend ma niezgodny bind/worker.')
+            require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv) and argv[argv.index(flag) + 1] == value, 'Backend ma niezgodny bind/worker.')
         require('app.main:app' in argv and '--no-proxy-headers' in argv and '--proxy-headers' not in argv,
                 'Backend wymaga pojedynczego Uvicorn bez proxy headers.')
         environment = dict(v.split('=', 1) for v in process.joinpath('environ').read_bytes().decode().split('\0') if '=' in v)

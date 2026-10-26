@@ -28,6 +28,8 @@ service_was_active=false
 backup_file=""
 previous_commit=""
 unit_backup=""
+ingress_update=false
+previous_manifest_sha=""
 
 [[ -f "${APP_DIR}/deploy/update_rollback.sh" ]] || {
     printf '[work-tracker] ERROR: Missing rollback helpers.\n' >&2
@@ -71,6 +73,11 @@ source "${APP_DIR}/deploy/common.sh"
 require_supported_os
 acquire_deployment_lock
 check_ingress_update_state
+if [[ -e /etc/work-tracker/ingress/cutover.json || -L /etc/work-tracker/ingress/cutover.json ]]; then
+    ingress_update=true
+    previous_manifest_sha="$(sha256sum "${MANIFEST_FILE}" | cut -d ' ' -f 1)"
+    python3 "${APP_DIR}/deploy/ingress_cutover.py" update-check --manifest-sha "${previous_manifest_sha}"
+fi
 id "${SERVICE_USER}" >/dev/null 2>&1 || fail "Missing system user: ${SERVICE_USER}."
 getent group "${SERVICE_USER}" >/dev/null 2>&1 || fail "Missing system group: ${SERVICE_USER}."
 
@@ -97,6 +104,9 @@ fi
 previous_commit="$(git rev-parse HEAD)"
 log "Fetching the latest main branch."
 git fetch origin main
+if [[ "${ingress_update}" == true ]]; then
+    python3 "${APP_DIR}/deploy/ingress_cutover.py" update-check --manifest-sha "${previous_manifest_sha}" --incoming
+fi
 git merge --ff-only origin/main
 repository_changed=true
 new_commit="$(git rev-parse HEAD)"
@@ -107,6 +117,9 @@ new_commit="$(git rev-parse HEAD)"
 source "${APP_DIR}/deploy/common.sh"
 # shellcheck source=deploy/update_rollback.sh
 source "${APP_DIR}/deploy/update_rollback.sh"
+if [[ "${ingress_update}" == true ]]; then
+    python3 "${APP_DIR}/deploy/ingress_cutover.py" update-check --manifest-sha "${previous_manifest_sha}"
+fi
 log "Validating required configuration and browser origins before dependency updates, migrations or restart."
 sync_missing_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
 validate_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
@@ -135,7 +148,9 @@ read_env_value "${CONFIG_FILE}" DATABASE_URL
 database_url="${REPLY}"
 validate_config_value database_url "${database_url}" || fail "DATABASE_URL is missing or invalid."
 
-install -o root -g root -m 0644 "${APP_DIR}/deploy/work-tracker.service" "${SERVICE_FILE}"
+if [[ "${ingress_update}" != true ]]; then
+    install -o root -g root -m 0644 "${APP_DIR}/deploy/work-tracker.service" "${SERVICE_FILE}"
+fi
 systemctl daemon-reload
 systemctl stop work-tracker.service
 log "Applying database migrations."
@@ -151,6 +166,9 @@ migration_status="$(
 
 systemctl restart work-tracker.service
 systemctl is-active --quiet work-tracker.service || fail "Service failed to start after update."
+if [[ "${ingress_update}" == true ]]; then
+    python3 "${APP_DIR}/deploy/ingress_cutover.py" update-verify
+fi
 
 printf '\nWork Tracker update completed.\n'
 printf 'Previous commit: %s\n' "${previous_commit}"
