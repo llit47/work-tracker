@@ -103,3 +103,27 @@ def test_updater_rejects_invalid_timeout_before_any_host_operation(value):
     assert result.returncode == 1
     assert b'5..300' in result.stderr
     assert b'Missing' not in result.stderr and b'root' not in result.stderr
+
+
+def test_bootstrap_checker_survives_absent_old_checkout_and_safe_cancel(safety, tmp_path):
+    safety.install_bootstrap()
+    safety.install_bootstrap()
+    assert safety.layout.guard.read_bytes() == u.BOOTSTRAP_GUARD
+    with pytest.raises(u.Refusal): safety.allow_start()
+    safety.transition('cancel')
+    safety.remove_legacy_guard(tmp_path / 'old-checkout-without-helper')
+    assert safety.layout.guard.exists()
+    safety.allow_start()
+
+
+@pytest.mark.parametrize('damage', ['content', 'mode', 'symlink'])
+def test_foreign_or_changed_stable_checker_is_never_overwritten(safety, damage):
+    safety.install_bootstrap()
+    path = safety.layout.state.parent / 'update-safety.py'
+    if damage == 'content': u.atomic(path, b'foreign checker\n', 0o644)
+    elif damage == 'mode': path.chmod(0o666)
+    else:
+        path.unlink(); path.symlink_to(safety.layout.guard)
+    before = path.lstat()
+    with pytest.raises((u.Refusal, OSError)): safety.install_bootstrap()
+    assert path.lstat().st_ino == before.st_ino

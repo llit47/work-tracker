@@ -25,7 +25,7 @@ import tempfile
 import time
 import uuid
 
-from update_safety import GUARD_NAME, guard_owned
+from update_safety import GUARD_NAME, BOOTSTRAP_GUARD, guard_owned
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = 'work-tracker-ingress.service'
@@ -249,7 +249,7 @@ class Host:
             for path in layout.dropins.iterdir():
                 layout.check(path)
                 if path.name == GUARD_NAME:
-                    guard_owned(path, uid=layout.uid, boundary=layout.boundary)
+                    guard_owned(path, uid=layout.uid, boundary=layout.boundary, checker=layout.env.parent / 'update-safety.py')
                     continue
                 parser = configparser.ConfigParser(interpolation=None, strict=True)
                 parser.optionxform = str
@@ -262,13 +262,15 @@ class Host:
                         all('\n' not in value and '\\' not in value for value in parser['Service'].values()),
                         'Drop-in zmienia kontrakt uruchomienia; odmowa utraty ustawień administratora.')
         properties = APP_PROPERTIES.copy()
-        guarded = guard_owned(layout.dropins / GUARD_NAME, uid=layout.uid, boundary=layout.boundary) if layout.dropins.exists() else False
+        guarded = guard_owned(layout.dropins / GUARD_NAME, uid=layout.uid, boundary=layout.boundary, checker=layout.env.parent / 'update-safety.py') if layout.dropins.exists() else False
         for key, expected in properties.items():
             actual = execute(['systemctl', 'show', '-p', key, '--value', 'work-tracker.service']).decode().strip()
             if key == 'ExecStartPre' and guarded:
+                stable = (layout.dropins / GUARD_NAME).read_bytes() == BOOTSTRAP_GUARD
+                checker = '-I /etc/work-tracker/update-safety.py' if stable else '/opt/work-tracker/deploy/update_safety.py'
                 launch = re.findall(r'\{ path=([^;]+?) ; argv\[\]=([^;]+?) ; ignore_errors=(yes|no) ;', actual)
                 require(len(launch) == 1 and actual.count('{ path=') == 1 and launch[0] ==
-                        ('/usr/bin/python3', '/usr/bin/python3 /opt/work-tracker/deploy/update_safety.py allow-start', 'no'),
+                        ('/usr/bin/python3', f'/usr/bin/python3 {checker} allow-start', 'no'),
                         'Nieprawidłowy efektywny guard update.')
                 continue
             require(actual == expected, 'Efektywne właściwości systemd poza wspieranym kontraktem.')

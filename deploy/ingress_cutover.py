@@ -141,7 +141,7 @@ class Cutover:
             self.layout.check(self.layout.dropins, directory=True)
             for path in self.layout.dropins.iterdir():
                 if path.name == GUARD_NAME:
-                    guard_owned(path, uid=self.layout.uid, boundary=self.layout.boundary)
+                    guard_owned(path, uid=self.layout.uid, boundary=self.layout.boundary, checker=self.layout.env.parent / 'update-safety.py')
                     continue
                 p.require(path.suffix == '.conf', 'Nieznany plik w katalogu drop-in.')
                 drops[path.name] = self.snapshot(path)
@@ -300,7 +300,7 @@ class Cutover:
             self.layout.check(self.dropin)
             p.require(p.digest(self.dropin.read_bytes()) == transaction['dropin_sha'], 'Drop-in zmieniony.')
         if self.layout.dropins.exists():
-            guard_owned(self.layout.dropins / GUARD_NAME, uid=self.layout.uid, boundary=self.layout.boundary)
+            guard_owned(self.layout.dropins / GUARD_NAME, uid=self.layout.uid, boundary=self.layout.boundary, checker=self.layout.env.parent / 'update-safety.py')
             current = {path.name: self.snapshot(path) for path in self.layout.dropins.iterdir() if path != self.dropin and path.name != GUARD_NAME}
             p.require(current == backup['dropins'], 'Obce drop-in zmienione: odmowa nadpisania.')
 

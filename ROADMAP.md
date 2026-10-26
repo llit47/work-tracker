@@ -629,6 +629,9 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 - [x] P1 integralność SQLite: brak automatycznego restore DB/sidecarów; przed Alembic
   rollback kodu zachowuje bieżące zapisy, po próbie Alembic trwała blokada i ręczna
   analiza kompatybilności. Testy przyjętych webhooków/korekt/sesji/limitera i częściowej DDL.
+- [x] Pierwszy update z rzeczywistego 5d974b1: przypięty SHA/ref, jawny bootstrap,
+  checker poza checkoutem, efektywny guard przed FF/Alembic i exec z tym samym
+  PID/blokadą. Ograniczony kontrakt LAN; nieznane/niepełne stany odmawiają.
 - [x] Test kontraktu dostarczonego unitu z walidatorem i zbiorczy runner 0/77/FAIL.
 - [ ] Weryfikacja rzeczywistego apt/systemd/root-worker/reboot i izolacji sieci — Phase 9C.
   Obejmuje nowy guard aktualizacji, awarie migracji i bezpieczną ręczną naprawę.

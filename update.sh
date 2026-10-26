@@ -22,6 +22,12 @@ readonly SERVICE_USER="work-tracker"
 readonly MANIFEST_FILE="${APP_DIR}/deploy/config.manifest"
 
 readiness_timeout=60
+first_upgrade_directory=""
+if [[ "${1:-}" == --first-upgrade ]]; then
+    [[ "$#" -ge 2 ]] || exit 1
+    first_upgrade_directory="$2"
+    shift 2
+fi
 if (($#)); then
     [[ "$#" == 2 && "$1" == --readiness-timeout && "$2" =~ ^[1-9][0-9]{0,2}$ ]] || { printf 'Usage: update.sh [--readiness-timeout 5..300]\n' >&2; exit 1; }
     readiness_timeout="$2"
@@ -39,13 +45,30 @@ ingress_update=false
 previous_manifest_sha=""
 safety_runner=""
 update_directory=""
+helper_directory="${APP_DIR}/deploy"
+first_candidate=""
+first_previous=""
+if [[ -n "${first_upgrade_directory}" ]]; then
+    # Before executing any handoff code, require a private root-owned tree.
+    python3 -I -c 'import os,pathlib,stat,sys
+p=pathlib.Path(sys.argv[1]); root=pathlib.Path(sys.argv[2])
+assert p.is_absolute() and p.parent == root and str(p)==os.path.abspath(p)
+for f in (p/"deploy/first_upgrade.py",p/"handoff.json"):
+ for q in (f,*f.parents):
+  s=q.lstat(); assert s.st_uid==0 and not stat.S_ISLNK(s.st_mode) and not s.st_mode&0o022
+' "${first_upgrade_directory}" "${BACKUP_DIR}"
+    first_context="$(python3 "${first_upgrade_directory}/deploy/first_upgrade.py" accept \
+        --directory "${first_upgrade_directory}" --updater "$0" --owner "$$")"
+    read -r first_previous first_candidate <<<"${first_context}"
+    helper_directory="${first_upgrade_directory}/deploy"
+fi
 
-[[ -f "${APP_DIR}/deploy/update_rollback.sh" ]] || {
+[[ -f "${helper_directory}/update_rollback.sh" ]] || {
     printf '[work-tracker] ERROR: Missing rollback helpers.\n' >&2
     exit 1
 }
 # shellcheck source=deploy/update_rollback.sh
-source "${APP_DIR}/deploy/update_rollback.sh"
+source "${helper_directory}/update_rollback.sh"
 
 on_exit() {
     local exit_status="$1"
@@ -77,11 +100,11 @@ trap 'on_error "${LINENO}"' ERR
 [[ -f "${APP_DIR}/deploy/common.sh" ]] || { printf '[work-tracker] ERROR: Missing deployment helpers.\n' >&2; exit 1; }
 
 # shellcheck source=deploy/common.sh
-source "${APP_DIR}/deploy/common.sh"
+source "${helper_directory}/common.sh"
 require_supported_os
-acquire_deployment_lock
+if [[ -z "${first_upgrade_directory}" ]]; then acquire_deployment_lock; fi
 check_ingress_update_state
-python3 "${APP_DIR}/deploy/update_safety.py" check
+if [[ -z "${first_upgrade_directory}" ]]; then python3 "${APP_DIR}/deploy/update_safety.py" check; fi
 if [[ -e /etc/work-tracker/ingress/cutover.json || -L /etc/work-tracker/ingress/cutover.json ]]; then
     ingress_update=true
     previous_manifest_sha="$(sha256sum "${MANIFEST_FILE}" | cut -d ' ' -f 1)"
@@ -97,6 +120,12 @@ git remote get-url origin >/dev/null
 log "Checking access to the main branch on GitHub."
 git ls-remote --exit-code origin refs/heads/main >/dev/null
 
+if [[ -n "${first_upgrade_directory}" ]]; then
+    update_directory="${first_upgrade_directory}"
+    backup_file="${update_directory}/online.db"
+    safety_runner="${update_directory}/deploy/update_safety.py"
+    unit_backup="${update_directory}/unit.before"
+else
 install -d -o root -g root -m 0700 "${BACKUP_DIR}"
 backup_timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 update_directory="$(mktemp -d "${BACKUP_DIR}/update-${backup_timestamp}.XXXXXX")"
@@ -109,11 +138,16 @@ install -m 0700 "${APP_DIR}/deploy/update_safety.py" "${safety_runner}"
 unit_backup="${update_directory}/unit.before"
 cp -p "${SERVICE_FILE}" "${unit_backup}"
 chmod 0600 "${unit_backup}"
+fi
 if systemctl is-active --quiet work-tracker.service; then
     service_was_active=true
 fi
 
 previous_commit="$(git rev-parse HEAD)"
+if [[ -n "${first_upgrade_directory}" ]]; then
+    previous_commit="${first_previous}"
+    candidate_commit="${first_candidate}"
+else
 log "Fetching the latest main branch."
 git fetch origin main
 if [[ "${ingress_update}" == true ]]; then
@@ -122,10 +156,11 @@ fi
 candidate_commit="$(git rev-parse origin/main)"
 python3 "${safety_runner}" begin --previous "${previous_commit}" --candidate "${candidate_commit}" \
     --directory "${update_directory}" --owner-pid "$$"
+fi
 # From this point, a killed updater leaves a durable startup gate.
 repository_changed=true
 systemctl daemon-reload
-git merge --ff-only origin/main
+git merge --ff-only "${candidate_commit}"
 new_commit="$(git rev-parse HEAD)"
 
 [[ -f "${MANIFEST_FILE}" ]] || fail "Missing configuration manifest in the updated code."
@@ -195,7 +230,14 @@ systemctl restart work-tracker.service
 if [[ "${ingress_update}" == true ]]; then
     python3 "${APP_DIR}/deploy/ingress_cutover.py" update-verify --readiness-timeout "${readiness_timeout}"
 else
-    systemctl is-active --quiet work-tracker.service || fail "Service failed to start after update."
+    if [[ -n "${first_upgrade_directory}" ]]; then
+        python3 "${first_upgrade_directory}/deploy/first_upgrade.py" verify --directory "${first_upgrade_directory}" --readiness-timeout "${readiness_timeout}"
+        # Run as the service identity: no root-owned SQLite sidecars.
+        runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/python" -c \
+            'import sqlite3; c=sqlite3.connect("file:/var/lib/work-tracker/work_tracker.db?mode=ro",uri=True); assert c.execute("PRAGMA quick_check").fetchall()==[("ok",)]'
+    else
+        systemctl is-active --quiet work-tracker.service || fail "Service failed to start after update."
+    fi
 fi
 python3 "${safety_runner}" commit
 

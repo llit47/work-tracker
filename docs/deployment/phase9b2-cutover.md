@@ -86,10 +86,120 @@ w konkretnej dystrybucji wymaga testu 9C; lokalny mock apt nie jest takim dowode
 
 ## 3. Przygotowanie istniejącej instalacji
 
-Wykonaj standardowy update do kodu 9B2. Updater nie instaluje Nginx i nie przełącza
-sieci; odmawia nowego update, gdy dziennik wskazuje niedokończony cutover.
-Zachowaj konsolę/SSH, kopię SQLite w standardowej procedurze oraz poprzedni LAN
-origin. Nie pokazuj env/tokenów w terminalu, zgłoszeniu ani PR.
+### Pierwsza aktualizacja z 5d974b1
+
+To **procedura wspomagana przez operatora**, dla dokładnego, czystego wydania
+`5d974b100a92f0b7aed6aefa9939f0d5383c9cac` w standardowym layoutcie LAN.
+Stary updater kopiuje siebie do `/tmp` i po merge nadal wykonuje stary kod.
+Zwykłe uruchomienie go ani skopiowanie samego nowego update.sh **nie chroni
+pierwszej migracji**. Nie uruchamiaj ich do pierwszego przejścia.
+
+Wymagane: root, działający standardowy LAN/backend, Debian/Ubuntu, Python,
+Git/SQLite/OpenSSL/iproute2 z dotychczasowej instalacji, dostęp do origin oraz
+niezależna konsola. Sprawdź aktualny Alembic head i stan usługi bez wypisywania
+sekretów. Wybierz pełny **przejrzany SHA** zawierający ten bootstrap. Produkcyjnie
+użyj go dopiero po merge/zatwierdzeniu i 9C; poniższe polecenia nie są zgodą na
+deployment. Ref musi być `refs/heads/main`; ref brancha PR jest obsługiwany tylko
+do świadomej walidacji na izolowanej instalacji 9C.
+
+Zarezerwuj wyłączne okno: **żaden inny administrator, cron ani automat nie może
+uruchamiać starego updatera**. Ten stary skrypt nie respektuje nowej blokady.
+Bootstrap odmawia przy wykryciu już uruchomionego updatera/staged procesu;
+wszystkie nowe bootstrapy/updatery współdzielą flock. Nie jest to ochrona przed
+innym rootem świadomie ignorującym okno i uruchamiającym zachowaną starą kopię.
+Nie zabijaj znalezionego zadania na ślepo — ustal, czy już migrowało dane.
+
+Na prywatnej konsoli roota, po zastąpieniu placeholdera zatwierdzonym SHA:
+
+```bash
+sudo -i
+set -euo pipefail
+umask 077
+cd /opt/work-tracker
+test "$(git rev-parse HEAD)" = 5d974b100a92f0b7aed6aefa9939f0d5383c9cac
+test -z "$(git status --porcelain --untracked-files=all)"
+test "$(git remote get-url origin)" = https://github.com/llit47/work-tracker.git
+TARGET='<REVIEWED_40_HEX_SHA>'
+UPGRADE_REF=refs/heads/main
+git fetch --no-tags origin "$UPGRADE_REF"
+test "$(git rev-parse FETCH_HEAD)" = "$TARGET"
+install -d -m 0700 /root/work-tracker-first-upgrade
+git show "${TARGET}:deploy/first_upgrade.py" > /root/work-tracker-first-upgrade/first_upgrade.py
+chmod 0700 /root/work-tracker-first-upgrade/first_upgrade.py
+/usr/bin/python3 -I /root/work-tracker-first-upgrade/first_upgrade.py start \
+  --expected-sha "$TARGET" --ref "$UPGRADE_REF" --readiness-timeout 60
+```
+
+Przerwij po każdym nieudanym preflight; nie kontynuuj kolejnych poleceń po błędzie.
+Nie używaj `curl | bash`, obcego repozytorium ani nieznanego commita.
+Bootstrap ponownie sprawdza origin, stary HEAD, czystość, brak ukrytych zmian
+indexu, przekierowań/hooków Git, ref/SHA/ancestry oraz własne bajty z Git.
+Konfiguracja/unit/kod wymagają właściciela root; katalog danych wymaga użytkownika
+usługi, trybu 0700/0750, a SQLite i istniejące WAL/SHM/journal jego UID/GID oraz
+0600/0640. Narzędzie nie poprawia tych praw przez chmod/chown ani nie usuwa sidecarów.
+Niestandardowy unit/drop-in, obcy checker/guard, inna wersja lub istniejący
+update-state blokują operację. Nie przejmuje plików administratora.
+
+Kolejność pod nieprzerwaną blokadą FD 9:
+
+1. Walidacja starego hosta i przypiętego celu, prywatny katalog
+   `update-first-<ID>` z online.db, env.before, unit.before i sprawdzonym kodem.
+2. Fsync journala `preparing`; atomowy checker root 0644 w
+   `/etc/work-tracker/update-safety.py`, niezależny od checkoutu i archiwum.
+   Własny `90-work-tracker-update-safety.conf` wskazuje właśnie ten checker,
+   uruchamiany przez Python `-I` bez wpływu PYTHONPATH/PYTHONHOME z env aplikacji.
+3. Daemon-reload i kontrola efektywnego ExecStartPre/DropInPaths/NeedDaemonReload.
+   Brak potwierdzenia blokuje Git FF, zależności i Alembic.
+4. Staging przypiętego nowego updatera, handoff.json, Git FF do tego samego SHA
+   (zastępuje stare wejście update.sh), następnie `exec` z tym samym PID i FD 9.
+   Nowy updater sprawdza własne bajty, helpery, journal i odziedziczoną blokadę.
+   Nie zwalniamy blokady ani nie przepisujemy właściciela podczas handoffu.
+5. Istniejący updater 9B2 wykonuje build, potwierdzony stop, checkpoint i trwałe
+   `migrating` **przed** Alembic, potem `verifying`, restart i ograniczone
+   oczekiwanie LAN HTTP. Na koniec ścisły unit/env/runtime/socket/health i SQLite
+   quick_check jako użytkownik usługi. Dopiero sukces zamyka aktywny journal.
+
+Nie zmienia profilu LAN, URL/tokenów HA ani konfiguracji Nginx/Cloudflare.
+Odbiór HA trwa podczas przygotowania/build; przerwa zaczyna się przy stopie
+backendu przed migracją. HA nie musi ponowić żądania w tym oknie. Sukces nie
+upoważnia do splitu: jego aktywacja nadal ma osobne bramki i okno.
+
+Przerwanie przed zainstalowaniem guarda nie zmienia kodu ani schematu. Od guarda
+każdy niezatwierdzony boot/start jest blokowany, także po SIGKILL, utracie
+zasilania, w trakcie FF i handoffu. Guard działa, nawet gdy checkout nie ma helpera.
+Przed Alembic obsłużony błąd może przywrócić stary kod z **bieżącą DB**; trwały
+guard poza checkoutem pozostaje. Po próbie Alembic nie cofamy kodu ani bazy.
+Ponowienie po częściowym bootstrapie bezpiecznie odmawia zamiast zgadywać fazę.
+
+Inspekcja na prywatnej konsoli:
+
+```bash
+sudo systemctl status work-tracker
+sudo journalctl -u work-tracker -n 100
+sudo python3 /etc/work-tracker/update-safety.py allow-start
+sudo python3 -m json.tool /etc/work-tracker/update-state.json
+```
+
+Journal nie zawiera tokenu ani danych zdarzeń. Nie publikuj go wraz z lokalnymi
+ścieżkami/logami. Zachowaj także katalog update-first i snapshoty. Dalsze kroki:
+[odzyskiwanie bez restore SQLite](#odzyskiwanie-po-nieudanej-aktualizacji).
+Nie usuwaj stanu/guarda, aby wymusić start. Po pre-Alembic cancel lub przerwanym
+przygotowaniu kolejne first-upgrade może odmówić przez pozostawione artefakty;
+operator najpierw sprawdza fazę, brak migracji i spójność kodu/deps. Usunięcie
+wyłącznie własnych osłon lub dopuszczenie startu jest osobną świadomą naprawą.
+Nieznana wersja zmienionego trwałego checkera wymaga jawnej analizy kompatybilności;
+nazwa pliku nie wystarcza do jego automatycznego zastąpienia.
+
+Prawdziwa interpretacja prefiksu !, sandbox, UID, restart/reboot i utrata
+zasilania wymagają 9C. Testy na rzeczywistym 5d974b1/Git/SQLite/Alembic oraz
+SIGKILL mają symulowane systemctl/uprawnienia i nie są dowodem produkcyjnym.
+
+### Kolejne aktualizacje i przygotowanie cutoveru
+
+Po udanym first-upgrade wykonuj zwykły update.sh. Nie instaluje Nginx i nie
+przełącza sieci; niedokończony update lub cutover blokuje kolejne operacje.
+Zachowaj konsolę/SSH, backupy oraz poprzedni LAN origin.
+Nie pokazuj env/tokenów w terminalu, zgłoszeniu ani PR.
 
 ```bash
 sudo python3 /opt/work-tracker/deploy/ingress_cutover.py bootstrap
@@ -304,10 +414,10 @@ Procedura operatora na prywatnej konsoli (bez publikowania env/DB/logów):
    zachowaj wszystkie nowe zapisy i wróć do analizy, nie do starego restore.
 
 Guard wymaga prawdziwej weryfikacji systemd poświadczeń/sandboxu i reboot w 9C.
-Nowy updater chroni własną transakcję od begin. Starszy, już uruchomiony staged
-updater nie otrzymuje wstecz ochrony SIGKILL; nowy helper rollbacku odmawia
-restore również dla takiego wywołania, ale pierwsze przejście ze starego wydania
-musi być sprawdzone w izolowanym systemie przed użyciem produkcyjnym.
+Pierwsze przejście jest obsługiwane wyłącznie przez przypięty bootstrap opisany
+powyżej; stary staged updater nadal nie otrzymuje ochrony wstecz. Nie uruchamiaj
+go do pierwszej aktualizacji. Stabilny checker nie zależy od archiwum i pozostaje
+po pre-Alembic rollbacku do starego checkoutu.
 
 ## 6. Awaria i pełny rollback do LAN
 
@@ -398,6 +508,9 @@ Przed rzeczywistą aktywacją operator wykonuje na odizolowanym Debianie/Ubuntu:
 - [ ] Istniejący obcy Nginx/policy: odmowa lub odczyt bez zmian cudzych usług/plików.
 - [ ] Rzeczywisty systemd: root master/www-data worker, uprawnienia, sandbox,
       stop/restart updatera, boot aktywnego split i nieaktywnego przygotowania.
+- [ ] First-upgrade z rzeczywistego 5d974b1: SHA/ref, brak obcych plików,
+      ciągła blokada/PID przy exec, guard przed FF/Alembic, awarie bootstrap/handoff,
+      SIGKILL migracji i reboot bez startu niekompatybilnego kodu.
 - [ ] Guard update ExecStartPre z prefiksem !, odczyt stanu 0600 i sandbox;
       SIGKILL/zasilanie w preparing/migrating/verifying, brak startu starego kodu,
       wznowienie dopiero po naprawie oraz zgodny update → rollback-lan.
@@ -422,11 +535,12 @@ Aktualna walidacja lokalna po audycie:
 | Zestaw | Wynik |
 |---|---|
 | Backend, pełny pytest | **PASS: 751**, 27 istniejących ostrzeżeń Alembic |
-| Deploy/ingress, pełny zestaw poniżej | **PASS: 264** |
+| Deploy/ingress, pełny zestaw poniżej | **PASS: 289** |
 | 9B1 provisioning / 9B2 cutover | **PASS: 55 / 48** |
-| Regresje audytu / walidatory Host | **PASS: 42 / 61** |
+| Regresje audytu / walidatory Host | **PASS: 42 / 62** |
 | Rzeczywisty update.sh, awarie/SQLite i LAN rollback na lokalnym Git/proxy | **PASS: 12**, systemd/build/package adapters symulowane, rzeczywisty Alembic/SQLite/SIGKILL |
-| Osobna readiness / trwały guard i runner SKIP | **PASS: 10 / 21** |
+| Osobna readiness / trwały guard i runner SKIP | **PASS: 10 / 25** |
+| First-upgrade: rzeczywisty 5d974b1, Git/SQLite WAL/Alembic/Uvicorn | **PASS: 20**, delayed LAN, walidacja ref/SHA/hosta, obce pliki, blokady, przerwanie bootstrap/handoff/migracji, boot refusal; historyczny updater jako kontrola błędu |
 | Privacy / proxy security / ingress config / cloudflared config | **PASS: 3 / 8 / 3 / 1** |
 | JWTValidator cloudflared | **PASS: 6 scenariuszy**, lokalny JWKS TLS, bez tunelu |
 | Frontend npm test i npm run build | **PASS** |
@@ -446,6 +560,7 @@ WORK_TRACKER_NGINX_BIN=<NGINX_BIN> WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN
   deploy/tests/ingress_cutover_test.py deploy/tests/ingress_audit_test.py \
   deploy/tests/host_validation_test.py deploy/tests/split_update_test.py \
   deploy/tests/update_readiness_test.py deploy/tests/update_safety_test.py \
+  deploy/tests/first_upgrade_test.py \
   deploy/tests/infrastructure_privacy_test.py deploy/tests/ingress_security_test.py \
   deploy/tests/ingress_config_test.py deploy/tests/cloudflared_config_test.py -q
 ```
@@ -469,6 +584,7 @@ Brak końcowych błędów wykonanych testów funkcjonalnych. Pełny runner shell
 | P2 znane wersje własnych artefaktów | **FIXED**: dokładne v1/v2, prywatny backup i dziennik, atomowe ponowienie; obce/nieznane pliki odrzucane |
 | P2 ExecStart/properties | **FIXED**: ścisły kontrakt pliku i obserwowanej konfiguracji, resource overrides tylko z jawnej listy; odmowa utraty flag |
 | P2 updater w split | **FIXED**: zgodny update zachowuje unit/archiwum/generację, niezgodny blokowany przed merge; sukces i błąd przed Alembic umożliwiają LAN rollback, błąd od Alembic wymaga najpierw naprawy |
+| P1 pierwszy upgrade | **FIXED w jawnym kontrakcie LAN**: przypięty bootstrap, niezależny trwały checker, guard efektywny przed FF/Alembic, exec z tym samym PID/FD; brak automatycznego wznowienia niepewnej fazy, rzeczywisty systemd pozostaje 9C |
 | P1 update readiness | **FIXED**: oddzielny limit 60 s (5–300), retry tylko Pending, pełna walidacja raz po gotowości; restart w teście wraca natychmiast |
 | P1 SQLite rollback | **FIXED**: nigdy automatycznie nie odtwarza DB/sidecarów; przed Alembic cofa kod z bieżącą DB, od próby Alembic zatrzymuje i blokuje start do ręcznej naprawy; testy prawdziwych zapisów i częściowej migracji |
 | Kontrakt unitu / runner SKIP | **FIXED**: test czyta dostarczony unit i porównuje walidator; zbiorczy runner rozróżnia 0/77/inne pod set -e |

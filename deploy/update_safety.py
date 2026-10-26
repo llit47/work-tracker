@@ -17,6 +17,8 @@ import uuid
 GUARD_NAME = '90-work-tracker-update-safety.conf'
 GUARD = (b'[Service]\nExecStartPre=!/usr/bin/python3 '
          b'/opt/work-tracker/deploy/update_safety.py allow-start\n')
+BOOTSTRAP_GUARD = (b'[Service]\nExecStartPre=!/usr/bin/python3 -I '
+                   b'/etc/work-tracker/update-safety.py allow-start\n')
 
 
 class Refusal(ValueError):
@@ -59,10 +61,17 @@ def atomic(path, data, mode=0o600):
     finally: temporary.unlink(missing_ok=True)
 
 
-def guard_owned(path, *, uid=0, boundary=Path('/')):
+def stable_owned(path, *, uid=0, boundary=Path('/')):
+    checked(path, uid, boundary)
+    require(stat.S_IMODE(path.stat().st_mode) == 0o644 and path.read_bytes() == Path(__file__).read_bytes(),
+            'Nieznana wersja/treść trwałego checkera; wymagana jawna analiza kompatybilności.')
+
+
+def guard_owned(path, *, uid=0, boundary=Path('/'), checker=Path('/etc/work-tracker/update-safety.py')):
     if not path.exists() and not path.is_symlink(): return False
     checked(path, uid, boundary)
-    require(path.read_bytes() == GUARD and stat.S_IMODE(path.stat().st_mode) == 0o644, 'Obcy/zmieniony guard update.')
+    require(path.read_bytes() in (GUARD, BOOTSTRAP_GUARD) and stat.S_IMODE(path.stat().st_mode) == 0o644, 'Obcy/zmieniony guard update.')
+    if path.read_bytes() == BOOTSTRAP_GUARD: stable_owned(checker, uid=uid, boundary=boundary)
     return True
 
 
@@ -82,7 +91,9 @@ class Safety:
 
     def install(self):
         path = self.layout.guard
-        if guard_owned(path, uid=self.layout.uid, boundary=self.layout.boundary): return
+        if guard_owned(path, uid=self.layout.uid, boundary=self.layout.boundary, checker=self.layout.state.parent / 'update-safety.py'):
+            if path.read_bytes() == BOOTSTRAP_GUARD: self.stable_checker()
+            return
         if not path.parent.exists():
             self.check(path.parent.parent, directory=True)
             path.parent.mkdir(mode=0o755)
@@ -90,6 +101,19 @@ class Safety:
             sync_dir(path.parent.parent)
         self.check(path.parent, directory=True)
         atomic(path, GUARD, 0o644)
+
+    def stable_checker(self):
+        path = self.layout.state.parent / 'update-safety.py'
+        stable_owned(path, uid=self.layout.uid, boundary=self.layout.boundary)
+
+    def install_bootstrap(self):
+        # Journal/backup already durable. The checker must survive Git reset,
+        # partial merge and power loss; it cannot depend on the old checkout.
+        path = self.layout.state.parent / 'update-safety.py'
+        if path.exists() or path.is_symlink(): self.stable_checker()
+        else: atomic(path, Path(__file__).read_bytes(), 0o644)
+        self.install()
+        atomic(self.layout.guard, BOOTSTRAP_GUARD, 0o644)
 
     def read(self):
         self.check(self.layout.state, private=True)
@@ -166,7 +190,7 @@ class Safety:
         # An old release may not contain this checker. Only after a successful
         # pre-migration rollback/cancel may its known guard be removed.
         self.clear_required()
-        if not (app_dir / 'deploy/update_safety.py').is_file() and guard_owned(self.layout.guard, uid=self.layout.uid, boundary=self.layout.boundary):
+        if not (app_dir / 'deploy/update_safety.py').is_file() and guard_owned(self.layout.guard, uid=self.layout.uid, boundary=self.layout.boundary, checker=self.layout.state.parent / 'update-safety.py') and self.layout.guard.read_bytes() == GUARD:
             self.layout.guard.unlink()
             sync_dir(self.layout.guard.parent)
 

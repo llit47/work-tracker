@@ -64,6 +64,10 @@ Instalator nie otwiera firewalla i nie konfiguruje routera, publicznego IP ani t
 
 ## Update
 
+**Pierwsze przejście z `5d974b1` do 9B2 wymaga [procedury first-upgrade](docs/deployment/phase9b2-cutover.md#pierwsza-aktualizacja-z-5d974b1).** Nie uruchamiaj wtedy starego `update.sh`: jego kopia w `/tmp` nie instaluje nowego guarda przed migracją. Operator wybiera przejrzany pełny SHA i zaufany ref; bootstrap sprawdza rzeczywisty stary checkout, instaluje trwały checker poza nim, weryfikuje guard systemd i przekazuje PID/blokadę nowemu updaterowi. Nie wystarczy skopiować samego nowego `update.sh` do starej instalacji.
+
+Poniższa zwykła komenda służy instalacjom, które już mają mechanizm 9B2:
+
 ```bash
 sudo /opt/work-tracker/update.sh
 ```
@@ -500,7 +504,7 @@ git diff --check
 Brak rzeczywistych binarek jest błędem tych testów, nie cichym PASS/skip.
 Testy 9B2 symulują apt/systemd/reboot; nie zastępują testu na nowym systemie.
 Dodatkowe regresje audytu: `ingress_audit_test.py`, `host_validation_test.py`,
-`split_update_test.py`, `update_readiness_test.py` i `update_safety_test.py` w `deploy/tests/` (ten sam runner pytest).
+`split_update_test.py`, `update_readiness_test.py`, `update_safety_test.py` i `first_upgrade_test.py` w `deploy/tests/` (ten sam runner pytest).
 Test `service_user_runtime_test.sh` bez roota zwraca **77 = SKIP/NOT RUN**,
 nie PASS. Przerwij raportowanie tego kroku jako sukcesu.
 Opcjonalna prywatna denylista: `WT_PRIVATE_INFRASTRUCTURE_DENYLIST` wskazuje

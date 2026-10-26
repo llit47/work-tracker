@@ -207,9 +207,14 @@ wszystkie zapisy, zatrzymuje usługę i zakłada trwałą blokadę do ręcznej n
 Dwa spójne snapshoty i dziennik identyfikują fazę, ale nie upoważniają do restore.
 Zapisane webhooki/korekty/sesje/limiter są testowane przed i po restarcie; przerwa
 HA nie ma gwarancji ponowienia żądania. Guard i realny reboot wymagają 9C.
+Pierwsze przejście z 5d974b1 ma oddzielny bootstrap z przypiętym SHA/ref,
+sprawdzeniem starego hosta i trwałym checkerem poza checkoutem. Guard i journal
+poprzedzają FF/Alembic; exec zachowuje PID i blokadę. Zwykły stary updater
+pozostaje niedopuszczalną ścieżką pierwszego upgrade. Regresje używają faktycznego
+starego checkoutu/updatera, SQLite WAL, Alembic i SIGKILL; systemd jest symulowany.
 
 Aktualne komendy i wyniki regresji audytu: [runbook 9B2](docs/deployment/phase9b2-cutover.md#8-walidacja-i-bramka-9c).
-Pełny backend 751 PASS, deploy/ingress 264 PASS, JWT 6 PASS, frontend test/build
+Pełny backend 751 PASS, deploy/ingress 289 PASS, JWT 6 PASS, frontend test/build
 i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
 Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
 osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.

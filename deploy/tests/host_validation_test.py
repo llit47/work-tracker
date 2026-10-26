@@ -299,15 +299,19 @@ def test_validator_contract_matches_the_actual_shipped_systemd_unit():
     assert service['UMask'] == '0027' and service['Restart'] == 'on-failure' and service['RestartSec'] == '5s'
 
 
-def test_app_layout_recognizes_only_exact_loaded_update_guard(host, systemd_layout):
+@pytest.mark.parametrize('stable', [False, True])
+def test_app_layout_recognizes_only_exact_loaded_update_guard(host, systemd_layout, stable):
     import update_safety as u
     layout, props = systemd_layout
     layout.dropins.mkdir(mode=0o755)
     guard = layout.dropins / u.GUARD_NAME
-    p.atomic(guard, u.GUARD, 0o644)
+    content = u.BOOTSTRAP_GUARD if stable else u.GUARD
+    p.atomic(guard, content, 0o644)
+    if stable: p.atomic(layout.env.parent / 'update-safety.py', Path(u.__file__).read_bytes(), 0o644)
     props['DropInPaths'] = str(guard)
     props['ExecStartPre'] = ('{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 '
         '/opt/work-tracker/deploy/update_safety.py allow-start ; ignore_errors=no ; pid=1234 ; status=0/0 }')
+    if stable: props['ExecStartPre'] = props['ExecStartPre'].replace('/usr/bin/python3 /opt/work-tracker/deploy/update_safety.py', '/usr/bin/python3 -I /etc/work-tracker/update-safety.py')
     host.app_layout_ready(layout)
     props['ExecStartPre'] = ''
     with pytest.raises(p.Refusal): host.app_layout_ready(layout)
