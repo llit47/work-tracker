@@ -24,7 +24,10 @@
     - **Phase 8B1-A — Lightweight Browser Security: DONE (operator-confirmed)**
     - **Phase 8B1-B — Simple Login Rate Limiting: DONE (operator-confirmed)**
   - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (local X2 BLOCKED)**
-- **Phase 9 — Cloudflare public deployment: PLANNED**
+- **Phase 9 — Cloudflare public deployment: IN PROGRESS (tylko przygotowanie)**
+  - **Phase 9B1 — Safe Nginx provisioning: DONE (lokalnie, bez aktywacji)**
+  - **Phase 9B2 — Fresh install/private cutover: NEXT**
+  - **Phase 9C/9D — Real infrastructure/public rollout: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
@@ -177,6 +180,24 @@ Aktualne endpointy:
 - Anomalie trafiają do raportu informacyjnie i mają puste pola finansowe w CSV; nie są opłacane ani zamieniane na zgadywane sesje.
 
 ## Next implementation target
+
+**Phase 9B1 — gotowy fundament Nginx; następny etap 9B2.**
+
+Narzędzie `deploy/nginx_provision.py` przygotowuje nieaktywne generacje poza
+checkoutem, zachowując działający port HA/Uvicorn. Oferuje read-only plan,
+walidację i verify oraz jawne prepare/activate/rollback osobnej usługi.
+TLS/CA/SAN, IP/porty/hostnames, permissions, backupy i dziennik są kontrolowane.
+Aktywacja wymaga świeżego raportu operatora o izolacji IPv4/IPv6, źródłach,
+negatywnych probes i wyłączonej publicznej trasie oraz gotowego procesu split.
+Nie instaluje pakietów, nie przełącza aplikacji, nie wykonuje enable/autostartu.
+LAN/updater, DB i mechanizmy aplikacji pozostają bez zmian.
+
+55 testów provisioning z prawdziwym Nginx 1.26.3/OpenSSL PASS; systemd i dowody
+sieciowe symulowane, prywatne adresy mapowane na loopback. Nie ma dowodu
+produkcyjnego firewalla, globalnego IPv6, source IP HA ani cutover w LXC.
+9B2 obejmie instalator/bootstrap pakietów i pełną transakcję aplikacji;
+9C rzeczywistą prywatną infrastrukturę i domknięcie X2, 9D publiczny rollout.
+Szczegóły i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 
 **Phase 8B2 — implementacja ingress/readiness gotowa; lokalna walidacja X2 BLOCKED.**
 

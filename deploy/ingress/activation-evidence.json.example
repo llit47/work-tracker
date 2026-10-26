@@ -1,0 +1,11 @@
+{
+  "generation": "<GENERATION_FROM_PLAN>",
+  "verified_at": "<UTC_ISO_TIMESTAMP>",
+  "firewall_ipv4_verified": false,
+  "firewall_ipv6_verified": false,
+  "source_isolation_verified": false,
+  "negative_origin_probes_passed": false,
+  "public_route_disabled": false,
+  "console_and_lan_rollback_ready": false,
+  "evidence_reference": "<PRIVATE_OPERATOR_REPORT_OUTSIDE_CHECKOUT>"
+}

@@ -1,0 +1,13 @@
+{
+  "lan_ip": "192.168.0.170",
+  "browser_port": 8443,
+  "ha_port": 8000,
+  "backend_port": 8001,
+  "public_hostname": "<PUBLIC_HOSTNAME>",
+  "origin_tls_name": "<ORIGIN_TLS_NAME>",
+  "cloudflared_source_ip": "192.168.0.149",
+  "ha_source_ip": "<OBSERVED_HA_SOURCE_IP>",
+  "certificate": "/etc/work-tracker/tls/origin.pem",
+  "private_key": "/etc/work-tracker/tls/origin.key",
+  "ca_certificate": "/etc/work-tracker/tls/ca.pem"
+}

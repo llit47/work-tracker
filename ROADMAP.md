@@ -566,7 +566,7 @@ DONE wymaga domknięcia lokalnej weryfikacji X2; publiczne E2E nadal są Phase 9
 
 ## Phase 9 — Cloudflare public deployment
 
-**Status: PLANNED**
+**Status: IN PROGRESS — tylko fundament 9B1; publiczny rollout PLANNED**
 
 Cel: udostępnić **całą** aplikację Work Tracker przez HTTPS pod dedykowaną subdomeną domeny obsługiwanej przez Cloudflare. Nazwa subdomeny nie jest jeszcze ustalona. Phase 9 następuje po ukończeniu Phase 8; obecny origin pozostaje prywatny.
 
@@ -587,6 +587,50 @@ Browser → Cloudflare Access (HTTPS) → Cloudflare Tunnel → prywatny origin 
 - Sekrety i tokeny Cloudflare Tunnel poza Git i poza checkoutem; jawne wymagania konfiguracyjne dopiero w implementacyjnym PR, zgodnie z istniejącym deployment manifest i regułami uprawnień.
 - Walidacja dostępu, sesji, HTTPS, ograniczenia originu i niezmienionego działania Home Assistant w LAN przed aktywacją publicznego hostname.
 - Stopniowa aktywacja z możliwością szybkiego wyłączenia publicznego routingu, zachowaniem backupów SQLite, czystego update/rollback i bez utraty danych.
+
+#### Phase 9B1 — Safe Nginx provisioning
+
+**Status: DONE — implementacja i lokalne testy; bez deploymentu/aktywacji**
+
+- [x] Read-only plan/validate, jawne prepare/verify/activate/rollback; odrębna
+  nieaktywna konfiguracja, bez zajmowania portu HA i zmian aplikacji.
+- [x] Jawne IP/porty/hostnames/TLS/CA/SAN, permissions, konflikty IPv4/IPv6,
+  niezmienione wejścia 8B2 i token HA. Bez listenera IPv6; wymagany firewall obu rodzin.
+- [x] Aktywacja prywatnego ingressu wymaga raportu operatora: izolacja obu rodzin,
+  źródła/probes, brak publicznej trasy; dodatkowo kontrola rzeczywistego backendu.
+- [x] Backup, atomowe generacje, dziennik write-ahead, ponowienie i rollback;
+  testy prawdziwego Nginx/OpenSSL i awarii, bez pakietów/systemd operatora.
+- [x] LAN domyślny i updater bez automatycznego przełączenia; brak zmian DB,
+  auth/CSRF/limiterów, HA, cloudflared, Access, DNS i Proxmoxa.
+
+Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
+
+#### Phase 9B2 — Fresh install and complete private cutover
+
+**Status: NEXT**
+
+- [ ] Wybór LAN (domyślny)/HTTPS w instalatorze; bezpieczny bootstrap pakietów
+  bez automatycznego startu generic Nginx i integracja katalogów/permissions.
+- [ ] Transakcja env/drop-in/Uvicorn, backup i pełny rollback do LAN bez zmiany
+  HA URL; polityka autostartu/reboot/odnowienia TLS; updater nadal nie przełącza sieci.
+
+### Phase 9C — Real private infrastructure verification
+
+**Status: PLANNED**
+
+- [ ] Debian 13 unprivileged LXC/PVE 9: pakiety/systemd/root-worker, bindy,
+  rzeczywisty source IP HA/connectora, firewall IPv4/global IPv6, negatywne probes.
+- [ ] CA/SAN z connectora 2026.10.3, tokenowe entry/exit/correction bez sesji,
+  niezależność HA od browsera, backup, pełny LAN rollback i reboot; domknięcie X2 8B2.
+
+### Phase 9D — Public rollout and end-to-end verification
+
+**Status: PLANNED — wymaga ukończenia Phase 8 i bramki 9C**
+
+- [ ] Osobno zatwierdzona trasa WT we współdzielonym local cloudflared bez
+  zmiany innych usług; Access/IdP/JWT/Edge, publiczne negatywne probes.
+- [ ] Dwie sieci/IPv6/Workers/IP spoofing, cookies/CSRF/limity/HSTS; wyłączenie
+  tylko browser route bez utraty HA i końcowy rollback. Brak automatycznej publikacji w 9B1.
 
 ### Acceptance criteria
 
