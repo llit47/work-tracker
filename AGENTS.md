@@ -360,3 +360,16 @@ Before reporting a task as ready:
 - the final diff is focused;
 - known blockers are reported clearly;
 - no merge has been performed unless explicitly requested.
+
+## Infrastructure privacy
+
+This repository is public. Never publish actual operator infrastructure addresses,
+operator hostnames/domains, VM/container IDs, private topology, credentials,
+user data or production configuration in code, fixtures, docs, commits or PRs.
+Use placeholders in operator documentation and fictional RFC1918 examples from
+`10.123.45.0/24` in tests. Generic supported-platform descriptions are allowed;
+operator inventory is not. Scan the final tracked/untracked content before
+commit/push with `deploy/tests/infrastructure_privacy_test.py`. An optional
+private denylist must stay outside the checkout with mode 0600; never print its
+values. Remove accidental disclosures from current files and report them, but
+never rewrite Git history without separate explicit authorization.

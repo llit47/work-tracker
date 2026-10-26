@@ -22,7 +22,7 @@ Zakończony zakres:
 - [x] Instalator dla Debiana/Ubuntu oraz updater z backupem i rollbackiem.
 - [x] Uruchamianie przez `work-tracker.service` z autostartem i restartem po awarii.
 - [x] Uprawnienia pozwalające użytkownikowi usługi czytać i uruchamiać aplikację bez prawa zapisu do kodu.
-- [x] Rzeczywista instalacja zweryfikowana na Debian 13 LXC w Proxmox.
+- [x] Rzeczywista instalacja zweryfikowana przez operatora.
 - [x] Integracja Home Assistant przez `rest_command` oraz automatyzacje wejścia i wyjścia ze strefy.
 - [x] Ręczny test całej ścieżki Home Assistant → API → SQLite → frontend.
 
@@ -566,7 +566,7 @@ DONE wymaga domknięcia lokalnej weryfikacji X2; publiczne E2E nadal są Phase 9
 
 ## Phase 9 — Cloudflare public deployment
 
-**Status: IN PROGRESS — tylko fundament 9B1; publiczny rollout PLANNED**
+**Status: IN PROGRESS — fundament 9B1/9B2; publiczny rollout PLANNED**
 
 Cel: udostępnić **całą** aplikację Work Tracker przez HTTPS pod dedykowaną subdomeną domeny obsługiwanej przez Cloudflare. Nazwa subdomeny nie jest jeszcze ustalona. Phase 9 następuje po ukończeniu Phase 8; obecny origin pozostaje prywatny.
 
@@ -607,20 +607,29 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 
 #### Phase 9B2 — Fresh install and complete private cutover
 
-**Status: NEXT**
+**Status: DONE — implementacja i lokalne testy; realne pakiety/systemd/reboot wymagają 9C**
 
-- [ ] Wybór LAN (domyślny)/HTTPS w instalatorze; bezpieczny bootstrap pakietów
-  bez automatycznego startu generic Nginx i integracja katalogów/permissions.
-- [ ] Transakcja env/drop-in/Uvicorn, backup i pełny rollback do LAN bez zmiany
-  HA URL; polityka autostartu/reboot/odnowienia TLS; updater nadal nie przełącza sieci.
+- [x] Domyślny LAN i opcjonalne przygotowanie HTTPS w instalatorze; kontrolowany
+  bootstrap Nginx z trwałą maską/policy, bez startu generic Nginx i przejmowania obcych usług.
+- [x] Osobny cutover: preflight, bramki 9B1, okno serwisowe i kontrola z realnego HA,
+  backup env/unit/drop-in, durable journal i kompensacja pełnego LAN bez odtwarzania DB.
+- [x] SIGTERM/SIGKILL recovery, autostart tylko aktywnego ingressu, ordered boot recovery,
+  restart wraz z backendem, konserwatywna wymiana TLS przez nową generację.
+- [x] Wspólna blokada z updaterem; zwykły update zachowuje profil/konfigurację sieci.
+- [x] Regresje prawdziwego Nginx/OpenSSL/Uvicorn, izolowanej SQLite, błędów i kill;
+  apt/systemd/reboot symulowane, rzeczywiste kontrole jawnie przekazane do 9C.
+- [x] Neutralne przykłady publicznego repo, trwała zasada prywatności i skan regresyjny.
+
+Procedury i ograniczenia: [runbook 9B2](docs/deployment/phase9b2-cutover.md).
+Brak aktywacji produkcji, zmian HA/Cloudflare/firewalla ani migracji SQLite.
 
 ### Phase 9C — Real private infrastructure verification
 
 **Status: PLANNED**
 
-- [ ] Debian 13 unprivileged LXC/PVE 9: pakiety/systemd/root-worker, bindy,
+- [ ] Debian/Ubuntu, także unprivileged kontenery: pakiety/systemd/root-worker, bindy,
   rzeczywisty source IP HA/connectora, firewall IPv4/global IPv6, negatywne probes.
-- [ ] CA/SAN z connectora 2026.10.3, tokenowe entry/exit/correction bez sesji,
+- [ ] CA/SAN z connectora w wybranej wspieranej wersji, tokenowe entry/exit/correction bez sesji,
   niezależność HA od browsera, backup, pełny LAN rollback i reboot; domknięcie X2 8B2.
 
 ### Phase 9D — Public rollout and end-to-end verification

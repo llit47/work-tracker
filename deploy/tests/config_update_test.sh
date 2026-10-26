@@ -50,7 +50,7 @@ printf '%s\n' 'APP_HOST=0.0.0.0' 'APP_PORT=8000' \
     'WEBHOOK_TOKEN=public-test-only-webhook-token-32-characters' \
     'DATABASE_URL=sqlite:////var/lib/work-tracker/work_tracker.db' \
     'UNKNOWN_KEY=preserved' >"${ENV_FILE}"
-printf 'http://192.168.1.50:8000\n\n' >"${INPUT_FILE}"
+printf 'http://10.123.45.10:8000\n\n' >"${INPUT_FILE}"
 exec 3<"${INPUT_FILE}"
 sync_missing_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
 validate_required_config "${REAL_MANIFEST}" "${ENV_FILE}"
@@ -67,11 +67,11 @@ cmp -s "${ENV_FILE}" "${SNAPSHOT_FILE}"
 printf 'Session cookie configuration tests passed.\n'
 
 # 8B1-A has no guessed origin/default. Existing LXC config needs an explicit choice.
-grep -qx 'BROWSER_ALLOWED_ORIGINS=http://192.168.1.50:8000' "${ENV_FILE}"
+grep -qx 'BROWSER_ALLOWED_ORIGINS=http://10.123.45.10:8000' "${ENV_FILE}"
 for invalid in '' '*' null 'http://host/' 'http://user@host' 'http://host:65536' 'http://host?query'; do
     ! validate_config_value browser_origins "${invalid}"
 done
-validate_config_value browser_origins 'http://192.168.1.50:8000,https://work.example.com'
+validate_config_value browser_origins 'http://10.123.45.10:8000,https://work.example.com'
 validate_config_value browser_origins 'http://[::1]:8000'
 validate_config_value cors ''
 ! validate_config_value cors '*'

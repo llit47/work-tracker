@@ -26,7 +26,7 @@
   - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (local X2 BLOCKED)**
 - **Phase 9 — Cloudflare public deployment: IN PROGRESS (tylko przygotowanie)**
   - **Phase 9B1 — Safe Nginx provisioning: DONE (lokalnie, bez aktywacji)**
-  - **Phase 9B2 — Fresh install/private cutover: NEXT**
+  - **Phase 9B2 — Fresh install/private cutover: DONE (lokalnie; realne 9C wymagane)**
   - **Phase 9C/9D — Real infrastructure/public rollout: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
@@ -129,9 +129,9 @@ Aktualne endpointy:
 
 ## Production/deployment state
 
-- Środowisko: Debian 13 LXC na Proxmox, obecnie wyłącznie w sieci LAN; brak publicznego UI, Cloudflare Tunnel i Google Calendar integration.
-- Operator potwierdził baseline main `de963ae`, head `20261025_08`, wdrożone 8B1-A/B i pozytywne testy pakietu/runtime; to nie samodzielny test Codexa. Cloudflared jest w osobnym LXC; WT nie ma aktywnej trasy publicznej.
-- Proces: `work-tracker.service`; autostart po restarcie LXC i restart po awarii.
+- Wspierane wdrożenie: Debian/Ubuntu, obecnie LAN; publiczny routing i Calendar pozostają osobnymi etapami.
+- Testy operatora nie zastępują lokalnej walidacji zmienionego kodu ani bramek infrastruktury.
+- Proces: `work-tracker.service`; autostart po restarcie systemu i restart po awarii.
 - Instalacja: `install.sh`.
 - Aktualizacja: `update.sh` z backupem SQLite i rollbackiem.
 - Kod: `/opt/work-tracker`.
@@ -181,29 +181,35 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 9B1 — gotowy fundament Nginx; następny etap 9B2.**
+**Phase 9B1/9B2 — lokalna implementacja gotowa; następny etap 9C.**
 
-Narzędzie `deploy/nginx_provision.py` przygotowuje nieaktywne generacje poza
-checkoutem, zachowując działający port HA/Uvicorn. Oferuje read-only plan,
-walidację i verify oraz jawne prepare/activate/rollback osobnej usługi.
-TLS/CA/SAN, IP/porty/hostnames, permissions, backupy i dziennik są kontrolowane.
-Aktywacja wymaga świeżego raportu operatora o izolacji IPv4/IPv6, źródłach,
-negatywnych probes i wyłączonej publicznej trasie oraz gotowego procesu split.
-Nie instaluje pakietów, nie przełącza aplikacji, nie wykonuje enable/autostartu.
-LAN/updater, DB i mechanizmy aplikacji pozostają bez zmian.
+9B2 rozszerza generacje, walidację i bramki 9B1 o opcjonalny bootstrap Nginx
+oraz transakcję całej aplikacji. Instalator nadal domyślnie uruchamia LAN;
+HTTPS przygotowuje nieaktywną generację. Oddzielne activate wymaga świeżych
+dowodów izolacji obu rodzin, potwierdzenia okna i rzeczywistego wejścia z HA.
+Trwały journal, kopie env/unit/drop-in i idempotentny rollback przywracają
+poprzedni LAN bez odtwarzania DB. Ordered recovery obsługuje przerwany cutover
+przy boot, a zatwierdzony ingress startuje i restartuje wraz z backendem.
+Updater zachowuje profil i generację, współdzieli blokadę operacji systemowych.
 
-55 testów provisioning z prawdziwym Nginx 1.26.3/OpenSSL PASS; systemd i dowody
-sieciowe symulowane, prywatne adresy mapowane na loopback. Nie ma dowodu
-produkcyjnego firewalla, globalnego IPv6, source IP HA ani cutover w LXC.
-9B2 obejmie instalator/bootstrap pakietów i pełną transakcję aplikacji;
-9C rzeczywistą prywatną infrastrukturę i domknięcie X2, 9D publiczny rollout.
-Szczegóły i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
+Lokalnie: backend 751 PASS, deploy/ingress 117 PASS, JWT 6 PASS, frontend
+test/build i shell config/rollback/permissions PASS.
+Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
+osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.
+Rzeczywista instalacja/upgrade pakietów, uprawnienia root/www-data, systemd,
+reboot, źródła HA/SNAT, skuteczny firewall IPv4/IPv6 i negatywne próby pozostają
+**BLOCKED / REQUIRES 9C**, X2 Phase 8B2 również wymaga osobnej kontroli.
+9D obejmuje osobno zatwierdzony publiczny rollout. Nie dotykano produkcji.
+
+Usunięto dane infrastruktury z bieżących przykładów/testów/docs; przykłady są
+neutralne, scanner chroni prywatność. Historii Git nie przepisano.
+[Runbook 9B2](docs/deployment/phase9b2-cutover.md) i
+[fundament 9B1](docs/deployment/phase9b1-nginx.md) zawierają procedury i granice dowodów.
 
 **Phase 8B2 — implementacja ingress/readiness gotowa; lokalna walidacja X2 BLOCKED.**
 
-8B1-A/B są DONE na podstawie potwierdzenia operatora: Debian 13 LXC na Proxmox,
-main de963ae, head 20261025_08, jeden Uvicorn worker/no-proxy-headers,
-package-install i service-user runtime pozytywne, działające UI/login/dane.
+8B1-A/B są DONE na podstawie potwierdzenia operatora.
+Wymagany jest jeden Uvicorn worker/no-proxy-headers i kontrola pakietu/runtime.
 Codex nie łączył się z produkcyjnym LXC i nie deklaruje własnej walidacji tam.
 
 8B2 dostarcza opt-in INGRESS_PROFILE=split, domyślnie nieaktywne. Nginx w WT LXC

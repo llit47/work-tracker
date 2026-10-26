@@ -1,7 +1,10 @@
 [Unit]
+ConditionPathExists=<STATE_DIR>/active.json
 Description=Work Tracker isolated ingress (explicit activation only)
 After=network-online.target work-tracker.service
 Wants=network-online.target
+Requires=work-tracker.service
+PartOf=work-tracker.service
 
 [Service]
 Type=simple
@@ -9,7 +12,8 @@ Group=www-data
 ExecStart=<NGINX_BIN> -e stderr -p <RUNTIME_DIR>/ -c <GENERATION_DIR>/nginx.conf
 KillSignal=SIGQUIT
 TimeoutStopSec=10
-Restart=no
+Restart=on-failure
+RestartSec=2s
 RuntimeDirectory=work-tracker-ingress
 RuntimeDirectoryMode=0750
 UMask=0077
@@ -19,4 +23,6 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=<RUNTIME_DIR>
 
-# Deliberately no Install section: 9B1 does not enable boot activation.
+[Install]
+# Only 9B2 creates the .wants link after checks and real HA confirmation.
+WantedBy=work-tracker.service

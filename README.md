@@ -2,7 +2,7 @@
 
 Prosta aplikacja obecnie działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i wylicza sesje pracy bez zmiany danych źródłowych. Frontend React pokazuje bieżący status pracy, miesięczne sesje i anomalie, korekty, wynagrodzenie oraz eksporty CSV/PDF.
 
-Obecny instalator i obecne wdrożenie nie konfigurują publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
+Instalator domyślnie uruchamia LAN HTTP; opcjonalnie przygotowuje prywatny HTTPS/split ingress. Nie konfiguruje publicznego dostępu, domeny ani tunelu.
 
 ## Planned direction (not implemented)
 
@@ -37,14 +37,16 @@ Instalator nie nadpisze istniejącego `/opt/work-tracker`. Instaluje wymagane pa
 
 ## First configuration
 
-Instalator pyta interaktywnie o:
+Instalator najpierw proponuje `lan` (domyślny) lub `https` (przygotowanie).
+HTTPS również pozostawia działający LAN do osobnego, kontrolowanego cutoveru.
+Następnie pyta interaktywnie o:
 
 - adres nasłuchu, domyślnie `0.0.0.0`,
 - port backendu, domyślnie `8000`,
 - token webhooka (minimum 32 znaki) lub zgodę przez pozostawienie pustej wartości na jego bezpieczne wygenerowanie,
 - `BROWSER_ALLOWED_ORIGINS`: jawną niepustą listę pełnych origins przeglądarki (scheme, host, port), bez ścieżek i wildcardów; brak proponowanej szerokiej wartości domyślnej,
 - originy CORS, jeśli frontend ma działać z innego originu,
-- `SESSION_COOKIE_SECURE`: `false` wyłącznie dla obecnego zaufanego LAN HTTP; `true` obowiązkowo dla HTTPS.
+- `SESSION_COOKIE_SECURE`: `false` dla zaufanego LAN HTTP; w trybie przygotowania HTTPS instalator zachowuje `false` do osobnego cutoveru, który ustawi `true`.
 
 Wygenerowany token nie jest wyświetlany. Zostaje zapisany w `/etc/work-tracker/work-tracker.env`, dostępnym tylko dla roota i grupy usługi. Baza zawsze znajduje się poza repozytorium pod `/var/lib/work-tracker/work_tracker.db`.
 
@@ -58,7 +60,7 @@ http://<adres-IP-serwera-w-LAN>:8000
 
 FastAPI serwuje zbudowany frontend z `frontend/dist`, więc osobny Vite, nginx ani reverse proxy nie są potrzebne. CORS nie dotyczy webhooka Home Assistanta; jest potrzebny tylko wtedy, gdy przeglądarkowy frontend pochodzi z innego originu.
 
-Instalator nie otwiera firewalla, nie konfiguruje routera, publicznego IP, tunelu ani HTTPS. Dostęp należy pozostawić wyłącznie w zaufanej sieci LAN.
+Instalator nie otwiera firewalla i nie konfiguruje routera, publicznego IP ani tunelu. Dostęp należy pozostawić wyłącznie w zaufanej sieci LAN.
 
 ## Update
 
@@ -76,7 +78,7 @@ Przed aktualizacją istniejącego LXC dopisz w `/etc/work-tracker/work-tracker.e
 origin faktycznie używany do otwierania aplikacji, przykładowo:
 
 ```dotenv
-BROWSER_ALLOWED_ORIGINS=http://192.168.1.50:8000
+BROWSER_ALLOWED_ORIGINS=http://10.123.45.10:8000
 CORS_ORIGINS=
 SESSION_COOKIE_SECURE=false
 ```
@@ -313,21 +315,40 @@ oddziela testy ASGI, prawdziwe Nginx/Uvicorn, walidator JWT cloudflared i
 **BLOCKED / REQUIRES PHASE 9 VERIFICATION** dla rzeczywistego konta/Edge.
 Brak nowej migracji; Alembic head pozostaje 20261025_08.
 
-## Opcjonalne przygotowanie Nginx (9B1)
+## Opcjonalny HTTPS i kontrolowany cutover (9B1/9B2)
 
-`python3 deploy/nginx_provision.py` udostępnia `plan`/`validate` bez zmian,
-`prepare` nieaktywnej konfiguracji, `verify`, oddzielne `activate` i `rollback`.
-Przygotowanie nie zajmuje dotychczasowego portu HA i nie zmienia Uvicorna.
-Wymaga jawnego JSON operatora i istniejącego Nginx; nie instaluje pakietów.
-Pliki, kopie TLS i backupy są poza checkoutem, z kontrolą właściciela/uprawnień.
-Aktywacja osobnej usługi jest blokowana bez dowodów izolacji IPv4/IPv6,
-wyłączonej publicznej trasy i gotowego backendu split. Brak enable/autostartu.
+Wybór `https` w instalatorze automatycznie przygotowuje zależności i nieaktywną
+generację. Bezpieczny bootstrap blokuje start domyślnego Nginx przed apt;
+nie przejmuje obcej konfiguracji. LAN pozostaje działający, także przy błędnym TLS.
+Operator dostarcza cert/key/CA, dokładne IP/porty/hostnames i rzeczywiste dowody
+izolacji IPv4/IPv6. Nie ma automatycznego Cloudflare/Access/DNS ani publicznego HTTPS.
 
-[Instrukcja 9B1](docs/deployment/phase9b1-nginx.md) opisuje zależności, wymagane
-wejścia, backup/dziennik/rollback oraz granice testów. Instalator nadal domyślnie
-instaluje LAN; integracja LAN/HTTPS i bezpieczny bootstrap pakietów to 9B2.
-`update.sh` nie wywołuje narzędzia i nie przełącza sieci ani HTTPS.
-Nie wykonano deploymentu ani zmian współdzielonego cloudflared operatora.
+Administracja istniejącą instalacją:
+
+```bash
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py bootstrap
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py configure
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py plan
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py activate --evidence /etc/work-tracker/ingress-input/evidence.json
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py verify
+# Niedokończona operacja / powrót do poprzedniego LAN:
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py recover
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py rollback-lan
+```
+
+[Runbook 9B2](docs/deployment/phase9b2-cutover.md) opisuje świeży LAN/HTTPS,
+przygotowanie prywatnego JSON, bramki, okno serwisowe, kontrole z HA, rollback,
+reboot, wymianę certyfikatu i checklistę 9C. Podczas zmiany listenera webhook
+może zaginąć — HA nie musi ponowić żądania. URL i token HA pozostają bez zmian.
+Narzędzie nie tworzy testowych eventów i nie odtwarza DB przy błędzie sieci.
+
+9B2 komponuje [generacje i walidację 9B1](docs/deployment/phase9b1-nginx.md),
+dodając trwały dziennik env/systemd, pełną kompensację i ordered boot recovery.
+Dopiero po kontrolach i potwierdzeniu z rzeczywistego HA aktywuje autostart proxy.
+Przygotowane generacje nie startują same. Zwykły updater nie przełącza profilu
+ani generacji; wspólna blokada zapobiega równoległemu update/cutoverowi, a
+niedokończony cutover blokuje update do czasu `recover`.
+Nie wykonano deploymentu ani zmian Cloudflare/firewalla/HA.
 
 ## Logs/status/restart
 
@@ -466,13 +487,16 @@ poza checkoutem, testy nie uruchamiają tunelu):
 
 ```bash
 WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/ingress_security_test.py -q
-WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/nginx_provision_test.py -q
+WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/nginx_provision_test.py deploy/tests/ingress_cutover_test.py deploy/tests/infrastructure_privacy_test.py -q
 WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN> backend/.venv/bin/pytest deploy/tests/cloudflared_config_test.py deploy/tests/ingress_config_test.py -q
 CLOUDFLARED_SOURCE_DIR=<SOURCE_2026.10.0> WORK_TRACKER_GO_BIN=<GO_BIN> deploy/tests/cloudflared_access_test.sh
 git diff --check
 ```
 
 Brak rzeczywistych binarek jest błędem tych testów, nie cichym PASS/skip.
+Testy 9B2 symulują apt/systemd/reboot; nie zastępują testu na nowym systemie.
+Opcjonalna prywatna denylista: `WT_PRIVATE_INFRASTRUCTURE_DENYLIST` wskazuje
+plik 0600 poza checkoutem; skan prywatności nie drukuje dopasowanych wartości.
 Źródło/tag, checksum i granice dowodów opisuje macierz weryfikacji. Live probes
 `deploy/tests/access_live_test.py` są przygotowane wyłącznie dla operatora
 Phase 9 z prywatnymi fixtures; nie uruchamiać ich jako części lokalnego pytest.

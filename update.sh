@@ -69,6 +69,8 @@ trap 'on_error "${LINENO}"' ERR
 # shellcheck source=deploy/common.sh
 source "${APP_DIR}/deploy/common.sh"
 require_supported_os
+acquire_deployment_lock
+check_ingress_update_state
 id "${SERVICE_USER}" >/dev/null 2>&1 || fail "Missing system user: ${SERVICE_USER}."
 getent group "${SERVICE_USER}" >/dev/null 2>&1 || fail "Missing system group: ${SERVICE_USER}."
 

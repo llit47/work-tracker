@@ -5,17 +5,13 @@ Nie utworzono DNS, tunelu ani aplikacji Access. Obecny LAN HTTP działa z
 `INGRESS_PROFILE=lan` (domyślne), dotychczasowymi origins i Secure=false.
 Aktualizacja kodu sama nie instaluje Nginx i nie zmienia listenerów/firewalla.
 
-**9B1:** dostępne jest osobne [narzędzie przygotowania Nginx](phase9b1-nginx.md).
-To jedyny ukończony fundament Phase 9, bez aktywacji produkcji. Kroki cutover,
-Access/tunnel/DNS poniżej pozostają planem 9B2/9C/9D, nie instrukcją do wykonania
-w PR 9B1. Nie łączyć ręcznego generic Nginx z osobną instancją narzędzia.
-Cloudflared operatora 2026.10.3 ma współdzielony local config w LXC 102;
-9B1 nie zmienia żadnych jego plików, tras ani usług.
+**9B1/9B2:** prywatne przygotowanie i transakcja cutoveru mają
+[osobny runbook 9B2](phase9b2-cutover.md). Poniższe kroki Access/tunnel/DNS
+są planem **9D**, bez automatycznego wykonania. 9C weryfikuje realne pakiety,
+systemd, reboot i izolację. Nie łączyć ręcznego generic Nginx z dedykowaną instancją.
+Współdzielony cloudflared i inne usługi pozostają pod kontrolą ich administratora.
 
-Stan bazowy potwierdzony przez operatora: Debian 13 LXC na Proxmox, main
-`de963ae`, head `20261025_08`, jeden worker z `--no-proxy-headers`, działające
-8B1-A/B, login, UI i dane; package-install/service-user runtime zaliczone przez
-operatora. Codex nie ma dostępu do tego LXC i nie powtarzał tam tych testów.
+Narzędzia nie łączą się z produkcją. Wersje i layout należy potwierdzić lokalnie.
 
 ## Architektura i wartości do ustalenia
 
@@ -211,39 +207,30 @@ duplikaty przecinkiem, co też zostaje odrzucone. CF-Worker i znany cross-zone
 Worker IP są odrzucane; pseudo IPv4 240/4 również. Te dodatkowe kontrole nie
 zastępują weryfikacji konfiguracji strefy. LAN profile nadal ignoruje CF/XFF.
 
-Wykonać kopie plików z kroku 1. Przygotować lokalny przetestowany plan cofnięcia
-bez udziału przeglądarki. W krótkim oknie serwisowym, nadal bez publicznej trasy:
+Prywatny cutover wykonać według [9B2](phase9b2-cutover.md), z raportem 9B1,
+pełnym backupem env/unit/drop-in i potwierdzonym oknem bez zdarzeń HA.
+Użyć `ingress_cutover.py activate --evidence <PLIK_POZA_CHECKOUTEM>` i
+`verify`, a przy błędzie `recover` lub `rollback-lan`. Nie przełączać ręcznie
+Uvicorna ani nie uruchamiać osobnego `nginx_provision.py activate` w tej transakcji.
+Kontrole produkcyjne nie tworzą zdarzeń testowych; poprawne tokenowe entry/exit/
+correction sprawdzać na izolowanej bazie, na produkcji obserwować legalny ruch.
 
-1. Zatrzymać WT, by zwolnić dotychczasowy port HA; surowych zdarzeń nie usuwać.
-2. W env zastosować [`https.env.example`](../../deploy/ingress/https.env.example):
-   INGRESS_PROFILE=split, jeden dokładny HTTPS origin, CORS pusty, Secure=true,
-   HSTS=0. Nie zmieniać DB, tokenu HA ani parametrów sesji.
-3. Zainstalować systemd drop-in z
-   [`work-tracker.service.override.example`](../../deploy/ingress/work-tracker.service.override.example).
-   Stały backend bind 127.0.0.1 na innym porcie; APP_HOST/PORT w env mogą pozostać
-   jako poprzednie wartości do kontrolowanego rollbacku, drop-in je zastępuje.
-4. `systemctl daemon-reload`, uruchomić WT, a prywatny Nginx przez jawne
-   `nginx_provision.py activate --evidence <RAPORT_0600>` po wszystkich bramkach
-   [9B1](phase9b1-nginx.md). Sprawdzić bindy oraz ACL.
-   Nie uruchamiać dwóch aplikacji/workerów do tej samej DB.
-5. Z HA sprawdzić dotychczasowy URL entry/exit/correction, dobry/zły/brak tokenu,
-   bez Cookie/Origin/Access. Nie zmieniać istniejącej konfiguracji HA.
-6. Jeśli kontrola nie przejdzie, natychmiast przywrócić zapisane LAN env/unit/bindy
-   i zwolnić HA_PORT w Nginx. Nie czekać na naprawę Access kosztem HA.
-7. Dopiero po testach negatywnych originu i zatwierdzonej bramce Phase 9 uruchomić
+Następujące działania są osobnym etapem publicznym 9D:
+
+1. Dopiero po testach negatywnych originu i zatwierdzonej bramce Phase 9 uruchomić
    właściwy tunnel i DNS. Do tego czasu browser UI jest czasowo niedostępne;
    konsola operatora i prywatny HA pozostają niezależne.
-8. Przez HTTPS sprawdzić Access, dodatkowy login WT, Secure/HttpOnly/SameSite=Lax,
+2. Przez HTTPS sprawdzić Access, dodatkowy login WT, Secure/HttpOnly/SameSite=Lax,
    brak Domain, Origin/heartbeat/logout, eksporty i dashboard. Odświeżyć stary
    frontend po cutover. Brak CORS i HTTP fallbacku. Dawne cookie dla LAN IP nie
    przechodzi do innego hosta; zalogować się ponownie, bez nowej polityki sesji.
-9. Sprawdzić na realnych dwóch sieciach IP budżety i spoofing. Wykonywać na
+3. Sprawdzić na realnych dwóch sieciach IP budżety i spoofing. Wykonywać na
    kontrolowanym koncie, po czym odczekać pełne 15 minut; nie czyścić tabeli.
-10. Po poprawnej weryfikacji HTTPS włączyć HSTS najpierw 300 s, potem 86400,
+4. Po poprawnej weryfikacji HTTPS włączyć HSTS najpierw 300 s, potem 86400,
     docelowo 31536000. Bez includeSubDomains/preload. HSTS nie wymusza zmian HA.
 
 Zegar/NTP obu LXC musi być poprawny. Przerwa w krótkim przełączeniu listenerów
-może wymagać ponowienia webhooka przez HA; nie obiecujemy kolejkowania ani
+może utracić webhook: HA nie musi go ponowić. Nie obiecujemy kolejkowania ani
 nie wprowadzamy zmian automatyzacji. Uzgodnić okno bez przejść entry/exit.
 
 ## 6. Testy pozytywne, negatywne i bramka Phase 9
@@ -286,13 +273,11 @@ Nie usuwać Access, nie wprowadzać Bypass i nie otwierać originu. Nginx HA i
 WT split pozostają uruchomione: lokalne entry/exit/correction działają dalej.
 Ta operacja nie dotyka DB ani konfiguracji HA. Sprawdzić to natychmiast.
 
-Jeśli potrzeba wrócić do LAN UI: po wyłączeniu publicznej trasy przywrócić
-zapisany LAN env (INGRESS_PROFILE=lan, poprzednie origins/CORS, Secure=false,
-HSTS=0); zatrzymać HA listener Nginx, usunąć **tylko ingress drop-in**,
-`daemon-reload` i restart WT na dawnym LAN porcie. Odtworzyć kontrolowany
-LAN firewall z zapisanej kopii. Nigdy nie udostępniać tego profilu publicznie.
-Przeglądarka nadal pamięta HSTS publicznego hosta — użyć poprzedniego LAN IP/origin,
-nie próbować HTTP publicznej domeny. Konsola/SSH zapobiega trwałemu odcięciu.
+Jeśli potrzeba wrócić do LAN UI, po wyłączeniu publicznej trasy użyć
+`ingress_cutover.py rollback-lan` zgodnie z [runbookiem](phase9b2-cutover.md#6-awaria-i-pełny-rollback-do-lan).
+Nie cofać samego Nginx bez aplikacji. Firewall LAN przywraca operator z prywatnej
+kopii. Nigdy nie udostępniać profilu LAN publicznie. Użyć poprzedniego LAN originu;
+przeglądarka może nadal pamiętać HSTS publicznego hosta. Konsola pozostaje wymagana.
 
 Rollback kodu: zachować bieżącą DB i `login_attempts`, backend/frontend cofnąć
 razem przez dotychczasową procedurę; brak migracji 8B2. Nie odtwarzać starej
