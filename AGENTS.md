@@ -259,6 +259,14 @@ Production conventions include:
 
 Preserve updater safety properties, including clean-worktree checks, SQLite backup before update, fast-forward-only updates, migration safety, rollback behavior, and preservation of existing data/configuration.
 
+Updater rollback must preserve the current SQLite database and its sidecars.
+A historical backup is not proof that no later raw event, correction, session,
+user, or login-limit write exists. Never restore it automatically on an update
+failure. Before Alembic is invoked, code rollback may keep the current database.
+Once Alembic may have run, preserve candidate code and all database states,
+stop the application, and require manual compatibility/data review before any
+restart. Keep the durable startup gate fail-closed across process death/reboot.
+
 Required deployment configuration belongs in `deploy/config.manifest`.
 
 Never commit or print real secrets or webhook tokens.

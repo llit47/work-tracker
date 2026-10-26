@@ -19,6 +19,7 @@ import nginx_provision as p
 from ingress_bootstrap import Bootstrap
 from ingress_artifacts import migrate
 from env_file import parse as parse_env, EnvError
+from update_safety import GUARD_NAME, guard_owned, Layout as SafetyLayout
 
 APP = 'work-tracker.service'
 RECOVERY = 'work-tracker-ingress-recovery.service'
@@ -139,6 +140,9 @@ class Cutover:
         if self.layout.dropins.exists():
             self.layout.check(self.layout.dropins, directory=True)
             for path in self.layout.dropins.iterdir():
+                if path.name == GUARD_NAME:
+                    guard_owned(path, uid=self.layout.uid, boundary=self.layout.boundary)
+                    continue
                 p.require(path.suffix == '.conf', 'Nieznany plik w katalogu drop-in.')
                 drops[path.name] = self.snapshot(path)
         listeners = self.host.listeners()
@@ -159,7 +163,13 @@ class Cutover:
                     raise
                 time.sleep(.1)
 
+    def require_no_update(self):
+        state = getattr(self.layout, 'update_state', SafetyLayout.state)
+        p.require(not state.exists() and not state.is_symlink(),
+                  'Najpierw rozstrzygnij update-state; nie zmieniaj ingressu przy niepewnej bazie.')
+
     def activate(self, evidence, confirm, confirm_ha):
+        self.require_no_update()
         # Hold both application and 9B1 infrastructure locks across mutations.
         # Recovery is primed first to avoid a systemd dependency waiting on us.
         if self.journal.exists():
@@ -172,6 +182,7 @@ class Cutover:
         # App restart requires it; otherwise systemd would wait on our own lock.
         self.host.start_recovery()
         with self.deployment_lock(), self.coordinator_lock(), self.tool.lock():
+            self.require_no_update()  # The updater may have held the lock while we waited.
             generation, directory, config, drops = self.plan(evidence)
             confirm(config)
             # Recheck after the operator's window confirmation.
@@ -289,10 +300,12 @@ class Cutover:
             self.layout.check(self.dropin)
             p.require(p.digest(self.dropin.read_bytes()) == transaction['dropin_sha'], 'Drop-in zmieniony.')
         if self.layout.dropins.exists():
-            current = {path.name: self.snapshot(path) for path in self.layout.dropins.iterdir() if path != self.dropin}
+            guard_owned(self.layout.dropins / GUARD_NAME, uid=self.layout.uid, boundary=self.layout.boundary)
+            current = {path.name: self.snapshot(path) for path in self.layout.dropins.iterdir() if path != self.dropin and path.name != GUARD_NAME}
             p.require(current == backup['dropins'], 'Obce drop-in zmienione: odmowa nadpisania.')
 
     def rollback_locked(self, boot=False):
+        self.require_no_update()
         if not self.journal.exists():
             return
         transaction, backup = self.transaction()
@@ -366,7 +379,7 @@ class Cutover:
             p.require(content('deploy/ingress/' + name) == (p.ROOT / 'deploy/ingress' / name).read_bytes(),
                       'Update split zmienia wzorce generacji: wymagany jawny powrót do LAN.')
 
-    def verify(self):
+    def verify_configuration(self):
         transaction, _ = self.transaction()
         p.require(transaction['phase'] == 'active', 'Niedokończona transakcja: recover.')
         p.require(self.tool.prepared()[0] == transaction['generation'], 'Wskaźnik generacji zmieniony.')
@@ -376,10 +389,30 @@ class Cutover:
         active = p.read_json(self.layout.state / 'active.json')
         p.require(active['phase'] == 'active' and active['generation'] == transaction['generation'], 'Niezgodny dziennik 9B1.')
         self.verify_unchanged(*self.transaction())
+        p.require(self.layout.ingress_link.is_symlink()
+                  and os.readlink(self.layout.ingress_link) == str(self.layout.unit), 'Brak autostartu ingress.')
+        return transaction
+
+    def verify(self):
+        transaction = self.verify_configuration()
         self.tool.postcheck(transaction['config'], self.tool.unit(self.layout.state / 'generations' / transaction['generation']))
         self.host.private_probes(transaction['config'])
         p.require(self.layout.ingress_link.is_symlink()
                   and os.readlink(self.layout.ingress_link) == str(self.layout.unit), 'Brak autostartu ingress.')
+
+    def update_verify(self, timeout=60):
+        p.require(type(timeout) is int and 5 <= timeout <= 300, 'Readiness timeout musi wynosić 5..300 sekund.')
+        transaction = self.verify_configuration()  # strict static/TLS/ownership checks, once before waiting
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                self.host.update_readiness(transaction['config'], deadline=deadline)
+                break
+            except p.Pending:
+                if time.monotonic() >= deadline:
+                    raise p.Refusal(f'Timeout gotowości split po {timeout} s; aktualizacja wymaga inspekcji.') from None
+                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+        self.verify()  # full final security checks, never retried
 
 
 def terminate(*_):
@@ -428,6 +461,7 @@ def main():
     parser.add_argument('operation', choices=['bootstrap', 'configure', 'prepare', 'plan', 'activate', 'verify', 'recover', 'rollback-lan', 'update-check', 'update-verify'])
     parser.add_argument('--config', type=Path)
     parser.add_argument('--evidence', type=Path)
+    parser.add_argument('--readiness-timeout', type=int, default=60)
     parser.add_argument('--manifest-sha')
     parser.add_argument('--incoming', action='store_true')
     parser.add_argument('--boot', action='store_true', help=argparse.SUPPRESS)
@@ -459,7 +493,9 @@ def main():
             cutover.activate(args.evidence, confirmation, ha_confirmation)
         elif args.operation == 'update-check':
             cutover.check_update(args.manifest_sha, args.incoming)
-        elif args.operation in ('verify', 'update-verify'):
+        elif args.operation == 'update-verify':
+            cutover.update_verify(args.readiness_timeout)
+        elif args.operation == 'verify':
             cutover.verify()
         else:
             cutover.recover(args.boot, args.operation == 'rollback-lan')

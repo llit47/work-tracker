@@ -25,6 +25,8 @@ import tempfile
 import time
 import uuid
 
+from update_safety import GUARD_NAME, guard_owned
+
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = 'work-tracker-ingress.service'
 FIELDS = {'lan_ip', 'browser_port', 'ha_port', 'backend_port', 'public_hostname',
@@ -35,8 +37,26 @@ GATES = {'firewall_ipv4_verified', 'firewall_ipv6_verified',
          'public_route_disabled', 'console_and_lan_rollback_ready'}
 
 
+APP_PROPERTIES = {'Type': 'simple', 'User': 'work-tracker', 'Group': 'work-tracker',
+              'WorkingDirectory': '/opt/work-tracker/backend',
+              'EnvironmentFiles': '/etc/work-tracker/work-tracker.env (ignore_errors=no)',
+              'Environment': '', 'PassEnvironment': '', 'UnsetEnvironment': '',
+              'RootDirectory': '', 'RootImage': '', 'DynamicUser': 'no',
+              'NoNewPrivileges': 'yes', 'PrivateTmp': 'yes', 'ProtectSystem': 'strict',
+              'ProtectHome': 'yes', 'ReadWritePaths': '/var/lib/work-tracker',
+              'ExecStartPre': '', 'ExecStartPost': '', 'ExecCondition': '', 'ExecStop': '', 'ExecStopPost': ''}
+
+
+APP_EXEC_START = ['/opt/work-tracker/backend/.venv/bin/uvicorn', 'app.main:app', '--host', '${APP_HOST}',
+            '--port', '${APP_PORT}', '--workers', '1', '--no-proxy-headers']
+
 class Refusal(Exception):
     pass
+
+
+class Pending(Refusal):
+    """Only an absent starting process/socket or refused connection is retryable."""
+
 
 
 def require(condition, message):
@@ -52,10 +72,10 @@ def encoded(value):
     return (json.dumps(value, sort_keys=True, indent=2) + '\n').encode()
 
 
-def execute(args, **kwargs):
+def execute(args, *, timeout=30, **kwargs):
     # Never forward subprocess output: OpenSSL/nginx/systemctl may print inputs.
     try:
-        return subprocess.run(args, check=True, capture_output=True, timeout=30, **kwargs).stdout
+        return subprocess.run(args, check=True, capture_output=True, timeout=timeout, **kwargs).stdout
     except (OSError, subprocess.SubprocessError):
         raise Refusal(f'Nie powiodła się kontrola/operacja: {Path(args[0]).name}.') from None
 
@@ -136,9 +156,16 @@ class Layout:
 
 class Host:
     proc = Path('/proc')  # Test kernels may be represented by private fixture files.
+    _probe_deadline = None
+
+    def io_timeout(self, maximum):
+        if self._probe_deadline is None: return maximum
+        remaining = self._probe_deadline - time.monotonic()
+        if remaining <= 0: raise Pending('Upłynął czas gotowości usług.')
+        return min(maximum, remaining)
 
     def ingress_pid(self):
-        return execute(['systemctl', 'show', '-p', 'MainPID', '--value', SERVICE]).decode().strip()
+        return execute(['systemctl', 'show', '-p', 'MainPID', '--value', SERVICE], timeout=self.io_timeout(30)).decode().strip()
 
     def local_ip(self, address):
         interfaces = json.loads(execute(['ip', '-j', 'address', 'show']))
@@ -163,7 +190,7 @@ class Host:
 
     def listeners(self):
         result = []
-        for line in execute(['ss', '-H', '-ltnp']).decode().splitlines():
+        for line in execute(['ss', '-H', '-ltnp'], timeout=self.io_timeout(30)).decode().splitlines():
             parts = line.split()
             require(len(parts) >= 5, 'Nie można odczytać listenerów ss.')
             address, port = parts[3].rsplit(':', 1)
@@ -171,7 +198,7 @@ class Host:
         return result
 
     def active(self):
-        result = subprocess.run(['systemctl', 'is-active', SERVICE], capture_output=True, timeout=15)
+        result = subprocess.run(['systemctl', 'is-active', SERVICE], capture_output=True, timeout=self.io_timeout(15))
         require(result.returncode in (0, 3, 4), 'Nie można odczytać stanu usługi ingress.')
         return result.returncode == 0
 
@@ -221,6 +248,9 @@ class Host:
         if layout.dropins.exists():
             for path in layout.dropins.iterdir():
                 layout.check(path)
+                if path.name == GUARD_NAME:
+                    guard_owned(path, uid=layout.uid, boundary=layout.boundary)
+                    continue
                 parser = configparser.ConfigParser(interpolation=None, strict=True)
                 parser.optionxform = str
                 try:
@@ -231,21 +261,20 @@ class Host:
                         set(parser['Service']) <= {'Nice', 'CPUWeight', 'IOWeight', 'MemoryHigh', 'MemoryMax', 'TasksMax'} and
                         all('\n' not in value and '\\' not in value for value in parser['Service'].values()),
                         'Drop-in zmienia kontrakt uruchomienia; odmowa utraty ustawień administratora.')
-        properties = {'Type': 'simple', 'User': 'work-tracker', 'Group': 'work-tracker',
-                      'WorkingDirectory': '/opt/work-tracker/backend',
-                      'EnvironmentFiles': '/etc/work-tracker/work-tracker.env (ignore_errors=no)',
-                      'Environment': '', 'PassEnvironment': '', 'UnsetEnvironment': '',
-                      'RootDirectory': '', 'RootImage': '', 'DynamicUser': 'no',
-                      'NoNewPrivileges': 'yes', 'PrivateTmp': 'yes', 'ProtectSystem': 'strict',
-                      'ProtectHome': 'yes', 'ReadWritePaths': '/var/lib/work-tracker',
-                      'ExecStartPre': '', 'ExecStartPost': '', 'ExecCondition': '', 'ExecStop': '', 'ExecStopPost': ''}
+        properties = APP_PROPERTIES.copy()
+        guarded = guard_owned(layout.dropins / GUARD_NAME, uid=layout.uid, boundary=layout.boundary) if layout.dropins.exists() else False
         for key, expected in properties.items():
             actual = execute(['systemctl', 'show', '-p', key, '--value', 'work-tracker.service']).decode().strip()
+            if key == 'ExecStartPre' and guarded:
+                launch = re.findall(r'\{ path=([^;]+?) ; argv\[\]=([^;]+?) ; ignore_errors=(yes|no) ;', actual)
+                require(len(launch) == 1 and actual.count('{ path=') == 1 and launch[0] ==
+                        ('/usr/bin/python3', '/usr/bin/python3 /opt/work-tracker/deploy/update_safety.py allow-start', 'no'),
+                        'Nieprawidłowy efektywny guard update.')
+                continue
             require(actual == expected, 'Efektywne właściwości systemd poza wspieranym kontraktem.')
         command = execute(['systemctl', 'show', '-p', 'ExecStart', '--value', 'work-tracker.service']).decode().strip()
         launches = re.findall(r'\{ path=([^;]+?) ; argv\[\]=([^;]+?) ; ignore_errors=(yes|no) ;', command)
-        expected = ['/opt/work-tracker/backend/.venv/bin/uvicorn', 'app.main:app', '--host', '${APP_HOST}',
-                    '--port', '${APP_PORT}', '--workers', '1', '--no-proxy-headers']
+        expected = APP_EXEC_START
         require(len(launches) == 1 and command.count('{ path=') == 1 and command.endswith('}') and
                 launches[0][0] == expected[0] and launches[0][1].split() == expected and launches[0][2] == 'no',
                 'Niestandardowy efektywny ExecStart: odmowa usunięcia parametrów administratora.')
@@ -254,12 +283,19 @@ class Host:
 
     def request(self, address, port, source, target, *, method='GET', headers='', host='localhost', body=''):
         # No token/cookie and no valid event body. Never creates production data.
-        with socket.create_connection((address, port), timeout=3, source_address=(source, 0)) as connection:
+        end = time.monotonic() + self.io_timeout(3)
+        with socket.create_connection((address, port), timeout=self.io_timeout(3), source_address=(source, 0)) as connection:
             request = (f'{method} {target} HTTP/1.1\r\nHost: {host}\r\n{headers}'
                        f'Connection: close\r\nContent-Length: {len(body.encode())}\r\n\r\n{body}')
+            remaining = end - time.monotonic()
+            if remaining <= 0: raise TimeoutError('HTTP connect timeout')
+            connection.settimeout(remaining)
             connection.sendall(request.encode())
             line = bytearray()
             while not line.endswith(b'\r\n'):
+                remaining = end - time.monotonic()
+                if remaining <= 0: raise TimeoutError('HTTP status timeout')
+                connection.settimeout(remaining)
                 chunk = connection.recv(1)
                 require(chunk and len(line) < 8192, 'Niepełna lub zbyt długa linia statusu HTTP.')
                 line.extend(chunk)
@@ -324,8 +360,9 @@ class Host:
             with context.wrap_socket(connection, server_hostname=config['origin_tls_name']):
                 pass
 
-    def backend_ready(self, config):
-        pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
+    def backend_ready(self, config, *, starting=False):
+        pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service'], timeout=self.io_timeout(30)).decode().strip()
+        if starting and pid in ('', '0'): raise Pending('Backend jeszcze nie wystartował.')
         require(pid.isdigit() and int(pid) > 1, 'Backend systemd nie działa.')
         process = self.proc / pid
         argv = process.joinpath('cmdline').read_bytes().decode().split('\0')
@@ -341,8 +378,29 @@ class Host:
             require(environment.get(key, defaults.get(key)) == expected,
                     'Backend nie ma wymaganej konfiguracji split/Secure/origin/HSTS=0.')
         listeners = [s for s in self.listeners() if s[1] == config['backend_port']]
+        if starting and not listeners: raise Pending('Brak socketu startującego backendu.')
         require(len(listeners) == 1 and listeners[0][0] == '127.0.0.1' and f'pid={pid},' in listeners[0][2],
                 'Backend musi słuchać wyłącznie na 127.0.0.1 i należeć do usługi WT.')
+
+    def update_readiness(self, config, *, deadline=None):
+        """No TLS/ACL/file checks are retried here; final verify handles them."""
+        self._probe_deadline = deadline
+        try:
+            self.backend_ready(config, starting=True)
+            self.backend_health(config)
+            pid = self.ingress_pid()
+            listeners = [s for s in self.listeners() if s[1] in (config['ha_port'], config['browser_port'])]
+            require(all(s[0] == config['lan_ip'] and pid not in ('', '0') and f'pid={pid},' in s[2] for s in listeners),
+                    'Obcy/nieprawidłowy listener podczas startu ingressu.')
+            if not self.active() or pid in ('', '0') or len(listeners) < 2:
+                raise Pending('Ingress jeszcze nie otworzył obu listenerów.')
+            require(len(listeners) == 2, 'Nadmiarowe listenery ingressu.')
+            for port in (config['ha_port'], config['browser_port']):
+                with socket.create_connection((config['lan_ip'], port), timeout=self.io_timeout(1)): pass
+        except (FileNotFoundError, ConnectionRefusedError, TimeoutError) as error:
+            raise Pending('Usługi jeszcze nie odpowiadają.') from error
+        finally:
+            self._probe_deadline = None
 
 
 class Provisioner:

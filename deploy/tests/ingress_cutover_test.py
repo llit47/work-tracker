@@ -25,6 +25,7 @@ import ingress_bootstrap as b
 def cutover(setup, monkeypatch):
     tool, evidence, _ = prepare(setup)
     layout = tool.layout
+    layout.update_state = layout.state.parent / 'update-state.json'
     layout.deploy_lock = layout.boundary / 'deploy.lock'
     layout.database_url = c.Layout.database_url
     layout.env = layout.state.parent / 'work-tracker.env'

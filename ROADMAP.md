@@ -624,7 +624,14 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
   finalny snapshot po potwierdzeniu, wersjonowanie własnych artefaktów, ścisły kontrakt ExecStart.
 - [x] Test rzeczywistego update.sh na lokalnych repo Git, z Uvicorn/Nginx/SQLite,
   awariami i późniejszym LAN rollback; niezgodne unit/manifest/wzorce blokowane przed merge.
+- [x] P1 update readiness: ograniczone oczekiwanie na backend i proxy, osobna końcowa
+  kontrola bezpieczeństwa, test z natychmiastowym powrotem restartu systemctl.
+- [x] P1 integralność SQLite: brak automatycznego restore DB/sidecarów; przed Alembic
+  rollback kodu zachowuje bieżące zapisy, po próbie Alembic trwała blokada i ręczna
+  analiza kompatybilności. Testy przyjętych webhooków/korekt/sesji/limitera i częściowej DDL.
+- [x] Test kontraktu dostarczonego unitu z walidatorem i zbiorczy runner 0/77/FAIL.
 - [ ] Weryfikacja rzeczywistego apt/systemd/root-worker/reboot i izolacji sieci — Phase 9C.
+  Obejmuje nowy guard aktualizacji, awarie migracji i bezpieczną ręczną naprawę.
 
 Procedury i ograniczenia: [runbook 9B2](docs/deployment/phase9b2-cutover.md).
 Brak aktywacji produkcji, zmian HA/Cloudflare/firewalla ani migracji SQLite.

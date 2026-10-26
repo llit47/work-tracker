@@ -199,9 +199,17 @@ własne artefakty mają znane wersje z atomową migracją i prywatną kopią.
 Preflight odmawia niestandardowego polecenia/properties systemd. Testy wykonują
 walidatory Host na kontrolowanych obserwacjach systemd/proc, oraz rzeczywisty
 updater na lokalnych repo Git z żywymi proxy; apt/systemd pozostają symulowane.
+Readiness aktualizacji split ma osobny budżet 60 s (konfigurowalny 5–300),
+ponawia tylko przejściowy brak usług, a końcowe bramki sprawdza jednorazowo.
+Updater nigdy nie przywraca starszej SQLite/WAL/SHM. Przed Alembic może cofnąć
+kod z zachowaniem bieżącej DB; od próby Alembic błąd zachowuje kod kandydata i
+wszystkie zapisy, zatrzymuje usługę i zakłada trwałą blokadę do ręcznej naprawy.
+Dwa spójne snapshoty i dziennik identyfikują fazę, ale nie upoważniają do restore.
+Zapisane webhooki/korekty/sesje/limiter są testowane przed i po restarcie; przerwa
+HA nie ma gwarancji ponowienia żądania. Guard i realny reboot wymagają 9C.
 
 Aktualne komendy i wyniki regresji audytu: [runbook 9B2](docs/deployment/phase9b2-cutover.md#8-walidacja-i-bramka-9c).
-Pełny backend 751 PASS, deploy/ingress 225 PASS, JWT 6 PASS, frontend test/build
+Pełny backend 751 PASS, deploy/ingress 264 PASS, JWT 6 PASS, frontend test/build
 i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
 Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
 osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.

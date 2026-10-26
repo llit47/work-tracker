@@ -18,6 +18,7 @@ import time
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'deploy'))
 spec = importlib.util.spec_from_file_location('nginx_provision', ROOT / 'deploy/nginx_provision.py')
 p = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(p)

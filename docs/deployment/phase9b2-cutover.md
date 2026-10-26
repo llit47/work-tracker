@@ -111,7 +111,7 @@ efektywne ExecStart (dokładny Uvicorn, zmienne APP_HOST/PORT, jeden worker,
 no-proxy-headers), użytkownika/grupę, WorkingDirectory, EnvironmentFile, brak
 innych poleceń start/stop i inline env, oraz wymagane właściwości ochrony systemd.
 Przed pierwszym cutoverem obsługiwane są tylko dodatkowe resource drop-iny
-Nice/CPUWeight/IOWeight/MemoryHigh/MemoryMax/TasksMax; inne wymagają osobnego planu.
+Nice/CPUWeight/IOWeight/MemoryHigh/MemoryMax/TasksMax oraz dokładny własny guard aktualizacji opisany poniżej; inne wymagają osobnego planu.
 Nie przeładowuj i nie edytuj równolegle konfiguracji poza narzędziem. Po potwierdzeniu
 okna preflight i wszystkie snapshoty są zbierane ponownie.
 Zachowane są niepowiązane ustawienia i drop-iny; nie nadpisujemy zmian administratora.
@@ -197,8 +197,24 @@ unit musi pozostać identyczny z zainstalowanym i z snapshotem LAN, manifest
 z poprzednim manifestem, a wzorce ingressu z bieżącymi. Również uszkodzony backup
 lub niedokończona migracja artefaktów blokują update przed zatrzymaniem aplikacji.
 Po pobraniu kodu powtarza kontrolę przed zależnościami/migracją; po restarcie
-sprawdza split/backend/health/proxy. Dotychczasowy rollback updatera pozostaje,
-łącznie z SQLite backupem i odtworzeniem tylko po rozpoczęciu migracji.
+wykonuje osobne oczekiwanie readiness, a następnie jednorazową pełną kontrolę
+split/backend/health/proxy/TLS/ACL/uprawnień. `Type=simple` i `is-active` nie
+są dowodem gotowości. Backend może ruszyć później niż restart systemctl, a proxy
+jeszcze później. Ponawiany jest wyłącznie brak startującego procesu/socketu,
+connection refused/timeout. Zły bind, argv/env, obcy listener, HTTP status,
+zmienione pliki, TLS/CA/ACL i własność nie są naprawiane ponawianiem.
+
+Domyślny budżet readiness wynosi **60 s**, zakres **5–300 s**:
+
+```bash
+sudo /opt/work-tracker/update.sh --readiness-timeout 120
+# Sama kontrola po restarcie (bez aktualizacji):
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py update-verify --readiness-timeout 120
+```
+
+Budżet ogranicza również operacje I/O wewnątrz readiness; build/migracje oraz
+statyczna i końcowa walidacja mają własne limity operacji i są poza tym budżetem.
+Trwała niedostępność kończy się kontrolowanym błędem i stanem odzyskiwania poniżej.
 
 Zmiana kontraktu unitu/manifestu/wzorców wymaga jawnego okna: rollback-lan →
 zwykły update → bootstrap/prepare według potrzeb → nowe evidence → activate.
@@ -211,6 +227,87 @@ start usług za nim. Ingress ma ConditionPathExists na dziennik aktywacji 9B1:
 cofnięta transakcja nie uruchomi proxy nawet przy wcześniej zakolejkowanym starcie.
 Nieaktywna generacja nie ma jednostki ani linku autostartu.
 [Semantyka PartOf](https://www.freedesktop.org/software/systemd/man/systemd.unit.html#PartOf=).
+
+### Odzyskiwanie po nieudanej aktualizacji
+
+Backup nie dowodzi braku późniejszych zapisów. SQLite online backup daje spójny
+snapshot, ale działająca usługa nadal może przyjmować zdarzenia, korekty i loginy
+([SQLite backup API](https://www.sqlite.org/backup.html)). Updater nie porównuje
+samych liczników eventów ani hashy, aby zgadywać bezpieczeństwo restore.
+**Automatyczny restore SQLite/WAL/SHM i downgrade Alembic są zabronione.**
+
+Każde uruchomienie tworzy prywatny katalog
+`/var/backups/work-tracker/update-<UTC>.<ID>/`: `online.db` przed Git/build,
+`pre-migration.db` po potwierdzeniu ActiveState=inactive i MainPID=0 backendu,
+`unit.before`, kopię checkera i `transaction.json` z identyfikatorami commitów.
+Checkpoint po zatrzymaniu obejmuje zapisy przyjęte po online backupie; również
+on może być starszy od zapisów przyjętych po restarcie kandydata. Żaden nie jest
+samodzielnym upoważnieniem do zastąpienia bieżącej DB. Bieżąca baza jest nadrzędna.
+
+Przed zmianą kodu zapisywany jest fsync stanu
+`/etc/work-tracker/update-state.json` (root 0600) i dokładny własny drop-in
+`90-work-tracker-update-safety.conf` (0644, nowy katalog 0755). Guard nie zmienia
+bazowego unitu ani snapshotu LAN; cutover rozpoznaje tylko jego znane bajty.
+Nieznana treść, właściciel lub uprawnienia blokują operację zamiast przejmowania
+pliku administratora. ExecStartPre checkera działa z poświadczeniami roota,
+pozostawiając sandbox usługi ([prefiks systemd !](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#ExecStart=)).
+Checker nie odczytuje sekretów i nie zapisuje DB. Zmiany stanu są atomowe/fsync.
+
+- `preparing`: Alembic nie został wywołany. Przy obsłużonym błędzie możliwe
+  cofnięcie kodu/deps/frontend/unit i wznowienie starej usługi z **bieżącą DB**.
+  Guard jest zdejmowany dopiero po udanej kompensacji. Staged checker pozwala
+  wrócić także do wydania bez checkera, usuwając tylko dokładnie własny drop-in.
+- `migrating`: zapisane **przed** wywołaniem Alembic. Nawet przerwana migracja
+  może pozostawić DDL lub zmiany danych. Nie uruchamiamy starego kodu.
+- `verifying`: tylko żywy właściciel update (PID + czas startu procesu + boot ID)
+  upoważnia start kandydata. Zakończenie procesu/SIGKILL/reboot blokuje kolejny
+  start. Sukces końcowej weryfikacji usuwa aktywny stan, zachowując archiwum.
+- `manual`: obsłużony błąd od próby migracji, nawet no-op, restartu lub weryfikacji.
+  Zatrzymujemy backend i zależne proxy; zostają kod/deps/unit kandydata, bieżąca
+  DB i oba backupy. Nowy update, start, activate i rollback-lan są blokowane.
+- Uszkodzony/nieznany stan aktualizacji: odmowa startu/aktualizacji. Nie usuwaj
+  pliku w celu obejścia blokady. Przerwane preparing też wymaga analizy: śmierć
+  updatera nie dowodzi spójności kodu i zależności.
+
+To celowy kompromis: nawet gdy Alembic prawdopodobnie nic nie zmienił,
+automatyczna ścieżka nie dowodzi kompatybilności poprzedniego kodu. Zachowuje
+zapisy i blokuje niepewny start kosztem dłuższej przerwy. Odbiór HA jest
+niedostępny od stopu backendu do gotowości usług, a przy stanie manual do naprawy.
+HA nie musi ponowić webhooku; zaplanuj okno bez wejść/wyjść i korekt. Nie zmieniamy
+URL/token auth/konfiguracji HA i nie dodajemy kolejki.
+
+Procedura operatora na prywatnej konsoli (bez publikowania env/DB/logów):
+
+1. Potwierdź zatrzymanie backendu i zależnego ingressu. Jeżeli stop nie został
+   potwierdzony, ustal proces i zapisy przed kopiowaniem; nie uruchamiaj drugiego
+   backendu na tej samej DB. Zachowaj stan update, cutover i konfigurację.
+2. Zabezpiecz **bieżące** DB/WAL/SHM razem przy potwierdzonym braku procesów,
+   istniejące backupy i kod/deps obu wersji. Wykonaj dodatkowy spójny SQLite
+   backup bieżącego stanu do nowego prywatnego pliku; nie zastępuj żadnej kopii.
+   Waliduj integralność na kopiach, nie eksperymentuj na oryginale.
+3. Na odizolowanych klonach sprawdź `alembic_version`, rzeczywisty schemat i
+   wszystkie efekty DDL/danych przerwanej migracji. Sam numer revision ani
+   checksum nie dowodzi kompletności. Sprawdź kompatybilność kodu kandydata;
+   preferuj naprawę do przodu. Stary kod wolno wybrać wyłącznie po analizie jego
+   zgodności z **bieżącą** bazą; żadnego ślepego downgrade/reset/restore.
+4. Zachowaj wszystkie raw events, korekty, konta, sesje i próby logowania.
+   Ewentualna naprawa wymaga osobnego, przejrzanego planu i walidacji na klonie,
+   nigdy zamiany bazy starszą kopią kosztem późniejszych zapisów.
+5. Dopiero po sprawdzeniu kodu/deps/unitu i zgodności zachowanej DB administrator
+   może prywatnie zarchiwizować aktywny `update-state.json` poza jego ścieżką
+   (pozostawiając własny guard) i świadomie dopuścić restart. Narzędzie nie ma
+   automatycznego polecenia force/unblock. Najpierw napraw stan, potem zdejmuj
+   blokadę. Stan cutover pozostaje; nie edytuj jego SHA ani bramek.
+6. Zweryfikuj readiness/pełne `verify` split lub LAN health, sockety, profil,
+   tokenowe ścieżki HA i stan danych. Na produkcji tylko probes bez poprawnych
+   zdarzeń i obserwacja legalnego ruchu. Przy problemie zatrzymaj ponownie,
+   zachowaj wszystkie nowe zapisy i wróć do analizy, nie do starego restore.
+
+Guard wymaga prawdziwej weryfikacji systemd poświadczeń/sandboxu i reboot w 9C.
+Nowy updater chroni własną transakcję od begin. Starszy, już uruchomiony staged
+updater nie otrzymuje wstecz ochrony SIGKILL; nowy helper rollbacku odmawia
+restore również dla takiego wywołania, ale pierwsze przejście ze starego wydania
+musi być sprawdzone w izolowanym systemie przed użyciem produkcyjnym.
 
 ## 6. Awaria i pełny rollback do LAN
 
@@ -233,7 +330,13 @@ backendu. Tak samo działa ręczne recover. Nie oznacza to sprawnego rollbacku:
 verify oraz rollback-lan nadal odmawiają przy takim backupie, zanim zatrzymają
 usługę lub zmienią pliki. Odtwórz zaufany oryginalny backup/rozstrzygnij na konsoli;
 nie poprawiaj SHA na ślepo ani nie usuwaj journala. Dla niedokończonej transakcji
-brak poprawnego backupu pozostaje błędem recovery i blokuje niebezpieczne odtwarzanie. Nie ma automatycznego cofania już
+brak poprawnego backupu pozostaje błędem recovery i blokuje niebezpieczne odtwarzanie.
+Uszkodzony/nieznany **journal cutover** blokuje recovery i Requires backendu
+(fail-closed); brak archiwum aktywnego splitu to inny przypadek. Niedokończony
+rollback pozostawia fazę do ponowienia po usunięciu przyczyny. Awaria aplikacji
+lub updatera nie oznacza uszkodzenia jej danych i nie upoważnia do restore DB.
+Stan update wymagający naprawy ma odrębny guard opisany wyżej.
+Nie ma automatycznego cofania już
 zatwierdzonego split z powodu awarii browsera/certyfikatu.
 
 Rollback usuwa własny link autostartu, zatrzymuje własny ingress, usuwa jego unit,
@@ -295,6 +398,12 @@ Przed rzeczywistą aktywacją operator wykonuje na odizolowanym Debianie/Ubuntu:
 - [ ] Istniejący obcy Nginx/policy: odmowa lub odczyt bez zmian cudzych usług/plików.
 - [ ] Rzeczywisty systemd: root master/www-data worker, uprawnienia, sandbox,
       stop/restart updatera, boot aktywnego split i nieaktywnego przygotowania.
+- [ ] Guard update ExecStartPre z prefiksem !, odczyt stanu 0600 i sandbox;
+      SIGKILL/zasilanie w preparing/migrating/verifying, brak startu starego kodu,
+      wznowienie dopiero po naprawie oraz zgodny update → rollback-lan.
+- [ ] Opóźniony start backendu/proxy i timeout; przyjęte przed/po restarcie raw
+      events, korekty, sesje/limiter zachowane przy błędzie. Ręczna naprawa
+      częściowo wykonanej migracji na izolowanym klonie bez restore starszej DB.
 - [ ] SIGKILL/zasilanie na każdym etapie, restart backendu/proxy, konflikt IPv4/IPv6,
       pełny i powtarzalny rollback z niedostępnym certyfikatem i zachowaną DB.
 - [ ] Potwierdzone HA/connector peery bez wspólnego SNAT, ACL i skuteczny firewall
@@ -313,10 +422,11 @@ Aktualna walidacja lokalna po audycie:
 | Zestaw | Wynik |
 |---|---|
 | Backend, pełny pytest | **PASS: 751**, 27 istniejących ostrzeżeń Alembic |
-| Deploy/ingress, pełny zestaw poniżej | **PASS: 225** |
+| Deploy/ingress, pełny zestaw poniżej | **PASS: 264** |
 | 9B1 provisioning / 9B2 cutover | **PASS: 55 / 48** |
-| Regresje audytu / walidatory Host | **PASS: 42 / 59** |
-| Rzeczywisty update.sh + LAN rollback na lokalnym Git/proxy/SQLite | **PASS: 6**, systemd/build/package adapters symulowane |
+| Regresje audytu / walidatory Host | **PASS: 42 / 61** |
+| Rzeczywisty update.sh, awarie/SQLite i LAN rollback na lokalnym Git/proxy | **PASS: 12**, systemd/build/package adapters symulowane, rzeczywisty Alembic/SQLite/SIGKILL |
+| Osobna readiness / trwały guard i runner SKIP | **PASS: 10 / 21** |
 | Privacy / proxy security / ingress config / cloudflared config | **PASS: 3 / 8 / 3 / 1** |
 | JWTValidator cloudflared | **PASS: 6 scenariuszy**, lokalny JWKS TLS, bez tunelu |
 | Frontend npm test i npm run build | **PASS** |
@@ -324,6 +434,7 @@ Aktualna walidacja lokalna po audycie:
 | bash syntax, py_compile, diff-check, Alembic heads | **PASS**, head nadal 20261025_08 |
 | backend_package_install_test.sh | **BLOCKED**, brak ensurepip/python3-venv |
 | service_user_runtime_test.sh | **SKIP / NOT RUN**, brak roota, exit **77**, nie PASS |
+| Zbiorczy runner shell | dostępne: **PASS=3 SKIP=1 FAIL=0**, exit 0; pełny: exit 1, **PASS=3 SKIP=1 FAIL=1**, błąd jest powyższym BLOCKED ensurepip |
 | Rzeczywiste apt/systemd/root-worker/reboot/firewall/probes | **NOT RUN / REQUIRES 9C** |
 | Access/IdP/Edge i publiczny rollout | **NOT RUN / 9D** |
 
@@ -334,6 +445,7 @@ WORK_TRACKER_NGINX_BIN=<NGINX_BIN> WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN
   backend/.venv/bin/pytest deploy/tests/nginx_provision_test.py \
   deploy/tests/ingress_cutover_test.py deploy/tests/ingress_audit_test.py \
   deploy/tests/host_validation_test.py deploy/tests/split_update_test.py \
+  deploy/tests/update_readiness_test.py deploy/tests/update_safety_test.py \
   deploy/tests/infrastructure_privacy_test.py deploy/tests/ingress_security_test.py \
   deploy/tests/ingress_config_test.py deploy/tests/cloudflared_config_test.py -q
 ```
@@ -342,11 +454,11 @@ Walidatory Host wykonują właściwy kod na kontrolowanych obserwacjach systemd 
 plikach proc. HTTP status fragmentation korzysta z prawdziwego TCP. Test updatera
 uruchamia staged update.sh, realne lokalne Git fetch/FF/reset, SQLite backup,
 Uvicorn/Nginx i tokenowe webhooki/korekty na tymczasowej DB. Uprawnienia systemowe,
-systemd, instalacja zależności, build oraz wywołania Alembic w tym teście mają adaptery;
-pełne migracje są osobno w backend pytest. Nie są to testy produkcyjnego boot.
+systemd, instalacja zależności i build mają adaptery. Alembic uruchamia rzeczywiste
+migracje SQLite, w tym testową częściową DDL; pełne migracje są też w backend pytest. Nie są to testy produkcyjnego boot.
 Migracje artefaktów sprawdzają ponowienie po błędzie przed/po atomowej wymianie;
-cutover nadal sprawdza rzeczywiste SIGTERM/SIGKILL osobnego procesu.
-Nie ma końcowych FAIL; brak możliwości wykonania testu nie oznacza PASS.
+cutover nadal sprawdza rzeczywiste SIGTERM/SIGKILL osobnego procesu. Updater dodatkowo otrzymuje SIGKILL po zaakceptowanym zapisie HA; bieżące wiersze pozostają, a kolejny start jest blokowany.
+Brak końcowych błędów wykonanych testów funkcjonalnych. Pełny runner shell raportuje FAIL dla niedostępnego prerequisite ensurepip (BLOCKED powyżej); nie zamieniamy tego kodu na PASS.
 
 ## 9. Rozstrzygnięcie audytu
 
@@ -356,7 +468,10 @@ Nie ma końcowych FAIL; brak możliwości wykonania testu nie oznacza PASS.
 | P1 finalny snapshot | **FIXED**: wszystkie wyniki drugiego planu przypisane; ponowna kontrola recovery i ochrona zmian po snapshot |
 | P2 znane wersje własnych artefaktów | **FIXED**: dokładne v1/v2, prywatny backup i dziennik, atomowe ponowienie; obce/nieznane pliki odrzucane |
 | P2 ExecStart/properties | **FIXED**: ścisły kontrakt pliku i obserwowanej konfiguracji, resource overrides tylko z jawnej listy; odmowa utraty flag |
-| P2 updater w split | **FIXED**: zgodny update zachowuje unit/archiwum/generację, niezgodny blokowany przed merge; test success, build/migration/restart failure i LAN rollback |
+| P2 updater w split | **FIXED**: zgodny update zachowuje unit/archiwum/generację, niezgodny blokowany przed merge; sukces i błąd przed Alembic umożliwiają LAN rollback, błąd od Alembic wymaga najpierw naprawy |
+| P1 update readiness | **FIXED**: oddzielny limit 60 s (5–300), retry tylko Pending, pełna walidacja raz po gotowości; restart w teście wraca natychmiast |
+| P1 SQLite rollback | **FIXED**: nigdy automatycznie nie odtwarza DB/sidecarów; przed Alembic cofa kod z bieżącą DB, od próby Alembic zatrzymuje i blokuje start do ręcznej naprawy; testy prawdziwych zapisów i częściowej migracji |
+| Kontrakt unitu / runner SKIP | **FIXED**: test czyta dostarczony unit i porównuje walidator; zbiorczy runner rozróżnia 0/77/inne pod set -e |
 | Pokrycie Host | **FIXED**: pozytywne/negatywne testy wszystkich wskazanych metod; obserwacje systemd/proc są kontrolowane, a nie dowodem realnego systemd |
 | HTTP / umask / EnvironmentFile | **FIXED**: pełna ograniczona linia statusu, nowe katalogi 0755, dekodowanie quotes/escaping bez shella i ujawniania wartości |
 | Diagnostyka apt / SKIP | **FIXED**: etap i kod/timeout, operator naprawia dpkg; brak roota zwraca 77 |

@@ -272,3 +272,44 @@ def test_resource_continuation_cannot_hide_launch_override(host, systemd_layout)
     p.atomic(layout.dropins / 'custom.conf', b'[Service]\nNice=1\n  ExecStart=custom-command\n', 0o644)
     with pytest.raises(p.Refusal):
         host.app_layout_ready(layout)
+
+
+def test_validator_contract_matches_the_actual_shipped_systemd_unit():
+    """INI contract, not proof of systemd's production interpretation (9C)."""
+    import configparser
+    import shlex
+    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    parser.optionxform = str
+    parser.read(p.ROOT / 'deploy/work-tracker.service')
+    service = parser['Service']
+    expected = p.APP_PROPERTIES
+    # Any new launch/sandbox directive requires an explicit validator review.
+    assert set(service) == {'Type', 'User', 'Group', 'WorkingDirectory', 'EnvironmentFile', 'ExecStart',
+        'Restart', 'RestartSec', 'UMask', 'NoNewPrivileges', 'PrivateTmp', 'ProtectSystem', 'ProtectHome', 'ReadWritePaths'}
+    for name in ('Type', 'User', 'Group', 'WorkingDirectory', 'ProtectSystem', 'ReadWritePaths'):
+        assert service[name] == expected[name]
+    for name in ('NoNewPrivileges', 'PrivateTmp', 'ProtectHome'):
+        assert {'true':'yes', 'false':'no'}.get(service[name], service[name]) == expected[name]
+    assert service['EnvironmentFile'] + ' (ignore_errors=no)' == expected['EnvironmentFiles']
+    assert shlex.split(service['ExecStart']) == list(p.APP_EXEC_START)
+    for name in ('Environment', 'PassEnvironment', 'UnsetEnvironment', 'RootDirectory', 'RootImage',
+                 'ExecStartPre', 'ExecStartPost', 'ExecCondition', 'ExecStop', 'ExecStopPost'):
+        assert service.get(name, '') == expected[name] == ''
+    assert service.get('DynamicUser', 'no') == expected['DynamicUser']
+    assert service['UMask'] == '0027' and service['Restart'] == 'on-failure' and service['RestartSec'] == '5s'
+
+
+def test_app_layout_recognizes_only_exact_loaded_update_guard(host, systemd_layout):
+    import update_safety as u
+    layout, props = systemd_layout
+    layout.dropins.mkdir(mode=0o755)
+    guard = layout.dropins / u.GUARD_NAME
+    p.atomic(guard, u.GUARD, 0o644)
+    props['DropInPaths'] = str(guard)
+    props['ExecStartPre'] = ('{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 '
+        '/opt/work-tracker/deploy/update_safety.py allow-start ; ignore_errors=no ; pid=1234 ; status=0/0 }')
+    host.app_layout_ready(layout)
+    props['ExecStartPre'] = ''
+    with pytest.raises(p.Refusal): host.app_layout_ready(layout)
+    p.atomic(guard, u.GUARD + b'# administrator edit\n', 0o644)
+    with pytest.raises(u.Refusal): host.app_layout_ready(layout)

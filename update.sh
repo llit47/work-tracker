@@ -21,6 +21,13 @@ readonly SERVICE_FILE="/etc/systemd/system/work-tracker.service"
 readonly SERVICE_USER="work-tracker"
 readonly MANIFEST_FILE="${APP_DIR}/deploy/config.manifest"
 
+readiness_timeout=60
+if (($#)); then
+    [[ "$#" == 2 && "$1" == --readiness-timeout && "$2" =~ ^[1-9][0-9]{0,2}$ ]] || { printf 'Usage: update.sh [--readiness-timeout 5..300]\n' >&2; exit 1; }
+    readiness_timeout="$2"
+fi
+((readiness_timeout >= 5 && readiness_timeout <= 300)) || { printf 'Readiness timeout must be 5..300 seconds.\n' >&2; exit 1; }
+
 repository_was_clean=false
 repository_changed=false
 migration_started=false
@@ -30,6 +37,8 @@ previous_commit=""
 unit_backup=""
 ingress_update=false
 previous_manifest_sha=""
+safety_runner=""
+update_directory=""
 
 [[ -f "${APP_DIR}/deploy/update_rollback.sh" ]] || {
     printf '[work-tracker] ERROR: Missing rollback helpers.\n' >&2
@@ -46,9 +55,8 @@ on_exit() {
         perform_update_rollback \
             "${APP_DIR}" "${previous_commit}" "${repository_was_clean}" "${migration_started}" \
             "${DATABASE_FILE}" "${backup_file}" "${SERVICE_FILE}" "${unit_backup}" \
-            "${SERVICE_USER}" "${service_was_active}"
+            "${SERVICE_USER}" "${service_was_active}" "${safety_runner}"
     fi
-    [[ -z "${unit_backup}" ]] || rm -f "${unit_backup}"
     rm -f "${WORK_TRACKER_STAGED_UPDATER}"
     exit "${exit_status}"
 }
@@ -73,6 +81,7 @@ source "${APP_DIR}/deploy/common.sh"
 require_supported_os
 acquire_deployment_lock
 check_ingress_update_state
+python3 "${APP_DIR}/deploy/update_safety.py" check
 if [[ -e /etc/work-tracker/ingress/cutover.json || -L /etc/work-tracker/ingress/cutover.json ]]; then
     ingress_update=true
     previous_manifest_sha="$(sha256sum "${MANIFEST_FILE}" | cut -d ' ' -f 1)"
@@ -90,13 +99,16 @@ git ls-remote --exit-code origin refs/heads/main >/dev/null
 
 install -d -o root -g root -m 0700 "${BACKUP_DIR}"
 backup_timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
-backup_file="${BACKUP_DIR}/work_tracker-${backup_timestamp}.db"
-log "Creating SQLite backup: ${backup_file}"
+update_directory="$(mktemp -d "${BACKUP_DIR}/update-${backup_timestamp}.XXXXXX")"
+backup_file="${update_directory}/online.db"
+log "Creating online SQLite backup: ${backup_file} (never used for automatic restore)."
 sqlite3 "${DATABASE_FILE}" ".backup '${backup_file}'"
 chmod 0600 "${backup_file}"
-
-unit_backup="$(mktemp /tmp/work-tracker-service.XXXXXX)"
+safety_runner="${update_directory}/update_safety.py"
+install -m 0700 "${APP_DIR}/deploy/update_safety.py" "${safety_runner}"
+unit_backup="${update_directory}/unit.before"
 cp -p "${SERVICE_FILE}" "${unit_backup}"
+chmod 0600 "${unit_backup}"
 if systemctl is-active --quiet work-tracker.service; then
     service_was_active=true
 fi
@@ -107,8 +119,13 @@ git fetch origin main
 if [[ "${ingress_update}" == true ]]; then
     python3 "${APP_DIR}/deploy/ingress_cutover.py" update-check --manifest-sha "${previous_manifest_sha}" --incoming
 fi
-git merge --ff-only origin/main
+candidate_commit="$(git rev-parse origin/main)"
+python3 "${safety_runner}" begin --previous "${previous_commit}" --candidate "${candidate_commit}" \
+    --directory "${update_directory}" --owner-pid "$$"
+# From this point, a killed updater leaves a durable startup gate.
 repository_changed=true
+systemctl daemon-reload
+git merge --ff-only origin/main
 new_commit="$(git rev-parse HEAD)"
 
 [[ -f "${MANIFEST_FILE}" ]] || fail "Missing configuration manifest in the updated code."
@@ -153,8 +170,17 @@ if [[ "${ingress_update}" != true ]]; then
 fi
 systemctl daemon-reload
 systemctl stop work-tracker.service
-log "Applying database migrations."
+# Stop returns only after termination; require explicit inactive state and no
+# MainPID before the migration checkpoint. This is not used as a restore proof.
+[[ "$(systemctl show -p ActiveState --value work-tracker.service)" == inactive ]] || fail "Backend stop not confirmed."
+[[ "$(systemctl show -p MainPID --value work-tracker.service)" == 0 ]] || fail "Backend PID remains after stop."
+checkpoint_file="${update_directory}/pre-migration.db"
+log "Creating SQLite checkpoint after service stop: ${checkpoint_file}"
+sqlite3 "${DATABASE_FILE}" ".backup '${checkpoint_file}'"
+chmod 0600 "${checkpoint_file}"
+log "Applying database migrations. Any later failure requires manual recovery; no SQLite restore."
 migration_started=true
+python3 "${safety_runner}" migrating
 (
     cd "${APP_DIR}/backend"
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="${database_url}" .venv/bin/alembic upgrade head
@@ -164,11 +190,14 @@ migration_status="$(
     runuser -u "${SERVICE_USER}" -- env DATABASE_URL="${database_url}" .venv/bin/alembic current
 )"
 
+python3 "${safety_runner}" verifying
 systemctl restart work-tracker.service
-systemctl is-active --quiet work-tracker.service || fail "Service failed to start after update."
 if [[ "${ingress_update}" == true ]]; then
-    python3 "${APP_DIR}/deploy/ingress_cutover.py" update-verify
+    python3 "${APP_DIR}/deploy/ingress_cutover.py" update-verify --readiness-timeout "${readiness_timeout}"
+else
+    systemctl is-active --quiet work-tracker.service || fail "Service failed to start after update."
 fi
+python3 "${safety_runner}" commit
 
 printf '\nWork Tracker update completed.\n'
 printf 'Previous commit: %s\n' "${previous_commit}"

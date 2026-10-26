@@ -17,7 +17,7 @@ NETWORK_DEFINITIONS = {'10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'}
 # Public documentation/provider endpoints, not deployment inventory.
 PUBLIC_DOC_HOSTS = {'github.com', 'raw.githubusercontent.com', 'registry.npmjs.org',
                     'deb.nodesource.com', 'developers.cloudflare.com', 'developers.google.com',
-                    'nginx.org', 'www.debian.org', 'www.freedesktop.org',
+                    'nginx.org', 'www.debian.org', 'www.freedesktop.org', 'www.sqlite.org',
                     'cheatsheetseries.owasp.org', 'opencollective.com', 'tidelift.com'}
 
 
