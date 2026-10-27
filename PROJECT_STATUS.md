@@ -23,10 +23,10 @@
   - **Phase 8B1 — Browser security hardening: DONE (operator-confirmed)**
     - **Phase 8B1-A — Lightweight Browser Security: DONE (operator-confirmed)**
     - **Phase 8B1-B — Simple Login Rate Limiting: DONE (operator-confirmed)**
-  - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (local X2 BLOCKED)**
+  - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (X2 runtime NOT RUN without root; package install PASS)**
 - **Phase 9 — Cloudflare public deployment: IN PROGRESS (tylko przygotowanie)**
   - **Phase 9B1 — Safe Nginx provisioning: DONE (lokalnie, bez aktywacji)**
-  - **Phase 9B2 — Fresh install/private cutover: NEXT**
+  - **Phase 9B2 — Fresh install/private cutover: IN PROGRESS (implemented / locally tested; real 9C NOT VERIFIED)**
   - **Phase 9C/9D — Real infrastructure/public rollout: PLANNED**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
@@ -129,9 +129,9 @@ Aktualne endpointy:
 
 ## Production/deployment state
 
-- Środowisko: Debian 13 LXC na Proxmox, obecnie wyłącznie w sieci LAN; brak publicznego UI, Cloudflare Tunnel i Google Calendar integration.
-- Operator potwierdził baseline main `de963ae`, head `20261025_08`, wdrożone 8B1-A/B i pozytywne testy pakietu/runtime; to nie samodzielny test Codexa. Cloudflared jest w osobnym LXC; WT nie ma aktywnej trasy publicznej.
-- Proces: `work-tracker.service`; autostart po restarcie LXC i restart po awarii.
+- Wspierane wdrożenie: Debian/Ubuntu, obecnie LAN; publiczny routing i Calendar pozostają osobnymi etapami.
+- Testy operatora nie zastępują lokalnej walidacji zmienionego kodu ani bramek infrastruktury.
+- Proces: `work-tracker.service`; autostart po restarcie systemu i restart po awarii.
 - Instalacja: `install.sh`.
 - Aktualizacja: `update.sh` z backupem SQLite i rollbackiem.
 - Kod: `/opt/work-tracker`.
@@ -181,29 +181,68 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 9B1 — gotowy fundament Nginx; następny etap 9B2.**
+**Phase 9B2 — implemented / locally tested; niezależna weryfikacja i 9C pozostają wymagane.**
 
-Narzędzie `deploy/nginx_provision.py` przygotowuje nieaktywne generacje poza
-checkoutem, zachowując działający port HA/Uvicorn. Oferuje read-only plan,
-walidację i verify oraz jawne prepare/activate/rollback osobnej usługi.
-TLS/CA/SAN, IP/porty/hostnames, permissions, backupy i dziennik są kontrolowane.
-Aktywacja wymaga świeżego raportu operatora o izolacji IPv4/IPv6, źródłach,
-negatywnych probes i wyłączonej publicznej trasie oraz gotowego procesu split.
-Nie instaluje pakietów, nie przełącza aplikacji, nie wykonuje enable/autostartu.
-LAN/updater, DB i mechanizmy aplikacji pozostają bez zmian.
+9B2 rozszerza generacje, walidację i bramki 9B1 o opcjonalny bootstrap Nginx
+oraz transakcję całej aplikacji. Instalator nadal domyślnie uruchamia LAN;
+HTTPS przygotowuje nieaktywną generację. Oddzielne activate wymaga świeżych
+dowodów izolacji obu rodzin, potwierdzenia okna i rzeczywistego wejścia z HA.
+Trwały journal, kopie env/unit/drop-in i idempotentny rollback przywracają
+poprzedni LAN bez odtwarzania DB. Ordered recovery obsługuje przerwany cutover
+przy boot, a zatwierdzony ingress startuje i restartuje wraz z backendem.
+Updater zachowuje profil, generację i bazowy unit, współdzieli blokadę operacji
+systemowych. Niezgodny unit/manifest/wzorce blokuje przed merge i restartem.
+Aktywny recovery nie zależy od archiwum: brak/uszkodzenie backupu zgłasza alarm
+utraty rollbacku bez zatrzymania aplikacji. Jawny rollback nadal rygorystycznie
+sprawdza journal, hash, uprawnienia i backup. Snapshot po potwierdzeniu jest świeży,
+własne artefakty mają znane wersje z atomową migracją i prywatną kopią.
+Preflight odmawia niestandardowego polecenia/properties systemd. Testy wykonują
+walidatory Host na kontrolowanych obserwacjach systemd/proc, oraz rzeczywisty
+updater na lokalnych repo Git z żywymi proxy; apt/systemd pozostają symulowane.
+Readiness aktualizacji split ma osobny budżet 60 s (konfigurowalny 5–300),
+ponawia tylko przejściowy brak usług, a końcowe bramki sprawdza jednorazowo.
+Updater nigdy nie przywraca starszej SQLite/WAL/SHM. Przed Alembic może cofnąć
+kod z zachowaniem bieżącej DB; od próby Alembic błąd zachowuje kod kandydata i
+wszystkie zapisy, zatrzymuje usługę i zakłada trwałą blokadę do ręcznej naprawy.
+Dwa spójne snapshoty i dziennik identyfikują fazę, ale nie upoważniają do restore.
+Zapisane webhooki/korekty/sesje/limiter są testowane przed i po restarcie; przerwa
+HA nie ma gwarancji ponowienia żądania. Guard i realny reboot wymagają 9C.
+Pierwsze przejście z 5d974b1 ma oddzielny bootstrap z przypiętym SHA/ref,
+sprawdzeniem starego hosta i trwałym checkerem poza checkoutem. Guard i journal
+poprzedzają FF/Alembic; exec zachowuje PID i blokadę. Zwykły stary updater
+pozostaje niedopuszczalną ścieżką pierwszego upgrade. Regresje używają faktycznego
+starego checkoutu/updatera, SQLite WAL, Alembic i SIGKILL; systemd jest symulowany.
+Readiness obejmuje pre-exec/niepełne argv/env i inicjalizację workera, z dwoma
+zgodnymi obrazami przed jednorazową walidacją; timeout rozróżnia brak gotowości
+i niezgodny runtime. Znana v1 checkera pozostaje zgodna przez FF i kończy starą
+transakcję; osobna migracja-checker v1 → v2 pod blokadą zachowuje guard, backup
+i trwały journal. First-upgrade dopuszcza tylko main, sprawdza readonly target
+manifest przed guardem/FF/Alembic i nie dopisuje env w trakcie transakcji.
 
-55 testów provisioning z prawdziwym Nginx 1.26.3/OpenSSL PASS; systemd i dowody
-sieciowe symulowane, prywatne adresy mapowane na loopback. Nie ma dowodu
-produkcyjnego firewalla, globalnego IPv6, source IP HA ani cutover w LXC.
-9B2 obejmie instalator/bootstrap pakietów i pełną transakcję aplikacji;
-9C rzeczywistą prywatną infrastrukturę i domknięcie X2, 9D publiczny rollout.
-Szczegóły i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
+Aktualne komendy i wyniki regresji audytu: [runbook 9B2](docs/deployment/phase9b2-cutover.md#8-walidacja-i-bramka-9c).
+Zwykły update LAN również wymaga HTTP 200 przed commit, w tym samym budżecie
+60 s (5–300 s); reset/broken pipe/niepełny status EOF są ponawiane, a końcowa
+walidacja pozostaje ścisła i jednorazowa. Timeout nie odtwarza SQLite.
+Readonly preflight istniejącego bindu LAN współdzieli reguły readiness; nazwy
+takie jak `localhost` są odrzucane przed guardem/FF/stopem/Alembic, bez zmiany env.
+Pełny backend 751 PASS, deploy/ingress 374 PASS, JWT 6 PASS, frontend test/build
+i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
+Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
+osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.
+Rzeczywista instalacja/upgrade pakietów, uprawnienia root/www-data, systemd,
+reboot, źródła HA/SNAT, skuteczny firewall IPv4/IPv6 i negatywne próby pozostają
+**BLOCKED / REQUIRES 9C**, X2 Phase 8B2 również wymaga osobnej kontroli.
+9D obejmuje osobno zatwierdzony publiczny rollout. Nie dotykano produkcji.
 
-**Phase 8B2 — implementacja ingress/readiness gotowa; lokalna walidacja X2 BLOCKED.**
+Usunięto dane infrastruktury z bieżących przykładów/testów/docs; przykłady są
+neutralne, scanner chroni prywatność. Historii Git nie przepisano.
+[Runbook 9B2](docs/deployment/phase9b2-cutover.md) i
+[fundament 9B1](docs/deployment/phase9b1-nginx.md) zawierają procedury i granice dowodów.
 
-8B1-A/B są DONE na podstawie potwierdzenia operatora: Debian 13 LXC na Proxmox,
-main de963ae, head 20261025_08, jeden Uvicorn worker/no-proxy-headers,
-package-install i service-user runtime pozytywne, działające UI/login/dane.
+**Phase 8B2 — implementacja ingress/readiness gotowa; X2 runtime wymaga roota/9C, package-install PASS lokalnie.**
+
+8B1-A/B są DONE na podstawie potwierdzenia operatora.
+Wymagany jest jeden Uvicorn worker/no-proxy-headers i kontrola pakietu/runtime.
 Codex nie łączył się z produkcyjnym LXC i nie deklaruje własnej walidacji tam.
 
 8B2 dostarcza opt-in INGRESS_PROFILE=split, domyślnie nieaktywne. Nginx w WT LXC
@@ -228,9 +267,8 @@ Manifest ma dwa opcjonalne klucze, nie wymusza zmiany obecnego LAN. Brak migracj
 Lokalnie: pełny backend 751 PASS (w tym C1/C2 policy/X1 i Alembic), frontend
 test/build PASS, prawdziwy Nginx→Uvicorn TCP/TLS 8 PASS, rzeczywisty walidator
 cloudflared RSA/JWKS 6 PASS, config templates/binarka 4 PASS, config/updater/
-rollback/layout/bash PASS. **BLOCKED:** package-install zatrzymał się na braku
-ensurepip; runtime service user zgłosił skip, brak roota/no-new-privileges.
-Nie zaliczamy tych dwóch jako PASS; 8B2 pozostaje IN PROGRESS do ich wykonania.
+rollback/layout/bash PASS. Package-install wcześniej był BLOCKED przez ensurepip; bieżący przebieg **PASS**. Runtime service user nadal SKIP/NOT RUN bez roota.
+Runtime SKIP nie jest zaliczany jako PASS; 8B2 pozostaje IN PROGRESS do rzeczywistej walidacji root/systemd/9C.
 
 Publiczne testy Edge/Access (w tym wykluczony użytkownik), effective remote
 config, prawdziwe IP/Workers/Pseudo IPv4, docelowy firewall/permissions i wyłączenie

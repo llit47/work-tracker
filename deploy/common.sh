@@ -78,9 +78,7 @@ env_has_key() {
 read_env_value() {
     local env_file="$1"
     local key="$2"
-    local line
-    line="$(grep -m1 -E "^${key}=" "${env_file}")" || return 1
-    REPLY="${line#*=}"
+    REPLY="$(python3 "${WORK_TRACKER_DEPLOY_DIR}/env_file.py" "${env_file}" "${key}")"
 }
 
 validate_config_value() {
@@ -224,4 +222,52 @@ validate_required_config() {
             "${ingress_profile}" "${browser_origins}" "${cors_origins}" "${cookie_secure}" "${hsts_seconds}" \
             || fail "Inconsistent ingress/browser configuration."
     fi
+}
+
+# Installer choice is deliberately separate from the persisted app profile.
+choose_ingress_mode() {
+    require_prompt_fd
+    printf 'Tryb instalacji: LAN HTTP (lan, domyślny) albo przygotowanie HTTPS / Split Ingress (https).\n'
+    while true; do
+        printf 'Tryb [lan]: '
+        IFS= read -r REPLY <&3 || fail "Brak wyboru trybu instalacji."
+        REPLY="${REPLY:-lan}"
+        [[ "${REPLY}" == lan || "${REPLY}" == https ]] && return 0
+        printf 'Wpisz lan albo https.\n' >&2
+    done
+}
+
+prepare_optional_ingress() {
+    local app_dir="$1" mode="$2"
+    [[ "${mode}" == https ]] || return 0
+    log "HTTPS: przygotowanie nieaktywnego ingressu. Działający LAN pozostaje do jawnego cutoveru."
+    python3 "${app_dir}/deploy/ingress_cutover.py" bootstrap || return 1
+    python3 "${app_dir}/deploy/ingress_cutover.py" configure || return 1
+    log "Przygotowano HTTPS. Brak aktywacji, publicznej trasy, Access i konfiguracji firewalla."
+}
+
+check_ingress_update_state() {
+    local journal="${1:-/etc/work-tracker/ingress/cutover.json}"
+    [[ ! -e "${journal}" && ! -L "${journal}" ]] && return 0
+    python3 - "${journal}" <<'PYTHON'
+import json
+import pathlib
+import sys
+try:
+    path = pathlib.Path(sys.argv[1])
+    assert not path.is_symlink()
+    state = json.loads(path.read_bytes())
+    assert state['phase'] == 'active'
+except (OSError, ValueError, KeyError, AssertionError):
+    print('Niedokończony cutover: przed update wykonaj ingress_cutover.py recover.', file=sys.stderr)
+    sys.exit(1)
+PYTHON
+}
+
+acquire_deployment_lock() {
+    local lock="${1:-/run/work-tracker-deploy.lock}"
+    [[ ! -L "${lock}" && ( ! -e "${lock}" || -f "${lock}" ) ]] || fail "Invalid deployment lock."
+    exec 9>"${lock}"
+    chmod 0600 "${lock}"
+    flock -n 9 || fail "Another update/cutover is running."
 }

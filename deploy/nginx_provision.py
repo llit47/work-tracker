@@ -5,6 +5,7 @@ No package installation, application changes, generic nginx reloads or public
 routing. CLI paths are fixed; tests inject a Layout/Host without a CLI bypass.
 """
 import argparse
+import configparser
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
@@ -24,6 +25,8 @@ import tempfile
 import time
 import uuid
 
+from update_safety import GUARD_NAME, BOOTSTRAP_GUARD, guard_owned
+
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = 'work-tracker-ingress.service'
 FIELDS = {'lan_ip', 'browser_port', 'ha_port', 'backend_port', 'public_hostname',
@@ -34,8 +37,35 @@ GATES = {'firewall_ipv4_verified', 'firewall_ipv6_verified',
          'public_route_disabled', 'console_and_lan_rollback_ready'}
 
 
+APP_PROPERTIES = {'Type': 'simple', 'User': 'work-tracker', 'Group': 'work-tracker',
+              'WorkingDirectory': '/opt/work-tracker/backend',
+              'EnvironmentFiles': '/etc/work-tracker/work-tracker.env (ignore_errors=no)',
+              'Environment': '', 'PassEnvironment': '', 'UnsetEnvironment': '',
+              'RootDirectory': '', 'RootImage': '', 'DynamicUser': 'no',
+              'NoNewPrivileges': 'yes', 'PrivateTmp': 'yes', 'ProtectSystem': 'strict',
+              'ProtectHome': 'yes', 'ReadWritePaths': '/var/lib/work-tracker',
+              'ExecStartPre': '', 'ExecStartPost': '', 'ExecCondition': '', 'ExecStop': '', 'ExecStopPost': ''}
+
+
+APP_EXEC_START = ['/opt/work-tracker/backend/.venv/bin/uvicorn', 'app.main:app', '--host', '${APP_HOST}',
+            '--port', '${APP_PORT}', '--workers', '1', '--no-proxy-headers']
+
 class Refusal(Exception):
     pass
+
+
+class Pending(Refusal):
+    """An absent starting process/socket or incomplete initialization."""
+
+
+class RuntimeMismatch(Pending):
+    """Dynamic argv/env/worker snapshot has not reached the required contract.
+
+    May be inherited pre-exec state. If it persists to the deadline it is an
+    invalid runtime, not a successful/merely slow start. Never used for files,
+    TLS, policy, master UID or a wrong/foreign listening socket.
+    """
+
 
 
 def require(condition, message):
@@ -51,10 +81,10 @@ def encoded(value):
     return (json.dumps(value, sort_keys=True, indent=2) + '\n').encode()
 
 
-def execute(args, **kwargs):
+def execute(args, *, timeout=30, **kwargs):
     # Never forward subprocess output: OpenSSL/nginx/systemctl may print inputs.
     try:
-        return subprocess.run(args, check=True, capture_output=True, timeout=30, **kwargs).stdout
+        return subprocess.run(args, check=True, capture_output=True, timeout=timeout, **kwargs).stdout
     except (OSError, subprocess.SubprocessError):
         raise Refusal(f'Nie powiodła się kontrola/operacja: {Path(args[0]).name}.') from None
 
@@ -134,16 +164,42 @@ class Layout:
 
 
 class Host:
+    proc = Path('/proc')  # Test kernels may be represented by private fixture files.
+    _probe_deadline = None
+
+    def io_timeout(self, maximum):
+        if self._probe_deadline is None: return maximum
+        remaining = self._probe_deadline - time.monotonic()
+        if remaining <= 0: raise Pending('Upłynął czas gotowości usług.')
+        return min(maximum, remaining)
+
     def ingress_pid(self):
-        return execute(['systemctl', 'show', '-p', 'MainPID', '--value', SERVICE]).decode().strip()
+        return execute(['systemctl', 'show', '-p', 'MainPID', '--value', SERVICE], timeout=self.io_timeout(30)).decode().strip()
 
     def local_ip(self, address):
         interfaces = json.loads(execute(['ip', '-j', 'address', 'show']))
         return any(a.get('local') == address for i in interfaces for a in i.get('addr_info', []))
 
+    def bootstrap_listeners(self):
+        # iproute2 may not exist yet on a minimal Debian. Read the kernel table
+        # before apt, so dependency installation never depends on missing ss.
+        result = set()
+        for name in ('tcp', 'tcp6'):
+            path = self.proc / 'net' / name
+            if name == 'tcp6' and not path.exists():
+                continue
+            for line in path.read_text().splitlines()[1:]:
+                parts = line.split()
+                require(len(parts) >= 4, 'Nie można odczytać tabeli TCP jądra.')
+                if parts[3] == '0A':
+                    address, port = parts[1].split(':')
+                    if int(port, 16) in (80, 443):
+                        result.add((name, address, int(port, 16)))
+        return result
+
     def listeners(self):
         result = []
-        for line in execute(['ss', '-H', '-ltnp']).decode().splitlines():
+        for line in execute(['ss', '-H', '-ltnp'], timeout=self.io_timeout(30)).decode().splitlines():
             parts = line.split()
             require(len(parts) >= 5, 'Nie można odczytać listenerów ss.')
             address, port = parts[3].rsplit(':', 1)
@@ -151,12 +207,209 @@ class Host:
         return result
 
     def active(self):
-        result = subprocess.run(['systemctl', 'is-active', SERVICE], capture_output=True, timeout=15)
+        result = subprocess.run(['systemctl', 'is-active', SERVICE], capture_output=True, timeout=self.io_timeout(15))
         require(result.returncode in (0, 3, 4), 'Nie można odczytać stanu usługi ingress.')
         return result.returncode == 0
 
     def control(self, action):
         execute(['systemctl', action, *([] if action == 'daemon-reload' else [SERVICE])])
+
+    def generic_known(self):
+        result = subprocess.run(['systemctl', 'show', '-p', 'LoadState', '--value', 'nginx.service'],
+                                capture_output=True, timeout=15)
+        value = result.stdout.decode().strip()
+        require(result.returncode in (0, 1, 4) and value in
+                ('not-found', 'loaded', 'masked', 'error', 'bad-setting', 'merged', 'stub'),
+                'Nie można potwierdzić braku obcej jednostki Nginx.')
+        return value != 'not-found'
+
+    def generic_active(self):
+        result = subprocess.run(['systemctl', 'is-active', 'nginx.service'], capture_output=True, timeout=15)
+        require(result.returncode in (0, 3, 4), 'Nie można odczytać stanu generic Nginx.')
+        return result.returncode == 0
+
+    def start_recovery(self):
+        execute(['systemctl', 'start', 'work-tracker-ingress-recovery.service'])
+
+    def app_control(self, action):
+        execute(['systemctl', action, 'work-tracker.service'])
+
+    def checkpoint(self, name):
+        pass  # Fault injection only through the test Host, never through env/CLI.
+
+    def app_permissions(self, layout):
+        import grp
+        layout.check(layout.env)
+        info = layout.env.stat()
+        require(info.st_uid == layout.uid and info.st_gid == grp.getgrnam('work-tracker').gr_gid
+                and stat.S_IMODE(info.st_mode) == 0o640, 'Env wymaga root:work-tracker 0640.')
+
+    def app_layout_ready(self, layout):
+        fragment = execute(['systemctl', 'show', '-p', 'FragmentPath', '--value', 'work-tracker.service']).decode().strip()
+        require(fragment == str(layout.app_unit), 'Unit aplikacji poza obsługiwanym layoutem.')
+        paths = execute(['systemctl', 'show', '-p', 'DropInPaths', '--value', 'work-tracker.service']).decode().split()
+        require(all(Path(path).parent == layout.dropins for path in paths), 'Drop-in poza backupem; odmowa migracji.')
+        # The on-disk launch contract must agree with the loaded unit. Only
+        # resource scheduling drop-ins are supported before a first cutover.
+        layout.check(layout.app_unit)
+        require(layout.app_unit.read_bytes() == (ROOT / 'deploy/work-tracker.service').read_bytes(),
+                'Niestandardowy bazowy unit: wymagany osobny plan migracji.')
+        if layout.dropins.exists():
+            for path in layout.dropins.iterdir():
+                layout.check(path)
+                if path.name == GUARD_NAME:
+                    guard_owned(path, uid=layout.uid, boundary=layout.boundary, checker=layout.env.parent / 'update-safety.py')
+                    continue
+                parser = configparser.ConfigParser(interpolation=None, strict=True)
+                parser.optionxform = str
+                try:
+                    parser.read_string(path.read_text())
+                except configparser.Error:
+                    raise Refusal('Nieobsługiwany drop-in systemd.') from None
+                require(parser.sections() == ['Service'] and not parser.defaults() and
+                        set(parser['Service']) <= {'Nice', 'CPUWeight', 'IOWeight', 'MemoryHigh', 'MemoryMax', 'TasksMax'} and
+                        all('\n' not in value and '\\' not in value for value in parser['Service'].values()),
+                        'Drop-in zmienia kontrakt uruchomienia; odmowa utraty ustawień administratora.')
+        properties = APP_PROPERTIES.copy()
+        guarded = guard_owned(layout.dropins / GUARD_NAME, uid=layout.uid, boundary=layout.boundary, checker=layout.env.parent / 'update-safety.py') if layout.dropins.exists() else False
+        for key, expected in properties.items():
+            actual = execute(['systemctl', 'show', '-p', key, '--value', 'work-tracker.service']).decode().strip()
+            if key == 'ExecStartPre' and guarded:
+                stable = (layout.dropins / GUARD_NAME).read_bytes() == BOOTSTRAP_GUARD
+                checker = '-I /etc/work-tracker/update-safety.py' if stable else '/opt/work-tracker/deploy/update_safety.py'
+                launch = re.findall(r'\{ path=([^;]+?) ; argv\[\]=([^;]+?) ; ignore_errors=(yes|no) ;', actual)
+                require(len(launch) == 1 and actual.count('{ path=') == 1 and launch[0] ==
+                        ('/usr/bin/python3', f'/usr/bin/python3 {checker} allow-start', 'no'),
+                        'Nieprawidłowy efektywny guard update.')
+                continue
+            require(actual == expected, 'Efektywne właściwości systemd poza wspieranym kontraktem.')
+        command = execute(['systemctl', 'show', '-p', 'ExecStart', '--value', 'work-tracker.service']).decode().strip()
+        launches = re.findall(r'\{ path=([^;]+?) ; argv\[\]=([^;]+?) ; ignore_errors=(yes|no) ;', command)
+        expected = APP_EXEC_START
+        require(len(launches) == 1 and command.count('{ path=') == 1 and command.endswith('}') and
+                launches[0][0] == expected[0] and launches[0][1].split() == expected and launches[0][2] == 'no',
+                'Niestandardowy efektywny ExecStart: odmowa usunięcia parametrów administratora.')
+        enabled = execute(['systemctl', 'is-enabled', 'work-tracker.service']).decode().strip()
+        require(enabled == 'enabled', 'Backend wymaga trwałego autostartu przed migracją.')
+
+    def request(self, address, port, source, target, *, method='GET', headers='', host='localhost', body=''):
+        # No token/cookie and no valid event body. Never creates production data.
+        end = time.monotonic() + self.io_timeout(3)
+        with socket.create_connection((address, port), timeout=self.io_timeout(3), source_address=(source, 0)) as connection:
+            request = (f'{method} {target} HTTP/1.1\r\nHost: {host}\r\n{headers}'
+                       f'Connection: close\r\nContent-Length: {len(body.encode())}\r\n\r\n{body}')
+            remaining = end - time.monotonic()
+            if remaining <= 0: raise TimeoutError('HTTP connect timeout')
+            connection.settimeout(remaining)
+            connection.sendall(request.encode())
+            line = bytearray()
+            while not line.endswith(b'\r\n'):
+                remaining = end - time.monotonic()
+                if remaining <= 0: raise TimeoutError('HTTP status timeout')
+                connection.settimeout(remaining)
+                chunk = connection.recv(1)
+                require(len(line) < 8192, 'Zbyt długa linia statusu HTTP.')
+                if not chunk:
+                    raise ConnectionError('Połączenie zakończone przed pełną linią statusu HTTP.')
+                line.extend(chunk)
+            match = re.fullmatch(rb'HTTP/1\.[01] ([1-5][0-9]{2}) [^\r\n]*\r\n', line)
+            require(match is not None, 'Nieprawidłowa linia statusu HTTP.')
+            return int(match[1])
+
+    def app_config_preserved(self, expected):
+        pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
+        require(pid.isdigit() and int(pid) > 1, 'Brak PID aplikacji.')
+        environment = dict(v.split('=', 1) for v in (self.proc / pid / 'environ').read_bytes().decode().split('\0') if '=' in v)
+        require(all(environment.get(key) == expected.get(key) for key in ('DATABASE_URL', 'WEBHOOK_TOKEN')),
+                'Runtime musi zachować DB i token HA.')
+
+    def backend_health(self, config):
+        require(self.request('127.0.0.1', config['backend_port'], '127.0.0.2', '/api/health',
+                             headers='X-Forwarded-Proto: https\r\n', host=config['public_hostname']) == 200, 'Backend health split nie działa.')
+
+    def private_probes(self, config):
+        self.backend_health(config)
+        for path in ('/api/webhook/home-assistant', '/api/webhook/home-assistant/correction'):
+            require(self.request('127.0.0.1', config['backend_port'], '127.0.0.3', path, method='POST',
+                                 headers='Content-Type: application/json\r\n', body='{}') == 422,
+                    'Prywatny backend musi odrzucać niepełne dane bez tokenu HA.')
+            require(self.request(config['lan_ip'], config['ha_port'], config['lan_ip'], path, method='POST') == 403,
+                    'Nginx HA nie odrzuca niezaufanego lokalnego źródła.')
+
+    def lan_ready(self, config):
+        wildcard = '::' if ipaddress.ip_address(config['lan_ip']).version == 6 else '0.0.0.0'
+        pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
+        require(pid.isdigit() and int(pid) > 1, 'Brak PID działającego LAN.')
+        process = self.proc / pid
+        argv = process.joinpath('cmdline').read_bytes().decode().split('\0')
+        for flag, expected in (('--host', None), ('--port', str(config['ha_port'])), ('--workers', '1')):
+            require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv), 'Proces LAN ma niezgodne argumenty.')
+            actual = argv[argv.index(flag) + 1]
+            require(actual in (wildcard, config['lan_ip']) if expected is None else actual == expected,
+                    'Proces LAN ma niezgodne parametry.')
+        require(argv.count('app.main:app') == 1 and argv.count('--no-proxy-headers') == 1 and '--proxy-headers' not in argv,
+                'LAN wymaga jednego Uvicorn bez proxy headers.')
+        environment = dict(v.split('=', 1) for v in process.joinpath('environ').read_bytes().decode().split('\0') if '=' in v)
+        require(environment.get('INGRESS_PROFILE', 'lan') == 'lan', 'Proces nie działa w profilu LAN.')
+        sockets = [s for s in self.listeners() if s[1] == config['ha_port']]
+        require(len(sockets) == 1 and sockets[0][0] in (wildcard, config['lan_ip'])
+                and f'pid={pid},' in sockets[0][2], 'Port HA nie należy wyłącznie do backendu LAN.')
+        require(self.request(config['lan_ip'], config['ha_port'], config['lan_ip'], '/api/health') == 200,
+                'LAN /api/health nie działa.')
+
+    def lan_bind_config(self, config):
+        """Read-only bind preflight shared with HTTP readiness; never resolve DNS."""
+        guidance = ('APP_HOST wymaga numerycznego lokalnego adresu IPv4/IPv6 (prywatnego, loopback lub wildcard). '
+                    'Nazwy hostów są nieobsługiwane. Operator musi jawnie wybrać adres '
+                    'z zachowaniem wymaganej dostępności LAN; konfiguracja nie została zmieniona.')
+        try:
+            address = ipaddress.ip_address(config['lan_ip'])
+        except (ValueError, TypeError):
+            raise Refusal(guidance) from None
+        if address.is_unspecified:
+            address = ipaddress.ip_address('127.0.0.1' if address.version == 4 else '::1')
+        require((address.is_loopback or address.is_private) and not address.is_multicast, guidance)
+        require(address.is_loopback or self.local_ip(str(address)), guidance)
+        require(type(config['ha_port']) is int and 1 <= config['ha_port'] <= 65535, 'APP_PORT wymaga portu 1..65535.')
+        return config | {'lan_ip': str(address)}
+
+    def wait_lan_health(self, config, timeout=60):
+        """Bounded local HTTP readiness only; strict runtime checks follow once."""
+        require(type(timeout) is int and 5 <= timeout <= 300, 'Readiness timeout musi wynosić 5..300 sekund.')
+        config = self.lan_bind_config(config)
+        deadline = time.monotonic() + timeout
+        self._probe_deadline = deadline
+        try:
+            while time.monotonic() < deadline:
+                execute(['systemctl', 'is-active', '--quiet', 'work-tracker.service'], timeout=self.io_timeout(30))
+                try:
+                    if self.request(config['lan_ip'], config['ha_port'], config['lan_ip'], '/api/health') == 200:
+                        execute(['systemctl', 'is-active', '--quiet', 'work-tracker.service'], timeout=self.io_timeout(30))
+                        return config
+                except (ConnectionError, TimeoutError):
+                    pass
+                time.sleep(min(.1, max(0, deadline - time.monotonic())))
+        except Pending:
+            pass  # The shared deadline may expire between the service and HTTP probes.
+        finally:
+            self._probe_deadline = None
+        raise Refusal(f'Timeout gotowości HTTP LAN po {timeout} s; brak commit transakcji.')
+
+    def ingress_permissions(self, pid, *, starting=False):
+        import pwd
+        process = self.proc / pid
+        master = re.search(r'^Uid:\s+(.*)$', (process / 'status').read_text(), re.M)
+        require(master is not None and set(master[1].split()) == {'0'}, 'Nginx master wymaga UID root.')
+        children = (process / 'task' / pid / 'children').read_text().split()
+        worker_uid = str(pwd.getpwnam('www-data').pw_uid)
+        if starting and not children: raise Pending('Worker Nginx jeszcze nie istnieje.')
+        if starting and len(children) != 1: raise RuntimeMismatch('Liczba workerów Nginx jeszcze niezgodna.')
+        require(len(children) == 1, 'Wymagany jeden worker Nginx.')
+        worker = re.search(r'^Uid:\s+(.*)$', (self.proc / children[0] / 'status').read_text(), re.M)
+        if starting and worker is not None and set(worker[1].split()) <= {'0', worker_uid} and set(worker[1].split()) != {worker_uid}:
+            raise RuntimeMismatch('Worker Nginx jeszcze nie zakończył zmiany UID.')
+        require(worker is not None and set(worker[1].split()) == {worker_uid}, 'Worker Nginx wymaga www-data.')
+        return children[0]
 
     def tls_probe(self, config, ca):
         context = ssl.create_default_context(cafile=str(ca))
@@ -164,25 +417,67 @@ class Host:
             with context.wrap_socket(connection, server_hostname=config['origin_tls_name']):
                 pass
 
-    def backend_ready(self, config):
-        pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
+    def backend_ready(self, config, *, starting=False):
+        pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service'], timeout=self.io_timeout(30)).decode().strip()
+        if starting and pid in ('', '0'): raise Pending('Backend jeszcze nie wystartował.')
         require(pid.isdigit() and int(pid) > 1, 'Backend systemd nie działa.')
-        process = Path('/proc') / pid
-        argv = process.joinpath('cmdline').read_bytes().decode().split('\0')
+        listeners = [s for s in self.listeners() if s[1] == config['backend_port']]
+        # A wrong bind/owner is a confirmed violation even before exec settles.
+        if listeners:
+            require(len(listeners) == 1 and listeners[0][0] == '127.0.0.1' and f'pid={pid},' in listeners[0][2],
+                    'Nieprawidłowy lub obcy listener backendu.')
+        process = self.proc / pid
+        def runtime_require(valid, message):
+            if starting and not valid: raise RuntimeMismatch(message)
+            require(valid, message)
+        def runtime_text(name):
+            try: return process.joinpath(name).read_bytes().decode()
+            except (UnicodeDecodeError, PermissionError, ProcessLookupError):
+                runtime_require(False, 'Niekompletny obraz argv/env procesu.')
+        argv = runtime_text('cmdline').split('\0')
         for flag, value in [('--host', '127.0.0.1'), ('--port', str(config['backend_port'])), ('--workers', '1')]:
-            require(argv.count(flag) == 1 and argv[argv.index(flag) + 1] == value, 'Backend ma niezgodny bind/worker.')
-        require('app.main:app' in argv and '--no-proxy-headers' in argv and '--proxy-headers' not in argv,
+            runtime_require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv) and argv[argv.index(flag) + 1] == value, 'Backend ma niezgodny bind/worker.')
+        runtime_require(argv.count('app.main:app') == 1 and argv.count('--no-proxy-headers') == 1 and '--proxy-headers' not in argv,
                 'Backend wymaga pojedynczego Uvicorn bez proxy headers.')
-        environment = dict(v.split('=', 1) for v in process.joinpath('environ').read_bytes().decode().split('\0') if '=' in v)
+        tokens = argv[:-1] if argv[-1:] == [''] else argv
+        prefix = tokens[:tokens.index('app.main:app')]
+        runtime_require((len(prefix) in (1, 2) and Path(prefix[-1]).name == 'uvicorn') or
+                        (len(prefix) == 3 and prefix[-2:] == ['-m', 'uvicorn']), 'Nieprawidłowy launcher Uvicorna.')
+        runtime_require(tokens[len(prefix):] == ['app.main:app', '--host', '127.0.0.1', '--port', str(config['backend_port']),
+                                               '--workers', '1', '--no-proxy-headers'], 'Nieobsługiwane argumenty Uvicorna.')
+        environment = dict(v.split('=', 1) for v in runtime_text('environ').split('\0') if '=' in v)
         defaults = {'CORS_ORIGINS': '', 'BROWSER_HSTS_SECONDS': '0'}
         for key, expected in {'INGRESS_PROFILE': 'split', 'SESSION_COOKIE_SECURE': 'true',
                               'BROWSER_ALLOWED_ORIGINS': f"https://{config['public_hostname']}",
                               'CORS_ORIGINS': '', 'BROWSER_HSTS_SECONDS': '0'}.items():
-            require(environment.get(key, defaults.get(key)) == expected,
+            runtime_require(environment.get(key, defaults.get(key)) == expected,
                     'Backend nie ma wymaganej konfiguracji split/Secure/origin/HSTS=0.')
-        listeners = [s for s in self.listeners() if s[1] == config['backend_port']]
+        if starting and not listeners: raise Pending('Brak socketu startującego backendu.')
         require(len(listeners) == 1 and listeners[0][0] == '127.0.0.1' and f'pid={pid},' in listeners[0][2],
                 'Backend musi słuchać wyłącznie na 127.0.0.1 i należeć do usługi WT.')
+        return pid
+
+    def update_readiness(self, config, *, deadline=None):
+        """No TLS/ACL/file checks are retried here; final verify handles them."""
+        self._probe_deadline = deadline
+        try:
+            backend = self.backend_ready(config, starting=True)
+            self.backend_health(config)
+            pid = self.ingress_pid()
+            listeners = [s for s in self.listeners() if s[1] in (config['ha_port'], config['browser_port'])]
+            require(all(s[0] == config['lan_ip'] and pid not in ('', '0') and f'pid={pid},' in s[2] for s in listeners),
+                    'Obcy/nieprawidłowy listener podczas startu ingressu.')
+            if not self.active() or pid in ('', '0') or len(listeners) < 2:
+                raise Pending('Ingress jeszcze nie otworzył obu listenerów.')
+            require(len(listeners) == 2, 'Nadmiarowe listenery ingressu.')
+            worker = self.ingress_permissions(pid, starting=True)
+            for port in (config['ha_port'], config['browser_port']):
+                with socket.create_connection((config['lan_ip'], port), timeout=self.io_timeout(1)): pass
+            return backend, pid, worker
+        except (FileNotFoundError, ConnectionError, TimeoutError) as error:
+            raise Pending('Usługi jeszcze nie odpowiadają.') from error
+        finally:
+            self._probe_deadline = None
 
 
 class Provisioner:
@@ -278,7 +573,7 @@ class Provisioner:
     def unit(self, generation_dir):
         text = (ROOT / 'deploy/ingress/work-tracker-ingress.service.example').read_text()
         for key, value in {'NGINX_BIN': self.layout.nginx, 'RUNTIME_DIR': self.layout.runtime,
-                           'GENERATION_DIR': generation_dir}.items():
+                           'GENERATION_DIR': generation_dir, 'STATE_DIR': self.layout.state}.items():
             text = text.replace(f'<{key}>', str(value))
         return text.encode()
 
@@ -323,6 +618,7 @@ class Provisioner:
         config, assets, generation = self.config(source)
         self.conflicts(config)
         with self.lock():
+            require(not (self.layout.state / 'cutover.json').exists(), 'Najpierw recover/rollback-lan transakcji 9B2.')
             journal = self.layout.state / 'active.json'
             require(not journal.exists() and not journal.is_symlink(), 'Najpierw rollback aktywacji.')
             generations = self.layout.state / 'generations'
@@ -389,35 +685,38 @@ class Provisioner:
 
     def activate(self, evidence_path):
         with self.lock():
-            generation, directory, config = self.prepared()
-            self.layout.check(self.layout.nginx)
-            require(self.host.local_ip(config['lan_ip']), 'LAN IP nie należy do tego hosta.')
-            evidence = self.evidence(evidence_path, generation)
-            journal = self.layout.state / 'active.json'
-            if journal.exists() or journal.is_symlink():
-                self.layout.check(journal, private=True)
-                transaction = read_json(journal)
-                require(transaction['generation'] == generation and transaction['phase'] == 'active',
-                        'Niedokończona aktywacja: wykonaj rollback.')
-                self.postcheck(config, (directory / 'service').read_bytes())
-                return
-            require(not self.layout.unit.exists() and not self.layout.unit.is_symlink() and not self.host.active(),
-                    'Istniejąca jednostka/instancja ingress: odmowa przejęcia.')
-            self.layout.check(self.layout.unit.parent, directory=True)
-            self.conflicts(config, activation=True)
-            unit = (directory / 'service').read_bytes()
-            backup = self.backup('activate', {'generation': generation, 'unit_before': None, 'evidence': evidence})
-            transaction = {'generation': generation, 'phase': 'activating', 'unit_sha': digest(unit), 'backup': str(backup)}
-            atomic(journal, encoded(transaction))  # write-ahead, also recoverable after SIGKILL
-            try:
-                atomic(self.layout.unit, unit, mode=0o644)
-                self.host.control('daemon-reload')
-                self.host.control('start')
-                self.wait_for_ingress(config, unit)
-                atomic(journal, encoded(transaction | {'phase': 'active'}))
-            except BaseException:
-                self.rollback_locked()
-                raise
+            self.activate_locked(evidence_path)
+
+    def activate_locked(self, evidence_path):
+        generation, directory, config = self.prepared()
+        self.layout.check(self.layout.nginx)
+        require(self.host.local_ip(config['lan_ip']), 'LAN IP nie należy do tego hosta.')
+        evidence = self.evidence(evidence_path, generation)
+        journal = self.layout.state / 'active.json'
+        if journal.exists() or journal.is_symlink():
+            self.layout.check(journal, private=True)
+            transaction = read_json(journal)
+            require(transaction['generation'] == generation and transaction['phase'] == 'active',
+                    'Niedokończona aktywacja: wykonaj rollback.')
+            self.postcheck(config, (directory / 'service').read_bytes())
+            return
+        require(not self.layout.unit.exists() and not self.layout.unit.is_symlink() and not self.host.active(),
+                'Istniejąca jednostka/instancja ingress: odmowa przejęcia.')
+        self.layout.check(self.layout.unit.parent, directory=True)
+        self.conflicts(config, activation=True)
+        unit = (directory / 'service').read_bytes()
+        backup = self.backup('activate', {'generation': generation, 'unit_before': None, 'evidence': evidence})
+        transaction = {'generation': generation, 'phase': 'activating', 'unit_sha': digest(unit), 'backup': str(backup)}
+        atomic(journal, encoded(transaction))  # write-ahead, also recoverable after SIGKILL
+        try:
+            atomic(self.layout.unit, unit, mode=0o644)
+            self.host.control('daemon-reload')
+            self.host.control('start')
+            self.wait_for_ingress(config, unit)
+            atomic(journal, encoded(transaction | {'phase': 'active'}))
+        except BaseException:
+            self.rollback_locked()
+            raise
 
     def wait_for_ingress(self, config, unit):
         # Type=simple start can return before nginx has opened its sockets.
@@ -441,11 +740,12 @@ class Provisioner:
         sockets = [s for s in self.host.listeners() if s[1] in (config['ha_port'], config['browser_port'])]
         require(len(sockets) == 2 and all(s[0] == config['lan_ip'] and f'pid={pid},' in s[2] for s in sockets),
                 'Listener ingress jest niezgodny (także IPv6/wildcard).')
+        self.host.ingress_permissions(pid)
         # Establish TLS locally without sending CF headers, credentials or a browser request.
         self.host.tls_probe(config, self.layout.state / 'generations' /
                             read_json(self.layout.state / 'prepared.json')['generation'] / 'ca.pem')
 
-    def rollback_locked(self):
+    def rollback_locked(self, boot=False):
         journal = self.layout.state / 'active.json'
         if not journal.exists() and not journal.is_symlink():
             require(not self.layout.unit.exists() and not self.layout.unit.is_symlink() and not self.host.active(),
@@ -460,7 +760,8 @@ class Provisioner:
         if self.layout.unit.exists() or self.layout.unit.is_symlink():
             self.layout.check(self.layout.unit)
             require(digest(self.layout.unit.read_bytes()) == transaction['unit_sha'], 'Jednostka zmieniona; rollback wymaga inspekcji operatora.')
-            self.host.control('stop')
+            if not boot:
+                self.host.control('stop')
             require(not self.host.active(), 'Nie udało się zatrzymać ingress; pozostawiono dziennik i backup.')
             self.layout.unit.unlink()
             fsync_dir(self.layout.unit.parent)
@@ -487,6 +788,7 @@ def main():
         require(os_release.get('ID', '').strip('"') in ('debian', 'ubuntu'),
                 'Obsługiwany jest Debian/Ubuntu.')
         if args.operation in {'prepare', 'activate', 'rollback'}:
+            require(not (tool.layout.state / 'cutover.json').exists(), 'Transakcja 9B2: użyj ingress_cutover.py recover/rollback-lan.')
             require(os.geteuid() == 0, 'Operacja wymaga roota.')
             os.umask(0o077)
         if args.operation in {'plan', 'validate', 'prepare'}:

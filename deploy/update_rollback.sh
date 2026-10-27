@@ -8,16 +8,11 @@ rollback_warning() {
     printf '[work-tracker] ROLLBACK WARNING: %s\n' "$*" >&2
 }
 
+# Compatibility tombstone for old staged callers. A backup is a historical
+# snapshot, never proof that replacing today's database would preserve writes.
 restore_database_backup() {
-    local database_file="$1"
-    local backup_file="$2"
-    local service_user="$3"
-    local restore_file="${database_file}.rollback.$$"
-
-    [[ -f "${backup_file}" ]] || return 1
-    rm -f "${database_file}-wal" "${database_file}-shm" "${database_file}-journal"
-    install -o "${service_user}" -g "${service_user}" -m 0640 "${backup_file}" "${restore_file}" || return 1
-    mv -f "${restore_file}" "${database_file}"
+    rollback_warning "Automatic SQLite restore is disabled. Current DB/WAL/SHM and backups are preserved."
+    return 1
 }
 
 restore_previous_application() {
@@ -88,20 +83,32 @@ perform_update_rollback() {
     fi
 
     if [[ "${migration_started}" == true ]]; then
-        rollback_log "Database migration had started; restoring its backup only with the service stopped."
-        if [[ "${service_stopped}" != true ]]; then
-            rollback_warning "Service may still be active. Database restore was NOT attempted."
-            database_safe=false
-        elif restore_database_backup "${database_file}" "${backup_file}" "${service_user}"; then
-            rollback_log "Database restored from ${backup_file}; backup retained."
-        else
-            rollback_warning "Database restore failed. The service will remain stopped."
-            database_safe=false
-            rollback_failed=1
+        rollback_warning "UPDATE REQUIRES MANUAL RECOVERY: Alembic may have changed schema/data."
+        rollback_warning "Current SQLite, WAL/SHM, corrections, sessions and login history are NOT restored or deleted."
+        rollback_warning "Candidate code/dependencies/unit are retained. Old application will NOT be started."
+        local safety_runner="${11:-${app_dir}/deploy/update_safety.py}"
+        if ! python3 "${safety_runner}" install; then
+            rollback_warning "Could not install/validate the startup guard; inspect systemd before reboot."
         fi
-    else
-        rollback_log "Database migration had not started; database left untouched."
+        if ! python3 "${safety_runner}" hold; then
+            # Compatibility with an older staged updater entering the new
+            # rollback helper without first writing a transaction record.
+            local emergency_dir
+            emergency_dir="$(mktemp -d "${backup_file%/*}/update-manual.XXXXXX")"
+            if [[ -n "${emergency_dir}" ]]; then
+                cp -p "${unit_backup}" "${emergency_dir}/unit.before" || true
+                python3 "${safety_runner}" begin --previous "${previous_commit}" \
+                    --candidate "$(git -C "${app_dir}" rev-parse HEAD)" --directory "${emergency_dir}" --owner-pid "$$" \
+                    && python3 "${safety_runner}" hold || true
+            fi
+        fi
+        systemctl daemon-reload || rollback_warning "daemon-reload failed; inspect the startup guard."
+        rollback_warning "Automatic database/code rollback REFUSED. Backup: ${backup_file}"
+        rollback_warning "Previous commit: ${previous_commit}. Read the 9B2 manual recovery runbook."
+        [[ "${service_stopped}" == true ]] || rollback_warning "Service stop was not confirmed; inspect it immediately."
+        return 1
     fi
+    rollback_log "Alembic was not invoked; database and sidecars are left untouched."
 
     if ! restore_previous_application "${app_dir}" "${previous_commit}" "${repository_was_clean}" "${service_user}"; then
         repository_restored=false
@@ -119,10 +126,23 @@ perform_update_rollback() {
         rollback_failed=1
     fi
 
+    if [[ -n "${11:-}" ]]; then
+        if [[ "${repository_restored}" == true && "${unit_restored}" == true && "${service_stopped}" == true ]]; then
+            if ! python3 "${11}" cancel || ! python3 "${11}" remove-legacy-guard; then
+                rollback_warning "Could not clear a preparing-only update gate; old service remains blocked."
+                database_safe=false
+                rollback_failed=1
+            fi
+            systemctl daemon-reload || { unit_restored=false; rollback_failed=1; }
+        else
+            python3 "${11}" hold || true
+        fi
+    fi
+
     if [[ "${service_was_active}" == true ]]; then
         if [[ "${service_stopped}" == true && "${database_safe}" == true && "${repository_restored}" == true && "${unit_restored}" == true ]]; then
             if systemctl restart work-tracker.service; then
-                rollback_log "Previous service version started."
+                rollback_log "Previous service restart requested; verify HTTP/proxy readiness before declaring it healthy."
             else
                 rollback_warning "Previous service version could not be started."
                 rollback_failed=1

@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
-    printf 'Service-user runtime test skipped: root is required to switch users.\n'
-    exit 0
+    printf 'SKIP / NOT RUN: service-user runtime requires root to switch users.\n' >&2
+    exit 77
 fi
 
 command -v runuser >/dev/null 2>&1 || { printf 'runuser is required.\n' >&2; exit 1; }

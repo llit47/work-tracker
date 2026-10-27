@@ -259,6 +259,14 @@ Production conventions include:
 
 Preserve updater safety properties, including clean-worktree checks, SQLite backup before update, fast-forward-only updates, migration safety, rollback behavior, and preservation of existing data/configuration.
 
+Updater rollback must preserve the current SQLite database and its sidecars.
+A historical backup is not proof that no later raw event, correction, session,
+user, or login-limit write exists. Never restore it automatically on an update
+failure. Before Alembic is invoked, code rollback may keep the current database.
+Once Alembic may have run, preserve candidate code and all database states,
+stop the application, and require manual compatibility/data review before any
+restart. Keep the durable startup gate fail-closed across process death/reboot.
+
 Required deployment configuration belongs in `deploy/config.manifest`.
 
 Never commit or print real secrets or webhook tokens.
@@ -360,3 +368,16 @@ Before reporting a task as ready:
 - the final diff is focused;
 - known blockers are reported clearly;
 - no merge has been performed unless explicitly requested.
+
+## Infrastructure privacy
+
+This repository is public. Never publish actual operator infrastructure addresses,
+operator hostnames/domains, VM/container IDs, private topology, credentials,
+user data or production configuration in code, fixtures, docs, commits or PRs.
+Use placeholders in operator documentation and fictional RFC1918 examples from
+`10.123.45.0/24` in tests. Generic supported-platform descriptions are allowed;
+operator inventory is not. Scan the final tracked/untracked content before
+commit/push with `deploy/tests/infrastructure_privacy_test.py`. An optional
+private denylist must stay outside the checkout with mode 0600; never print its
+values. Remove accidental disclosures from current files and report them, but
+never rewrite Git history without separate explicit authorization.

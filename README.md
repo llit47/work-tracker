@@ -2,7 +2,7 @@
 
 Prosta aplikacja obecnie działająca lokalnie w sieci LAN do rejestrowania zdarzeń wejścia i wyjścia z pracy. Backend przyjmuje zabezpieczone webhooki Home Assistanta, zapisuje każde zdarzenie w SQLite i wylicza sesje pracy bez zmiany danych źródłowych. Frontend React pokazuje bieżący status pracy, miesięczne sesje i anomalie, korekty, wynagrodzenie oraz eksporty CSV/PDF.
 
-Obecny instalator i obecne wdrożenie nie konfigurują publicznego dostępu, domeny, proxy, tunelu ani HTTPS.
+Instalator domyślnie uruchamia LAN HTTP; opcjonalnie przygotowuje prywatny HTTPS/split ingress. Nie konfiguruje publicznego dostępu, domeny ani tunelu.
 
 ## Planned direction (not implemented)
 
@@ -37,14 +37,16 @@ Instalator nie nadpisze istniejącego `/opt/work-tracker`. Instaluje wymagane pa
 
 ## First configuration
 
-Instalator pyta interaktywnie o:
+Instalator najpierw proponuje `lan` (domyślny) lub `https` (przygotowanie).
+HTTPS również pozostawia działający LAN do osobnego, kontrolowanego cutoveru.
+Następnie pyta interaktywnie o:
 
 - adres nasłuchu, domyślnie `0.0.0.0`,
 - port backendu, domyślnie `8000`,
 - token webhooka (minimum 32 znaki) lub zgodę przez pozostawienie pustej wartości na jego bezpieczne wygenerowanie,
 - `BROWSER_ALLOWED_ORIGINS`: jawną niepustą listę pełnych origins przeglądarki (scheme, host, port), bez ścieżek i wildcardów; brak proponowanej szerokiej wartości domyślnej,
 - originy CORS, jeśli frontend ma działać z innego originu,
-- `SESSION_COOKIE_SECURE`: `false` wyłącznie dla obecnego zaufanego LAN HTTP; `true` obowiązkowo dla HTTPS.
+- `SESSION_COOKIE_SECURE`: `false` dla zaufanego LAN HTTP; w trybie przygotowania HTTPS instalator zachowuje `false` do osobnego cutoveru, który ustawi `true`.
 
 Wygenerowany token nie jest wyświetlany. Zostaje zapisany w `/etc/work-tracker/work-tracker.env`, dostępnym tylko dla roota i grupy usługi. Baza zawsze znajduje się poza repozytorium pod `/var/lib/work-tracker/work_tracker.db`.
 
@@ -56,17 +58,35 @@ Przy domyślnym `APP_HOST=0.0.0.0` aplikacja nasłuchuje na interfejsach serwera
 http://<adres-IP-serwera-w-LAN>:8000
 ```
 
-FastAPI serwuje zbudowany frontend z `frontend/dist`, więc osobny Vite, nginx ani reverse proxy nie są potrzebne. CORS nie dotyczy webhooka Home Assistanta; jest potrzebny tylko wtedy, gdy przeglądarkowy frontend pochodzi z innego originu.
+W trybie LAN FastAPI serwuje zbudowany frontend z `frontend/dist`; osobny Vite ani Nginx nie są potrzebne. W docelowym profilu HTTPS/split Nginx jest wymaganym elementem prywatnego ingressu. CORS nie dotyczy webhooka Home Assistanta; jest potrzebny tylko wtedy, gdy przeglądarkowy frontend pochodzi z innego originu.
 
-Instalator nie otwiera firewalla, nie konfiguruje routera, publicznego IP, tunelu ani HTTPS. Dostęp należy pozostawić wyłącznie w zaufanej sieci LAN.
+Instalator nie otwiera firewalla i nie konfiguruje routera, publicznego IP ani tunelu. Dostęp należy pozostawić wyłącznie w zaufanej sieci LAN.
 
 ## Update
+
+**Pierwsze przejście z `5d974b1` do 9B2 wymaga [procedury first-upgrade](docs/deployment/phase9b2-cutover.md#pierwsza-aktualizacja-z-5d974b1).** Nie uruchamiaj wtedy starego `update.sh`: jego kopia w `/tmp` nie instaluje nowego guarda przed migracją. Operator wybiera przejrzany pełny SHA i zaufany ref; bootstrap sprawdza rzeczywisty stary checkout, instaluje trwały checker poza nim, weryfikuje guard systemd i przekazuje PID/blokadę nowemu updaterowi. Nie wystarczy skopiować samego nowego `update.sh` do starej instalacji.
+
+Poniższa zwykła komenda służy instalacjom, które już mają mechanizm 9B2:
 
 ```bash
 sudo /opt/work-tracker/update.sh
 ```
 
-Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Przed zmianami wykonuje spójny backup SQLite, następnie pobiera kod przez fast-forward, aktualizuje zależności, instaluje frontend według `package-lock.json`, wykonuje build i migracje oraz restartuje usługę. W razie błędu po zmianie commita automatycznie przywraca poprzedni commit, zależności, frontend i unit systemd. Jeżeli migracja już się rozpoczęła, najpierw zatrzymuje usługę i odtwarza bazę z backupu. Backup nie jest usuwany. Przy niepełnym rollbacku updater nie próbuje uruchamiać usługi i wyświetla wyraźne ostrzeżenia oraz instrukcje diagnostyczne; ostrzega też osobno, jeśli samego zatrzymania usługi nie udało się potwierdzić.
+Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Wykonuje spójny online backup SQLite, pobiera kod przez fast-forward, aktualizuje zależności i buduje frontend. Następnie zatrzymuje usługę, potwierdza brak jej PID, zapisuje drugi checkpoint i wywołuje Alembic. **Nigdy automatycznie nie zastępuje bieżącej SQLite ani WAL/SHM historyczną kopią.** Zapisane po backupie eventy, korekty, użytkownicy, sesje i historia limitera pozostają w bieżącej bazie.
+
+Błąd **przed wywołaniem Alembic** pozwala przywrócić poprzedni kod, zależności, frontend i unit, zachowując bieżącą DB. Błąd **od próby wywołania Alembic**, także po migracji no-op lub po restarcie, oznacza `UPDATE REQUIRES MANUAL RECOVERY`: usługa jest zatrzymywana, kod kandydata i wszystkie kopie pozostają, a trwały guard blokuje start starej/niezweryfikowanej wersji po reboot. Nie ma automatycznego downgrade. Procedura zachowania danych i naprawy: [runbook 9B2](docs/deployment/phase9b2-cutover.md#odzyskiwanie-po-nieudanej-aktualizacji).
+
+Dla aktywnego splitu updater czeka na HTTP backendu i oba listenery proxy, domyślnie **60 s**; można podać `sudo /opt/work-tracker/update.sh --readiness-timeout 120` (zakres **5–300 s**). Oczekiwanie obejmuje brak procesu/socketu oraz niepełne argv/env przed exec i zmianę UID workera Nginx; wymagane są dwa zgodne obrazy PID/workerów. Trwale zły runtime kończy się odmową w tym samym budżecie, a obcy listener, zły bind lub obcy UID są odrzucane od razu. Konfiguracja jest sprawdzana przed oczekiwaniem, a pełna kontrola TLS/ACL/uprawnień po gotowości — statyczne błędy bezpieczeństwa nie są ponawiane. Timeout rozróżnia niedostępne usługi i utrzymującą się niezgodność runtime. Na wolniejszym systemie wybierz np. 120 s po weryfikacji 9C. `is-active` nie dowodzi gotowości HTTP. Limit obejmuje oczekiwanie readiness, nie build, migracje ani końcowe kontrole bezpieczeństwa.
+
+Zwykły update LAN zatwierdza transakcję dopiero po HTTP **200** z `GET /api/health`, przy aktywnym `work-tracker.service`, oraz końcowej kontroli procesu/listenera i zachowania DB/tokena. Próba używa skonfigurowanego lokalnego, prywatnego adresu IP i portu; `0.0.0.0` mapuje na `127.0.0.1`, a `::` na `::1`. Nie rozwiązuje nazw ani nie korzysta z publicznej trasy. Obowiązuje ten sam `--readiness-timeout`: domyślnie **60 s**, zakres **5–300 s**. Timeout lub błąd weryfikacji po Alembic pozostawia stan wymagający ręcznej naprawy, bez restore SQLite.
+
+Przed instalacją guarda, Git FF, zależnościami, zatrzymaniem usługi i Alembic zwykły update LAN sprawdza read-only istniejący `APP_HOST` według tych samych reguł co readiness. Obsługiwane są numeryczne IPv4/IPv6: wildcard, loopback i lokalne prywatne IP. Nazwy, w tym `localhost`, oraz publiczne/nielokalne adresy powodują wczesną odmowę bez zmiany usługi, SQLite, env lub Git HEAD. Operator musi jawnie wybrać wspierany bind z zachowaniem wymaganej dostępności LAN/HA; updater nie przepisuje `localhost` na `127.0.0.1`. First-upgrade używa tej samej walidacji przed guardem.
+
+We wszystkich ścieżkach readiness zerwanie/reset połączenia, broken pipe i EOF przed pełną linią statusu są ponawiane do tego samego deadline. Kompletna nieprawidłowa linia statusu, obcy listener oraz błędy konfiguracji, TLS i polityk nie podlegają retry. Końcowa ścisła walidacja pozostaje jednorazowa.
+
+Zaplanuj okno bez zdarzeń HA: odbiór webhooków jest przerwany od zatrzymania backendu przez migracje do gotowości usług; błąd wymagający naprawy wydłuża tę przerwę. **HA nie musi ponawiać żądań. Zachowanie zaakceptowanych zapisów nie gwarantuje przyjęcia żądania wysłanego podczas niedostępności.**
+
+Instalacje z trwałym checkerem utworzonym przez wcześniejszy bootstrap 9B2 po udanym update wykonują osobną operację `sudo python3 /opt/work-tracker/deploy/update_safety.py migrate-checker`. Nowy kod akceptuje katalogowaną v1, więc stary staged updater może zakończyć swoją transakcję. Dopiero po jego zakończeniu operacja pod wspólną blokadą wymienia checker na v2. Nie uruchamiaj jej przy aktywnym/niedokończonym update. [Migracja i odzyskanie po przerwaniu](docs/deployment/phase9b2-cutover.md#migracja-trwałego-checkera-v1--v2).
 
 Nowe wymagane ustawienia są definiowane w `deploy/config.manifest`. Updater dopisuje wyłącznie brakujące wymagane klucze, pyta o ich wartości i pokazuje bezpieczne wartości domyślne. Nie zmienia istniejących wartości, nie usuwa starszych lub nieznanych wpisów i nigdy nie wypisuje sekretów. Jeśli nie ma nowych wymaganych kluczy, aktualizacja nie zadaje pytań konfiguracyjnych.
 
@@ -76,7 +96,7 @@ Przed aktualizacją istniejącego LXC dopisz w `/etc/work-tracker/work-tracker.e
 origin faktycznie używany do otwierania aplikacji, przykładowo:
 
 ```dotenv
-BROWSER_ALLOWED_ORIGINS=http://192.168.1.50:8000
+BROWSER_ALLOWED_ORIGINS=http://10.123.45.10:8000
 CORS_ORIGINS=
 SESSION_COOKIE_SECURE=false
 ```
@@ -265,16 +285,10 @@ migracja jako service user i restart z nowym unitem. Potwierdzić head
 Operator potwierdził wdrożenie 8B1-A/B oraz pozytywne testy package-install i
 service-user runtime na Debianie 13 LXC (main de963ae, head 20261025_08).
 To potwierdzenie operatora, nie samodzielny test Codexa w produkcji. Bieżące
-8B2 nie wykonuje deploymentu; ponowne lokalne package/runtime jest BLOCKED
-przez brak ensurepip i roota w środowisku Codexa.
+8B2 nie wykonuje deploymentu. Bieżący lokalny package-install przechodzi;
+runtime użytkownika usługi jest SKIP/NOT RUN bez roota.
 
-Rollback updatera przed migracją zachowuje DB; po rozpoczęciu migracji stosuje
-dotychczasowy restore z backupu przy zatrzymanej usłudze. Przy późniejszym ręcznym
-rollbacku cofnąć backend/frontend/unit razem, pozostawić addytywną tabelę i
-bieżące dane pracy. Nie odtwarzać starej DB kosztem nowych raw events/korekt.
-Jeżeli konieczny jest restore, odwołać odtworzone sesje i odczekać pełne 15 minut
-przed ponownym dopuszczeniem loginów. Powrót do 8B1-A usuwa limiter, więc
-wyłącznie awaryjnie w izolowanym LAN.
+Rollback updatera przed wywołaniem Alembic zachowuje bieżącą DB; od próby migracji błąd wymaga ręcznej analizy kompatybilności, bez automatycznego cofania kodu i danych. Przy ręcznej naprawie zachowaj także sesje i historię limitera, nie przywracaj starszej DB kosztem nowych zapisów. Procedura w runbooku 9B2 zastępuje dawny automatyczny restore. Powrót do 8B1-A usuwa limiter, więc służy wyłącznie awaryjnemu użyciu w izolowanym LAN po analizie schematu.
 
 ## Przygotowanie Cloudflare Access i HTTPS (8B2, bez aktywacji)
 
@@ -313,21 +327,42 @@ oddziela testy ASGI, prawdziwe Nginx/Uvicorn, walidator JWT cloudflared i
 **BLOCKED / REQUIRES PHASE 9 VERIFICATION** dla rzeczywistego konta/Edge.
 Brak nowej migracji; Alembic head pozostaje 20261025_08.
 
-## Opcjonalne przygotowanie Nginx (9B1)
+## Opcjonalny HTTPS i kontrolowany cutover (9B1/9B2)
 
-`python3 deploy/nginx_provision.py` udostępnia `plan`/`validate` bez zmian,
-`prepare` nieaktywnej konfiguracji, `verify`, oddzielne `activate` i `rollback`.
-Przygotowanie nie zajmuje dotychczasowego portu HA i nie zmienia Uvicorna.
-Wymaga jawnego JSON operatora i istniejącego Nginx; nie instaluje pakietów.
-Pliki, kopie TLS i backupy są poza checkoutem, z kontrolą właściciela/uprawnień.
-Aktywacja osobnej usługi jest blokowana bez dowodów izolacji IPv4/IPv6,
-wyłączonej publicznej trasy i gotowego backendu split. Brak enable/autostartu.
+Wybór `https` w instalatorze automatycznie przygotowuje zależności i nieaktywną
+generację. Bezpieczny bootstrap blokuje start domyślnego Nginx przed apt;
+nie przejmuje obcej konfiguracji. LAN pozostaje działający, także przy błędnym TLS.
+Operator dostarcza cert/key/CA, dokładne IP/porty/hostnames i rzeczywiste dowody
+izolacji IPv4/IPv6. Nie ma automatycznego Cloudflare/Access/DNS ani publicznego HTTPS.
 
-[Instrukcja 9B1](docs/deployment/phase9b1-nginx.md) opisuje zależności, wymagane
-wejścia, backup/dziennik/rollback oraz granice testów. Instalator nadal domyślnie
-instaluje LAN; integracja LAN/HTTPS i bezpieczny bootstrap pakietów to 9B2.
-`update.sh` nie wywołuje narzędzia i nie przełącza sieci ani HTTPS.
-Nie wykonano deploymentu ani zmian współdzielonego cloudflared operatora.
+Administracja istniejącą instalacją:
+
+```bash
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py bootstrap
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py configure
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py plan
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py activate --evidence /etc/work-tracker/ingress-input/evidence.json
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py verify
+# Niedokończona operacja / powrót do poprzedniego LAN:
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py recover
+sudo python3 /opt/work-tracker/deploy/ingress_cutover.py rollback-lan
+```
+
+[Runbook 9B2](docs/deployment/phase9b2-cutover.md) opisuje świeży LAN/HTTPS,
+przygotowanie prywatnego JSON, bramki, okno serwisowe, kontrole z HA, rollback,
+reboot, wymianę certyfikatu i checklistę 9C. Podczas zmiany listenera webhook
+może zaginąć — HA nie musi ponowić żądania. URL i token HA pozostają bez zmian.
+Narzędzie nie tworzy testowych eventów i nie odtwarza DB przy błędzie sieci.
+
+9B2 komponuje [generacje i walidację 9B1](docs/deployment/phase9b1-nginx.md),
+dodając trwały dziennik env/systemd, pełną kompensację i ordered boot recovery.
+Dopiero po kontrolach i potwierdzeniu z rzeczywistego HA aktywuje autostart proxy.
+Przygotowane generacje nie startują same. Zwykły updater nie przełącza profilu
+ani generacji; wspólna blokada zapobiega równoległemu update/cutoverowi, a
+niedokończony cutover blokuje update do czasu `recover`. W aktywnym splicie
+updater zachowuje bazowy unit i przed merge odmawia wydania zmieniającego unit,
+manifest lub wzorce ingressu. Wtedy wymagany jest jawny powrót do LAN i nowy cutover.
+Nie wykonano deploymentu ani zmian Cloudflare/firewalla/HA.
 
 ## Logs/status/restart
 
@@ -339,7 +374,7 @@ sudo systemctl restart work-tracker
 
 ## Backup
 
-Updater zapisuje backupy jako `/var/backups/work-tracker/work_tracker-<timestamp-UTC>.db`. Pliki są własnością roota i mają restrykcyjne uprawnienia. Backupy nie są automatycznie usuwane.
+Updater zapisuje `/var/backups/work-tracker/update-<UTC>.<ID>/online.db` oraz, po potwierdzonym zatrzymaniu backendu, `pre-migration.db`. Ten sam prywatny katalog zawiera `unit.before`, staged checker i `transaction.json` z commitami/fazą. Katalog ma 0700, kopie 0600; nie są automatycznie usuwane ani odtwarzane. Starsze backupy `work_tracker-<timestamp-UTC>.db` pozostają bez zmian. Retencja jest wyłącznie ręczna: chroń wszystkie wskazane przez dzienniki/niepewne transakcje oraz najnowsze punkty odzyskania; [procedura](docs/deployment/phase9b2-cutover.md#ręczna-retencja-backupów). SQLite może normalnie wykonywać checkpoint i zarządzać WAL/SHM; gwarancją są zachowane zatwierdzone dane, nie czas życia lub inode sidecarów.
 
 ## File locations
 
@@ -461,18 +496,36 @@ npm test
 npm run build
 ```
 
+Zbiorczo: `bash deploy/tests/run_shell_tests.sh` z root repo (testy shell bez wywołania tunelu). Runner obsługuje `0=PASS`, `77=SKIP/NOT RUN`, inne kody jako FAIL, także przy `set -e`. Wypisuje osobne liczniki; zwraca 1 przy FAIL, 77 gdy wszystko pominięto, 0 gdy dostępne testy przeszły. Podsumowanie z SKIP nie oznacza pełnej walidacji.
+
 Dodatkowe lokalne testy ingress 8B2 (z root repo; narzędzia mogą być wypakowane
 poza checkoutem, testy nie uruchamiają tunelu):
 
 ```bash
 WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/ingress_security_test.py -q
-WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/nginx_provision_test.py -q
+WORK_TRACKER_NGINX_BIN=<NGINX_BIN> backend/.venv/bin/pytest deploy/tests/nginx_provision_test.py deploy/tests/ingress_cutover_test.py deploy/tests/infrastructure_privacy_test.py -q
 WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN> backend/.venv/bin/pytest deploy/tests/cloudflared_config_test.py deploy/tests/ingress_config_test.py -q
 CLOUDFLARED_SOURCE_DIR=<SOURCE_2026.10.0> WORK_TRACKER_GO_BIN=<GO_BIN> deploy/tests/cloudflared_access_test.sh
 git diff --check
 ```
 
 Brak rzeczywistych binarek jest błędem tych testów, nie cichym PASS/skip.
+Testy 9B2 symulują apt/systemd/reboot; nie zastępują testu na nowym systemie.
+Dodatkowe regresje audytu: `ingress_audit_test.py`, `host_validation_test.py`,
+`split_update_test.py`, `update_readiness_test.py`, `update_safety_test.py`, `checker_migration_test.py`, `startup_stabilization_test.py` i `first_upgrade_test.py` w `deploy/tests/` (ten sam runner pytest).
+Historyczny runtime v1 jest zapisany jako fixture’y z przypiętymi SHA-256;
+testy nie potrzebują historycznych commitów PR. First-upgrade celowo wymaga
+rzeczywistego drzewa bazowego Phase 9B1 i jego rodzica: użyj pełnej historii
+(`fetch-depth: 0` w CI) albo jawnie przygotuj płytki checkout testowy według
+[instrukcji fixture’ów](deploy/tests/fixtures/README.md). Brak historii to FAIL,
+nie SKIP. `backend/.venv/bin/python deploy/tests/history_portability_check.py`
+sprawdza te regresje w płytkim snapshotcie z jednym commitem, bez commita PR.
+Test `service_user_runtime_test.sh` bez roota zwraca **77 = SKIP/NOT RUN**,
+nie PASS. Przerwij raportowanie tego kroku jako sukcesu.
+Opcjonalna prywatna denylista: `WT_PRIVATE_INFRASTRUCTURE_DENYLIST` wskazuje
+plik 0600 poza checkoutem; skan prywatności nie drukuje dopasowanych wartości.
+Heurystyki obejmują IP obu rodzin oraz hostname w URL i typowych polach konfiguracji;
+nie zastępują ręcznego przeglądu ani prywatnej denylisty operatora.
 Źródło/tag, checksum i granice dowodów opisuje macierz weryfikacji. Live probes
 `deploy/tests/access_live_test.py` są przygotowane wyłącznie dla operatora
 Phase 9 z prywatnymi fixtures; nie uruchamiać ich jako części lokalnego pytest.

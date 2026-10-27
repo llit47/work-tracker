@@ -68,7 +68,7 @@ ani wyjątku dla całego /api/auth. Wymagane na każdej mutacji:
 Nowe wymagane `BROWSER_ALLOWED_ORIGINS` to jawna, niepusta allowlista
 kontrolowanych origins, bez ścieżek, query i credentials.
 Kanonizacja schematu/hosta/portu jest jednoznaczna; brak zgadywania z requestu.
-Przykłady: LAN `http://192.168.1.50:8000` albo
+Przykłady: LAN `http://10.123.45.10:8000` albo
 `http://work-tracker.home.arpa:8000`; później `https://work.example.com`.
 Rezerwacja DHCP lub stabilny DNS ograniczają błędy konfiguracji.
 Zmiana adresu/portu wymaga aktualizacji allowlist i restartu; do tego czasu

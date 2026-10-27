@@ -1,8 +1,8 @@
 # Phase 9B1 — opcjonalne przygotowanie Nginx
 
 9B1 dostarcza fundament przygotowania, weryfikacji i cofania prywatnego ingressu.
-Produkcja nadal działa w LAN. `install.sh`, `update.sh`, aplikacja, DB i webhooki
-pozostają bez zmian. Żadna z poniższych operacji nie zarządza cloudflared,
+Ten dokument opisuje warstwę 9B1. Kompletny instalator i cutover z 9B2
+opisuje [aktualny runbook](phase9b2-cutover.md). DB i kontrakt webhooków pozostają bez zmian. Żadna z poniższych operacji nie zarządza cloudflared,
 Cloudflare Access, DNS, firewallem, Proxmoxem ani Uvicornem.
 
 ## Kontrakt narzędzia
@@ -11,9 +11,9 @@ Z root repo: `python3 deploy/nginx_provision.py <operacja>`. System: Debian/Ubun
 Python >= 3.10, OpenSSL 3, `ip`, `ss`, systemd, istniejący `/usr/sbin/nginx`
 z modułem HTTP SSL i użytkownik `www-data`. Kod korzysta wyłącznie ze stdlib.
 Brak zależności kończy operację odmową. Narzędzie **nie instaluje pakietów**.
-Bezpieczny bootstrap pakietów na świeżym systemie pozostaje do 9B2: zwykłe
-`apt install nginx` może uruchomić domyślną usługę i listenery, więc nie jest
-częścią przygotowania 9B1. Przed użyciem na hoście z już zainstalowanym Nginx
+Bezpieczny bootstrap pakietów zapewnia osobna komenda 9B2, przed użyciem tego
+narzędzia. Nie wykonywać zwykłego `apt install nginx` na świeżym hoście: może
+uruchomić domyślną usługę i listenery. Przed użyciem na hoście z już zainstalowanym Nginx
 operator sprawdza wszystkie istniejące listenery i konfiguracje. Narzędzie ich
 nie wyłącza, nie przejmuje i nie przeładowuje.
 
@@ -63,18 +63,17 @@ z przykładu operator musi potwierdzić; adres HA jest celowo placeholderem:
 
 | Parametr | Wartość/warunek dla obecnej infrastruktury |
 |---|---|
-| WT | `192.168.0.170`, LXC 110, adres musi należeć do lokalnego interfejsu |
-| Connector | `192.168.0.149`, LXC 102; potwierdzić transport peer i brak SNAT |
-| HA | HAOS VM 100 `192.168.0.86` nie jest jeszcze potwierdzeniem source IP webhooków |
+| WT | `<WORK_TRACKER_LAN_IP>`; adres musi należeć do lokalnego interfejsu |
+| Connector | `<CLOUDFLARED_SOURCE_IP>`; potwierdzić transport peer i brak SNAT |
+| HA | `<OBSERVED_HA_SOURCE_IP>`; potwierdzić transport peer webhooków |
 | Porty | docelowo HA 8000, browser TLS 8443, backend 8001; trzy różne porty 1024–65535 |
 | Hostnames | jawny lowercase DNS public hostname i origin TLS name, bez wildcardów/aliasów/portów |
 | TLS | dokładny DNS SAN originu (CN nie wystarcza), zgodny klucz, co najmniej 7 dni ważności leaf, poprawny łańcuch CA i serverAuth, ścisła weryfikacja X.509 |
 
 9B1 obsługuje wyłącznie konkretne RFC1918 IPv4 dla listenera i dwóch różnych
 źródeł. Nie przyjmuje CIDR, publicznych/loopback IP ani IPv6. To ograniczenie
-adresowania **nie usuwa obowiązku ochrony IPv6**: LXC ma globalny IPv6, a obecny
-Uvicorn i inne usługi nadal wymagają audytu. Nie ma potwierdzonego firewalla
-Proxmoxa. W tym stanie aktywacja jest zablokowana, można tylko przygotować pliki.
+adresowania **nie usuwa obowiązku ochrony IPv6**: Host może mieć IPv6; Uvicorn i inne usługi wymagają audytu.
+Bez dowodów skutecznej izolacji obu rodzin aktywacja jest zablokowana.
 
 Po spełnieniu zależności, na kontrolowanym hoście operator może wykonać:
 
@@ -94,7 +93,8 @@ sudo python3 deploy/nginx_provision.py verify
 - `/var/backups/work-tracker/ingress/`: backupy 0700/0600; poprzedni wskaźnik
   przygotowania, brak jednostki przed aktywacją, dowody i wynik rollbacku.
 - `/etc/systemd/system/work-tracker-ingress.service`: powstaje dopiero przy
-  `activate`, root:root 0644; brak sekcji Install i brak `systemctl enable`.
+  `activate`, root:root 0644; 9B1 nie tworzy linku autostartu. Sekcję Install wykorzystuje
+  dopiero 9B2 po zatwierdzeniu całej transakcji.
 - `/run/work-tracker-ingress/`: runtime systemd 0750 root:www-data.
 
 Powtórne przygotowanie tych samych wejść nie zmienia plików ani usługi.
@@ -105,7 +105,8 @@ zweryfikowaną generację. Osierocone `.stage-*` po SIGKILL nie są aktywne;
 operator może usunąć je po sprawdzeniu, bez dotykania kompletnych generacji.
 Nie nadpisywać istniejących generacji ręcznie. Backup wskaźnika zachowuje
 odwołanie do starszych kopii TLS; nie usuwać ich w ramach sprzątania backupów.
-Zmianę/odnowienie TLS wykonywać przez nową generację, przy wyłączonym ingressie.
+Zmianę/odnowienie TLS wykonywać przez nową generację według runbooka 9B2,
+z kontrolowanym powrotem do LAN; nie edytować aktywnej generacji.
 
 ## Bramka jawnej aktywacji prywatnej
 
@@ -125,7 +126,7 @@ Każda flaga musi być literalnym `true` po rzeczywistym sprawdzeniu:
 4. Negatywne próby z trzeciego hosta LAN i zewnętrznej IPv4/IPv6 wraz z kontrolą
    reguł/liczników, a nie tylko connection refused na jeszcze nieotwartym porcie.
 5. Publiczna trasa WT nie istnieje/jest wyłączona; współdzielony tunnel i inne
-   usługi pozostają bez zmian. Nie wyłączać całego connectora LXC 102.
+   usługi pozostają bez zmian. Nie wyłączać współdzielonego connectora.
 6. Dostęp konsolowy, backup i przećwiczone cofnięcie env/drop-in/Uvicorna do LAN.
 
 Raport jest świadomym poświadczeniem operatora, **nie automatycznym dowodem
@@ -158,7 +159,10 @@ przygotowane generacje pozostają. Obca/zmieniona jednostka nie jest nadpisywana
 Jeżeli stop/reload/cofnięcie zawiedzie, dziennik pozostaje do ponowienia lub
 inspekcji operatora; sukces nie jest zgłaszany.
 
-Rollback ingressu zwalnia HA port i chwilowo odcina proxy do HA: **nie jest to
+Dla transakcji 9B2 CLI odmawia samego rollbacku Nginx: użyj
+`ingress_cutover.py rollback-lan`, aby przywrócić całą aplikację.
+
+Rollback samego 9B1 zwalnia HA port i chwilowo odcina proxy do HA: **nie jest to
 pełny rollback aplikacji**. Operator następnie przywraca zapisany LAN env i
 wyłącznie ingress drop-in aplikacji, daemon-reload i restart WT na poprzednim
 porcie, według [runbooka](phase9-ingress.md#7-natychmiastowe-wyłączenie-i-rollback).
@@ -197,12 +201,9 @@ package-install nadal BLOCKED (brak ensurepip), service-user runtime BLOCKED
 
 Dokładny dalszy zakres:
 
-- **9B2:** interaktywny wybór LAN (domyślny)/HTTPS w świeżym `install.sh`;
-  kontrolowany bootstrap pakietów bez auto-startu generic Nginx; integracja
-  katalogów/permissions; plan transakcji env i drop-in, backup i cofnięcie całego
-  cutover z zachowaniem HA URL; polityka autostartu/reboot i odnowienia TLS.
-  Updater nadal nie może sam przełączać trybu/ingressu/HTTPS.
-- **9C:** test na Debian 13 unprivileged LXC/PVE 9: prawdziwy systemd, root/worker,
+- **9B2:** implementacja gotowa lokalnie: opcjonalny bootstrap/instalator i pełny
+  cutover/rollback/boot recovery; [procedury i granice testów](phase9b2-cutover.md).
+- **9C:** test na Debian/Ubuntu, także unprivileged kontenery: prawdziwy systemd, root/worker,
   pakiety, bindy 8000/8443/8001, obserwowane źródło HA, firewall IPv4/global IPv6,
   negatywne probes, CA na connectorze 2026.10.3, HA ingestion/correction bez sesji
   i przy awarii browsera, backup/pełny LAN rollback oraz reboot. Domknąć X2 8B2.

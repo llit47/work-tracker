@@ -64,6 +64,8 @@ git clone --branch main --single-branch "${REPOSITORY_URL}" "${APP_DIR}"
 # shellcheck source=deploy/common.sh
 source "${APP_DIR}/deploy/common.sh"
 exec 3</dev/tty
+choose_ingress_mode
+installation_mode="${REPLY}"
 
 if ! getent group "${SERVICE_USER}" >/dev/null 2>&1; then
     groupadd --system "${SERVICE_USER}"
@@ -83,12 +85,20 @@ if [[ ! -e "${CONFIG_FILE}" ]]; then
     app_port="${REPLY}"
     prompt_config_value secret "" "Webhook token (leave empty to generate one)" token
     webhook_token="${REPLY}"
+    if [[ "${installation_mode}" == https ]]; then
+        log "Podaj origin działającego LAN HTTP do przygotowania i rollbacku. HTTPS origin zbierzemy osobno."
+    fi
     prompt_config_value plain "" "BROWSER_ALLOWED_ORIGINS: exact browser URL origins, comma-separated (no wildcard or path)" browser_origins
     browser_allowed_origins="${REPLY}"
     prompt_config_value plain "" "Browser CORS origins, comma-separated (empty for same-origin)" cors
     cors_origins="${REPLY}"
-    prompt_config_value plain "false" "Secure session cookie (true for HTTPS, false only for trusted LAN HTTP)" boolean
-    session_cookie_secure="${REPLY}"
+    if [[ "${installation_mode}" == https ]]; then
+        session_cookie_secure=false
+        log "Przygotowanie HTTPS zaczyna od działającego LAN: podany origin musi być LAN HTTP, Secure=false do cutoveru."
+    else
+        prompt_config_value plain "false" "Secure session cookie (true for HTTPS, false only for trusted LAN HTTP)" boolean
+        session_cookie_secure="${REPLY}"
+    fi
 
     config_temp="$(mktemp "${CONFIG_DIR}/work-tracker.env.XXXXXX")"
     {
@@ -100,6 +110,7 @@ if [[ ! -e "${CONFIG_FILE}" ]]; then
         printf 'CORS_ORIGINS=%s\n' "${cors_origins}"
         printf 'BROWSER_ALLOWED_ORIGINS=%s\n' "${browser_allowed_origins}"
         printf 'SESSION_COOKIE_SECURE=%s\n' "${session_cookie_secure}"
+        printf 'INGRESS_PROFILE=lan\nBROWSER_HSTS_SECONDS=0\n'
     } >"${config_temp}"
     chown root:"${SERVICE_USER}" "${config_temp}"
     chmod 0640 "${config_temp}"
@@ -155,7 +166,16 @@ fi
 read_env_value "${CONFIG_FILE}" APP_PORT
 app_port="${REPLY}"
 
-printf '\nWork Tracker installation completed.\n'
+if ! prepare_optional_ingress "${APP_DIR}" "${installation_mode}"; then
+    log "Przygotowanie HTTPS NIEUDANE. Aplikacja nadal działa w LAN; nie aktywowano ingressu."
+    log "Popraw zależności/TLS/parametry i ponów bootstrap oraz prepare według runbooka 9B2."
+fi
+
+printf '\nWork Tracker installation completed (LAN HTTP).\n'
+if [[ "${installation_mode}" == https ]]; then
+    printf 'HTTPS: wybrano tylko przygotowanie. Aktywacja wymaga osobnego okna, dowodów izolacji i potwierdzenia HA.\n'
+    printf 'Runbook: %s/docs/deployment/phase9b2-cutover.md\n' "${APP_DIR}"
+fi
 printf 'Application/API: http://%s:%s\n' "${detected_address}" "${app_port}"
 printf 'Configuration: %s\n' "${CONFIG_FILE}"
 printf 'Database: %s\n' "${DATABASE_FILE}"

@@ -1,13 +1,17 @@
 # 8B2 — macierz wymagań i dowodów
 
 Status implementacji: przygotowano profil opt-in, przykłady i lokalne testy.
-**8B2 IN PROGRESS:** lokalne package-install/service-user X2 pozostają BLOCKED.
+**8B2 IN PROGRESS:** lokalny package-install X2 PASS; service-user runtime SKIP/NOT RUN bez roota, wymaga 9C.
 Publiczny rollout i wszystkie dowody rzeczywistego Edge są osobną Phase 9.
 Nie wykonano deploymentu, zmian produkcyjnego LXC, HA, DNS ani tunelu.
 
 Fundament provisioning Nginx z 9B1 ma osobne
 [dowody i ograniczenia](../deployment/phase9b1-nginx.md#dowody-lokalne-i-pozostała-praca).
 Lokalne testy cyklu usługi nie zamykają X2 ani żadnego dowodu E poniżej.
+9B2 dodaje [instalator, pełny cutover i recovery](../deployment/phase9b2-cutover.md);
+symulowane apt/systemd/reboot nie zastępują rzeczywistej bramki 9C.
+Brak automatycznego proxy install dotyczy domyślnego LAN i zwykłego updatera;
+operator może jawnie wybrać przygotowanie HTTPS w instalatorze.
 
 Poziomy dowodu nie są zamienne:
 
@@ -49,9 +53,9 @@ Poziomy dowodu nie są zamienne:
 | Sesje/CSRF bez nowych mechanizmów i 30/180 dni bez zmian | PASS: pełne auth/browser/frontend suites, minimalna zmiana źródła IP | E: smoke test bieżącej sesji i nowego loginu |
 | X2: Alembic upgrade/head/data | PASS: test_migrations.py w pełnym pytest; head 20261025_08; brak migracji 8B2 | E: standardowa kontrola po updaterze |
 | X2: manifest/updater/rollback/layout/shell | PASS: config_update_test.sh, update_rollback_test.sh, application_permissions_test.sh, bash -n | E: operator odtwarza env/drop-in/Nginx/firewall osobno od Git |
-| X2: nowa instalacja pakietu lokalnie | BLOCKED: backend_package_install_test.sh zatrzymany, brak ensurepip/python3-venv | Wykonać na środowisku z python3-venv |
-| X2: service-user runtime lokalnie | BLOCKED: service_user_runtime_test.sh zgłasza skip; brak uprawnień roota do runuser; sudo no-new-privileges | Wykonać jako root; skip nie oznacza PASS |
-| Baseline 8B1-A/B package/runtime i działająca produkcja | OPERATOR-CONFIRMED, Debian 13 LXC; nie test Codexa | Nie zastępuje lokalnego X2 zmienionego kodu ani E dla 8B2 |
+| X2: nowa instalacja pakietu lokalnie | PASS: backend_package_install_test.sh wykonany w bieżącym środowisku | Nie zastępuje runtime/root/systemd 9C |
+| X2: service-user runtime lokalnie | SKIP / NOT RUN: service_user_runtime_test.sh zwraca 77 bez roota | Wykonać jako root; skip nie oznacza PASS |
+| Baseline 8B1-A/B package/runtime i działająca produkcja | OPERATOR-CONFIRMED; nie test Codexa | Nie zastępuje lokalnego X2 zmienionego kodu ani E dla 8B2 |
 | Backup/env/credentials poza Git i static | PASS: przykłady tylko placeholdery, dotychczasowe testy layout; brak sekretów | E: rzeczywiste właścicielstwo, permissions, backup/restore i static root |
 | Natychmiastowe wyłączenie publicznego routingu bez HA | Przygotowano runbook; P HA działa bez tunelu | E: zamknąć wyłącznie browser port/route i potwierdzić HA |
 | Zakres: bez Phase 9 aktywacji/Calendar/rotacji/recovery/RBAC/Redis | PASS: brak takich zmian; nie wykonano deploymentu/merge/release/review trigger | Phase 9 wymaga osobnego wykonania operatora |
@@ -98,7 +102,7 @@ nie jest dowodem walidacji JWT ani załadowania remote konfiguracji w koncie.
 
 Ostatnie wykonanie lokalne: pełny backend 751 PASS (w tym 170 przypadków U
 z test_ingress.py i migracje), frontend test/build PASS, P 8 PASS, J 6 PASS,
-K 4 PASS, config/rollback/layout/bash PASS. Pakiet/runtime: BLOCKED jak powyżej.
+K 4 PASS, config/rollback/layout/bash PASS. Pakiet: PASS; runtime: SKIP / NOT RUN jak powyżej.
 Alembic head: `20261025_08`; żadnej nowej migracji. Dokładny wynik po końcowych
 zmianach podany również w PR. Baseline operatora pochodzi z zadania, nie z
 połączenia z jego LXC.

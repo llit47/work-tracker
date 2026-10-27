@@ -18,6 +18,7 @@ import time
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'deploy'))
 spec = importlib.util.spec_from_file_location('nginx_provision', ROOT / 'deploy/nginx_provision.py')
 p = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(p)
@@ -64,12 +65,12 @@ class TestHost(p.Host):
         self.ready = True
 
     def local_ip(self, address):
-        return address == '192.168.0.170'
+        return address == '10.123.45.10'
 
     def listeners(self):
         values = super().listeners()
         # Network namespace is not available. Only test listener IPs are mapped.
-        values = [('192.168.0.170' if ip == '127.0.0.1' else ip, port, line) for ip, port, line in values]
+        values = [('10.123.45.10' if ip == '127.0.0.1' else ip, port, line) for ip, port, line in values]
         return values + self.extra_listeners
 
     def active(self):
@@ -80,6 +81,9 @@ class TestHost(p.Host):
 
     def backend_ready(self, config):
         p.require(self.ready, 'Test: backend nie jest gotowy.')
+
+    def ingress_permissions(self, pid):
+        pass  # Unprivileged test; root/www-data is a real-systemd check.
 
     def tls_probe(self, config, ca):
         super().tls_probe(config | {'lan_ip': '127.0.0.1'}, ca)
@@ -136,9 +140,9 @@ def setup(tmp_path, tls):
     for name in ('origin.pem', 'origin.key', 'ca.pem'):
         shutil.copyfile(tls / name, tmp_path / name)
         (tmp_path / name).chmod(0o600)
-    config = dict(lan_ip='192.168.0.170', browser_port=free_port(), ha_port=free_port(), backend_port=free_port(),
+    config = dict(lan_ip='10.123.45.10', browser_port=free_port(), ha_port=free_port(), backend_port=free_port(),
                   public_hostname='work.example.invalid', origin_tls_name='origin.example.invalid',
-                  cloudflared_source_ip='192.168.0.149', ha_source_ip='192.168.0.86',
+                  cloudflared_source_ip='10.123.45.20', ha_source_ip='10.123.45.30',
                   certificate=str(tmp_path / 'origin.pem'), private_key=str(tmp_path / 'origin.key'),
                   ca_certificate=str(tmp_path / 'ca.pem'))
     source = tmp_path / 'operator.json'
@@ -183,8 +187,8 @@ def test_read_only_plan_validation_and_ha_busy_prepare(setup):
 
 
 @pytest.mark.parametrize('field,value', [
-    ('lan_ip', '0.0.0.0'), ('lan_ip', '2001:db8::1'), ('ha_source_ip', '192.168.0.0/24'),
-    ('ha_source_ip', '192.168.0.149'), ('cloudflared_source_ip', '8.8.8.8'),
+    ('lan_ip', '0.0.0.0'), ('lan_ip', '2001:db8::1'), ('ha_source_ip', '10.123.45.0/24'),
+    ('ha_source_ip', '10.123.45.20'), ('cloudflared_source_ip', '203.0.113.8'),
     ('browser_port', True), ('browser_port', 443), ('ha_port', '8000'),
     ('public_hostname', 'foo;include /tmp/evil'), ('public_hostname', '*.example.com'),
     ('origin_tls_name', 'Origin.example.invalid'), ('private_key', '/tmp/key;evil'),
@@ -269,7 +273,7 @@ basicConstraints=CA:FALSE
     assert not tool.layout.state.exists()
 
 
-@pytest.mark.parametrize('address', ['0.0.0.0', '::', '192.168.0.170'])
+@pytest.mark.parametrize('address', ['0.0.0.0', '::', '10.123.45.10'])
 def test_browser_conflict_including_ipv6(setup, address):
     tool, source, config = setup
     tool.host.extra_listeners = [(address, config['browser_port'], 'another process')]
@@ -429,7 +433,7 @@ def test_generation_permissions_and_tampering(setup):
 
 
 def test_default_lan_update_has_no_ingress_lifecycle_hook():
-    for name in ('install.sh', 'update.sh', 'deploy/update_rollback.sh'):
+    for name in ('update.sh', 'deploy/update_rollback.sh'):
         text = (ROOT / name).read_text()
         assert 'nginx_provision' not in text and p.SERVICE not in text
     assert 'INGRESS_PROFILE|optional|plain|lan|' in (ROOT / 'deploy/config.manifest').read_text()
@@ -458,6 +462,11 @@ def test_backend_readiness_uses_actual_process_environment_and_socket(setup, mon
             monkeypatch.setattr(p, 'execute', lambda args, **kwargs:
                 str(process.pid).encode() if args[:2] == ['systemctl', 'show'] else real_execute(args, **kwargs))
             host.backend_ready(config)
+            host.backend_health(config)
+            host.app_config_preserved(environment)
+            for target in ('/api/webhook/home-assistant', '/api/webhook/home-assistant/correction'):
+                assert host.request('127.0.0.1', port, '127.0.0.3', target, method='POST',
+                                    headers='Content-Type: application/json\r\n', body='{}') == 422
             with pytest.raises(p.Refusal):
                 host.backend_ready(config | {'public_hostname': 'wrong.example.invalid'})
             with pytest.raises(p.Refusal):
@@ -470,8 +479,8 @@ def test_backend_readiness_uses_actual_process_environment_and_socket(setup, mon
 def test_production_renderer_has_only_specific_ipv4_and_preserves_proxy_contract(setup):
     tool, _, config = setup
     rendered = p.Provisioner(tool.layout, tool.host).render(config, tool.layout.boundary)
-    assert f"listen 192.168.0.170:{config['ha_port']} default_server;".encode() in rendered
-    assert f"listen 192.168.0.170:{config['browser_port']} ssl default_server;".encode() in rendered
+    assert f"listen 10.123.45.10:{config['ha_port']} default_server;".encode() in rendered
+    assert f"listen 10.123.45.10:{config['browser_port']} ssl default_server;".encode() in rendered
     assert rendered.count(b'listen ') == 2
     assert b'proxy_bind 127.0.0.2;' in rendered and b'proxy_bind 127.0.0.3;' in rendered
     assert b'proxy_set_header X-Webhook-Token $http_x_webhook_token;' in rendered

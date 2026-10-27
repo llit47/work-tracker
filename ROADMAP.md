@@ -22,7 +22,7 @@ Zakończony zakres:
 - [x] Instalator dla Debiana/Ubuntu oraz updater z backupem i rollbackiem.
 - [x] Uruchamianie przez `work-tracker.service` z autostartem i restartem po awarii.
 - [x] Uprawnienia pozwalające użytkownikowi usługi czytać i uruchamiać aplikację bez prawa zapisu do kodu.
-- [x] Rzeczywista instalacja zweryfikowana na Debian 13 LXC w Proxmox.
+- [x] Rzeczywista instalacja zweryfikowana przez operatora.
 - [x] Integracja Home Assistant przez `rest_command` oraz automatyzacje wejścia i wyjścia ze strefy.
 - [x] Ręczny test całej ścieżki Home Assistant → API → SQLite → frontend.
 
@@ -508,7 +508,7 @@ Nie projektujemy obecnie recovery, generacji sesji ani dodatkowych kluczy.
 
 ### Phase 8B2 — Cloudflare Access and Internet Readiness
 
-**Status: IN PROGRESS — implementacja i testy ingress/JWT gotowe; lokalne X2 BLOCKED**
+**Status: IN PROGRESS — implementacja i testy ingress/JWT gotowe; package-install PASS, runtime wymaga roota/9C**
 
 Dependencies: 8B1-A i 8B1-B DONE (operator-confirmed). Bez publicznej aktywacji;
 rollout, DNS i faktyczne E2E należą do Phase 9.
@@ -539,7 +539,7 @@ Acceptance criteria:
   duplikaty/spoofing, 429/Retry-After, cookie/CSRF/heartbeat i brak resetu historii.
 - [x] X1 oraz lokalne migracje/config/updater/rollback/layout X2, pełny backend,
   frontend test/build; dokumentacja i nieaktywne local/remote config templates.
-- [ ] X2 8B2 package-install/runtime: BLOCKED — lokalnie brak ensurepip i roota;
+- [ ] X2 8B2: package-install PASS lokalnie; runtime NOT RUN — brak roota;
   A/B wcześniej potwierdzone przez operatora nie są testem zmienionego kodu.
 - [x] Rzeczywiste testy Access/IdP/Edge, IP i firewalla jawnie wydzielone jako
   **BLOCKED / REQUIRES PHASE 9 VERIFICATION**, z przygotowanymi live probes.
@@ -566,7 +566,7 @@ DONE wymaga domknięcia lokalnej weryfikacji X2; publiczne E2E nadal są Phase 9
 
 ## Phase 9 — Cloudflare public deployment
 
-**Status: IN PROGRESS — tylko fundament 9B1; publiczny rollout PLANNED**
+**Status: IN PROGRESS — fundament 9B1/9B2; publiczny rollout PLANNED**
 
 Cel: udostępnić **całą** aplikację Work Tracker przez HTTPS pod dedykowaną subdomeną domeny obsługiwanej przez Cloudflare. Nazwa subdomeny nie jest jeszcze ustalona. Phase 9 następuje po ukończeniu Phase 8; obecny origin pozostaje prywatny.
 
@@ -607,20 +607,53 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 
 #### Phase 9B2 — Fresh install and complete private cutover
 
-**Status: NEXT**
+**Status: IN PROGRESS — implemented / locally tested; real infrastructure NOT VERIFIED (9C)**
 
-- [ ] Wybór LAN (domyślny)/HTTPS w instalatorze; bezpieczny bootstrap pakietów
-  bez automatycznego startu generic Nginx i integracja katalogów/permissions.
-- [ ] Transakcja env/drop-in/Uvicorn, backup i pełny rollback do LAN bez zmiany
-  HA URL; polityka autostartu/reboot/odnowienia TLS; updater nadal nie przełącza sieci.
+- [x] Domyślny LAN i opcjonalne przygotowanie HTTPS w instalatorze; kontrolowany
+  bootstrap Nginx z trwałą maską/policy, bez startu generic Nginx i przejmowania obcych usług.
+- [x] Osobny cutover: preflight, bramki 9B1, okno serwisowe i kontrola z realnego HA,
+  backup env/unit/drop-in, durable journal i kompensacja pełnego LAN bez odtwarzania DB.
+- [x] SIGTERM/SIGKILL recovery, autostart tylko aktywnego ingressu, ordered boot recovery,
+  restart wraz z backendem, konserwatywna wymiana TLS przez nową generację.
+- [x] Wspólna blokada z updaterem; zwykły update zachowuje profil/konfigurację sieci.
+- [x] Regresje prawdziwego Nginx/OpenSSL/Uvicorn, izolowanej SQLite, błędów i kill;
+  apt/systemd/reboot symulowane, rzeczywiste kontrole jawnie przekazane do 9C.
+- [x] Neutralne przykłady publicznego repo, trwała zasada prywatności i skan regresyjny.
+
+- [x] Audyt: aktywny boot recovery bez zależności od archiwum, alarm utraty rollbacku,
+  finalny snapshot po potwierdzeniu, wersjonowanie własnych artefaktów, ścisły kontrakt ExecStart.
+- [x] Test rzeczywistego update.sh na lokalnych repo Git, z Uvicorn/Nginx/SQLite,
+  awariami i późniejszym LAN rollback; niezgodne unit/manifest/wzorce blokowane przed merge.
+- [x] P1 update readiness: ograniczone oczekiwanie na backend i proxy, osobna końcowa
+  kontrola bezpieczeństwa, test z natychmiastowym powrotem restartu systemctl.
+- [x] P1 integralność SQLite: brak automatycznego restore DB/sidecarów; przed Alembic
+  rollback kodu zachowuje bieżące zapisy, po próbie Alembic trwała blokada i ręczna
+  analiza kompatybilności. Testy przyjętych webhooków/korekt/sesji/limitera i częściowej DDL.
+- [x] Pierwszy update z rzeczywistego 5d974b1: przypięty SHA/ref, jawny bootstrap,
+  checker poza checkoutem, efektywny guard przed FF/Alembic i exec z tym samym
+  PID/blokadą. Ograniczony kontrakt LAN; nieznane/niepełne stany odmawiają.
+- [x] Audyt runtime: ograniczona stabilizacja pre-exec/argv/env i workera, dwie
+  zgodne obserwacje przed ścisłą finalną walidacją; trwałe naruszenia odrzucane.
+- [x] Katalogowana v1 checkera zgodna przez FF; osobna atomowa migracja v1 → v2
+  po zakończeniu updatera, bez zdjęcia guarda, z journalem i odzyskaniem SIGKILL.
+- [x] First-upgrade: tylko main + pełny SHA; readonly target-manifest preflight
+  przed guardem/FF/Alembic; brak późniejszych pytań/dopisywania env.
+- [x] Test kontraktu dostarczonego unitu z walidatorem i zbiorczy runner 0/77/FAIL.
+- [x] Historyczny runtime v1 w fixture’ach z przypiętymi SHA-256, bez zależności
+  od commita PR; jawny wymóg historii bazowej i test checkoutu shallow/squash.
+- [ ] Weryfikacja rzeczywistego apt/systemd/root-worker/reboot i izolacji sieci — Phase 9C.
+  Obejmuje nowy guard aktualizacji, awarie migracji i bezpieczną ręczną naprawę.
+
+Procedury i ograniczenia: [runbook 9B2](docs/deployment/phase9b2-cutover.md).
+Brak aktywacji produkcji, zmian HA/Cloudflare/firewalla ani migracji SQLite.
 
 ### Phase 9C — Real private infrastructure verification
 
 **Status: PLANNED**
 
-- [ ] Debian 13 unprivileged LXC/PVE 9: pakiety/systemd/root-worker, bindy,
+- [ ] Debian/Ubuntu, także unprivileged kontenery: pakiety/systemd/root-worker, bindy,
   rzeczywisty source IP HA/connectora, firewall IPv4/global IPv6, negatywne probes.
-- [ ] CA/SAN z connectora 2026.10.3, tokenowe entry/exit/correction bez sesji,
+- [ ] CA/SAN z connectora w wybranej wspieranej wersji, tokenowe entry/exit/correction bez sesji,
   niezależność HA od browsera, backup, pełny LAN rollback i reboot; domknięcie X2 8B2.
 
 ### Phase 9D — Public rollout and end-to-end verification
