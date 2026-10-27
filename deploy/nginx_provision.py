@@ -55,7 +55,16 @@ class Refusal(Exception):
 
 
 class Pending(Refusal):
-    """Only an absent starting process/socket or refused connection is retryable."""
+    """An absent starting process/socket or incomplete initialization."""
+
+
+class RuntimeMismatch(Pending):
+    """Dynamic argv/env/worker snapshot has not reached the required contract.
+
+    May be inherited pre-exec state. If it persists to the deadline it is an
+    invalid runtime, not a successful/merely slow start. Never used for files,
+    TLS, policy, master UID or a wrong/foreign listening socket.
+    """
 
 
 
@@ -345,16 +354,21 @@ class Host:
         require(self.request(config['lan_ip'], config['ha_port'], config['lan_ip'], '/api/health') == 200,
                 'LAN /api/health nie działa.')
 
-    def ingress_permissions(self, pid):
+    def ingress_permissions(self, pid, *, starting=False):
         import pwd
         process = self.proc / pid
         master = re.search(r'^Uid:\s+(.*)$', (process / 'status').read_text(), re.M)
         require(master is not None and set(master[1].split()) == {'0'}, 'Nginx master wymaga UID root.')
         children = (process / 'task' / pid / 'children').read_text().split()
         worker_uid = str(pwd.getpwnam('www-data').pw_uid)
+        if starting and not children: raise Pending('Worker Nginx jeszcze nie istnieje.')
+        if starting and len(children) != 1: raise RuntimeMismatch('Liczba workerów Nginx jeszcze niezgodna.')
         require(len(children) == 1, 'Wymagany jeden worker Nginx.')
         worker = re.search(r'^Uid:\s+(.*)$', (self.proc / children[0] / 'status').read_text(), re.M)
+        if starting and worker is not None and set(worker[1].split()) <= {'0', worker_uid} and set(worker[1].split()) != {worker_uid}:
+            raise RuntimeMismatch('Worker Nginx jeszcze nie zakończył zmiany UID.')
         require(worker is not None and set(worker[1].split()) == {worker_uid}, 'Worker Nginx wymaga www-data.')
+        return children[0]
 
     def tls_probe(self, config, ca):
         context = ssl.create_default_context(cafile=str(ca))
@@ -366,29 +380,47 @@ class Host:
         pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service'], timeout=self.io_timeout(30)).decode().strip()
         if starting and pid in ('', '0'): raise Pending('Backend jeszcze nie wystartował.')
         require(pid.isdigit() and int(pid) > 1, 'Backend systemd nie działa.')
+        listeners = [s for s in self.listeners() if s[1] == config['backend_port']]
+        # A wrong bind/owner is a confirmed violation even before exec settles.
+        if listeners:
+            require(len(listeners) == 1 and listeners[0][0] == '127.0.0.1' and f'pid={pid},' in listeners[0][2],
+                    'Nieprawidłowy lub obcy listener backendu.')
         process = self.proc / pid
-        argv = process.joinpath('cmdline').read_bytes().decode().split('\0')
+        def runtime_require(valid, message):
+            if starting and not valid: raise RuntimeMismatch(message)
+            require(valid, message)
+        def runtime_text(name):
+            try: return process.joinpath(name).read_bytes().decode()
+            except (UnicodeDecodeError, PermissionError, ProcessLookupError):
+                runtime_require(False, 'Niekompletny obraz argv/env procesu.')
+        argv = runtime_text('cmdline').split('\0')
         for flag, value in [('--host', '127.0.0.1'), ('--port', str(config['backend_port'])), ('--workers', '1')]:
-            require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv) and argv[argv.index(flag) + 1] == value, 'Backend ma niezgodny bind/worker.')
-        require('app.main:app' in argv and '--no-proxy-headers' in argv and '--proxy-headers' not in argv,
+            runtime_require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv) and argv[argv.index(flag) + 1] == value, 'Backend ma niezgodny bind/worker.')
+        runtime_require(argv.count('app.main:app') == 1 and argv.count('--no-proxy-headers') == 1 and '--proxy-headers' not in argv,
                 'Backend wymaga pojedynczego Uvicorn bez proxy headers.')
-        environment = dict(v.split('=', 1) for v in process.joinpath('environ').read_bytes().decode().split('\0') if '=' in v)
+        tokens = argv[:-1] if argv[-1:] == [''] else argv
+        prefix = tokens[:tokens.index('app.main:app')]
+        runtime_require((len(prefix) in (1, 2) and Path(prefix[-1]).name == 'uvicorn') or
+                        (len(prefix) == 3 and prefix[-2:] == ['-m', 'uvicorn']), 'Nieprawidłowy launcher Uvicorna.')
+        runtime_require(tokens[len(prefix):] == ['app.main:app', '--host', '127.0.0.1', '--port', str(config['backend_port']),
+                                               '--workers', '1', '--no-proxy-headers'], 'Nieobsługiwane argumenty Uvicorna.')
+        environment = dict(v.split('=', 1) for v in runtime_text('environ').split('\0') if '=' in v)
         defaults = {'CORS_ORIGINS': '', 'BROWSER_HSTS_SECONDS': '0'}
         for key, expected in {'INGRESS_PROFILE': 'split', 'SESSION_COOKIE_SECURE': 'true',
                               'BROWSER_ALLOWED_ORIGINS': f"https://{config['public_hostname']}",
                               'CORS_ORIGINS': '', 'BROWSER_HSTS_SECONDS': '0'}.items():
-            require(environment.get(key, defaults.get(key)) == expected,
+            runtime_require(environment.get(key, defaults.get(key)) == expected,
                     'Backend nie ma wymaganej konfiguracji split/Secure/origin/HSTS=0.')
-        listeners = [s for s in self.listeners() if s[1] == config['backend_port']]
         if starting and not listeners: raise Pending('Brak socketu startującego backendu.')
         require(len(listeners) == 1 and listeners[0][0] == '127.0.0.1' and f'pid={pid},' in listeners[0][2],
                 'Backend musi słuchać wyłącznie na 127.0.0.1 i należeć do usługi WT.')
+        return pid
 
     def update_readiness(self, config, *, deadline=None):
         """No TLS/ACL/file checks are retried here; final verify handles them."""
         self._probe_deadline = deadline
         try:
-            self.backend_ready(config, starting=True)
+            backend = self.backend_ready(config, starting=True)
             self.backend_health(config)
             pid = self.ingress_pid()
             listeners = [s for s in self.listeners() if s[1] in (config['ha_port'], config['browser_port'])]
@@ -397,8 +429,10 @@ class Host:
             if not self.active() or pid in ('', '0') or len(listeners) < 2:
                 raise Pending('Ingress jeszcze nie otworzył obu listenerów.')
             require(len(listeners) == 2, 'Nadmiarowe listenery ingressu.')
+            worker = self.ingress_permissions(pid, starting=True)
             for port in (config['ha_port'], config['browser_port']):
                 with socket.create_connection((config['lan_ip'], port), timeout=self.io_timeout(1)): pass
+            return backend, pid, worker
         except (FileNotFoundError, ConnectionRefusedError, TimeoutError) as error:
             raise Pending('Usługi jeszcze nie odpowiadają.') from error
         finally:

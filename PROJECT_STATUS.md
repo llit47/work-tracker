@@ -23,7 +23,7 @@
   - **Phase 8B1 — Browser security hardening: DONE (operator-confirmed)**
     - **Phase 8B1-A — Lightweight Browser Security: DONE (operator-confirmed)**
     - **Phase 8B1-B — Simple Login Rate Limiting: DONE (operator-confirmed)**
-  - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (local X2 BLOCKED)**
+  - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (X2 runtime NOT RUN without root; package install PASS)**
 - **Phase 9 — Cloudflare public deployment: IN PROGRESS (tylko przygotowanie)**
   - **Phase 9B1 — Safe Nginx provisioning: DONE (lokalnie, bez aktywacji)**
   - **Phase 9B2 — Fresh install/private cutover: IN PROGRESS (implemented / locally tested; real 9C NOT VERIFIED)**
@@ -212,9 +212,15 @@ sprawdzeniem starego hosta i trwałym checkerem poza checkoutem. Guard i journal
 poprzedzają FF/Alembic; exec zachowuje PID i blokadę. Zwykły stary updater
 pozostaje niedopuszczalną ścieżką pierwszego upgrade. Regresje używają faktycznego
 starego checkoutu/updatera, SQLite WAL, Alembic i SIGKILL; systemd jest symulowany.
+Readiness obejmuje pre-exec/niepełne argv/env i inicjalizację workera, z dwoma
+zgodnymi obrazami przed jednorazową walidacją; timeout rozróżnia brak gotowości
+i niezgodny runtime. Znana v1 checkera pozostaje zgodna przez FF i kończy starą
+transakcję; osobna migracja-checker v1 → v2 pod blokadą zachowuje guard, backup
+i trwały journal. First-upgrade dopuszcza tylko main, sprawdza readonly target
+manifest przed guardem/FF/Alembic i nie dopisuje env w trakcie transakcji.
 
 Aktualne komendy i wyniki regresji audytu: [runbook 9B2](docs/deployment/phase9b2-cutover.md#8-walidacja-i-bramka-9c).
-Pełny backend 751 PASS, deploy/ingress 289 PASS, JWT 6 PASS, frontend test/build
+Pełny backend 751 PASS, deploy/ingress 325 PASS, JWT 6 PASS, frontend test/build
 i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
 Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
 osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.
@@ -228,7 +234,7 @@ neutralne, scanner chroni prywatność. Historii Git nie przepisano.
 [Runbook 9B2](docs/deployment/phase9b2-cutover.md) i
 [fundament 9B1](docs/deployment/phase9b1-nginx.md) zawierają procedury i granice dowodów.
 
-**Phase 8B2 — implementacja ingress/readiness gotowa; lokalna walidacja X2 BLOCKED.**
+**Phase 8B2 — implementacja ingress/readiness gotowa; X2 runtime wymaga roota/9C, package-install PASS lokalnie.**
 
 8B1-A/B są DONE na podstawie potwierdzenia operatora.
 Wymagany jest jeden Uvicorn worker/no-proxy-headers i kontrola pakietu/runtime.
@@ -256,9 +262,8 @@ Manifest ma dwa opcjonalne klucze, nie wymusza zmiany obecnego LAN. Brak migracj
 Lokalnie: pełny backend 751 PASS (w tym C1/C2 policy/X1 i Alembic), frontend
 test/build PASS, prawdziwy Nginx→Uvicorn TCP/TLS 8 PASS, rzeczywisty walidator
 cloudflared RSA/JWKS 6 PASS, config templates/binarka 4 PASS, config/updater/
-rollback/layout/bash PASS. **BLOCKED:** package-install zatrzymał się na braku
-ensurepip; runtime service user zgłosił skip, brak roota/no-new-privileges.
-Nie zaliczamy tych dwóch jako PASS; 8B2 pozostaje IN PROGRESS do ich wykonania.
+rollback/layout/bash PASS. Package-install wcześniej był BLOCKED przez ensurepip; bieżący przebieg **PASS**. Runtime service user nadal SKIP/NOT RUN bez roota.
+Runtime SKIP nie jest zaliczany jako PASS; 8B2 pozostaje IN PROGRESS do rzeczywistej walidacji root/systemd/9C.
 
 Publiczne testy Edge/Access (w tym wykluczony użytkownik), effective remote
 config, prawdziwe IP/Workers/Pseudo IPv4, docelowy firewall/permissions i wyłączenie

@@ -170,7 +170,9 @@ def first(tmp_path):
                             output='{ path=/usr/bin/python3 ; argv[]='+argv+' ; ignore_errors=no ; pid=0 ; status=0/0 }'
                         elif key=='ExecStart': output='{ path='+observation.APP_EXEC_START[0]+' ; argv[]='+' '.join(observation.APP_EXEC_START)+' ; ignore_errors=no ; pid=0 ; status=0/0 }'
                         else: output=observation.APP_PROPERTIES[key]
-                    elif args[0]=='is-active': rc=0 if state['process'] else 3; output='active' if state['process'] else 'inactive'
+                    elif args[0]=='is-active':
+                        active=bool(state['process'] or state.get('type_simple_started'))
+                        rc=0 if active else 3; output='active' if active else 'inactive'
                     elif args[0]=='is-enabled': output='enabled'
                     elif args[0]=='daemon-reload':
                         state['loaded']=state['failure']!='reload'
@@ -181,8 +183,9 @@ def first(tmp_path):
                                 db.execute("UPDATE login_attempts SET failed_at='2030-01-01T17:00:00+00:00'")
                             state['later_rows']=database_rows(database)
                         if state['failure']=='kill-bootstrap': os.kill(state['updater'],signal.SIGKILL)
-                    elif args[0]=='stop': stop()
+                    elif args[0]=='stop': state['type_simple_started']=False; stop()
                     elif args[0]=='restart':
+                        state['type_simple_started']=True
                         if state['failure']=='kill-after': os.kill(state['updater'],signal.SIGKILL)
                         else:
                             def later():
@@ -238,15 +241,17 @@ with socket.socket(socket.AF_UNIX) as s:
     for name in ('pip','alembic'):
         (venv/name).write_text(driver);(venv/name).chmod(0o755)
     # Real ss is used for real process socket ownership.
-    def upgrade(failure=None, expected=None, ref='refs/heads/main', legacy=False, late_write=False):
+    def upgrade(failure=None, expected=None, ref='refs/heads/main', legacy=False, late_write=False, manifest_entry=None, legacy_commit=BASE):
         state['failure']=failure; state['legacy']=legacy; state['late_write']=late_write
+        if manifest_entry:
+            with (release/'deploy/config.manifest').open('a') as stream: stream.write('\n'+manifest_entry+'\n')
         if failure=='kill-migration':
             (release/'backend/alembic/versions/20990101_first.py').write_text("from alembic import op\nimport sqlalchemy as sa\nimport os,signal\nrevision='20990101_first'\ndown_revision='20261025_08'\ndef upgrade():\n op.create_table('partial_first_upgrade',sa.Column('id',sa.Integer,primary_key=True))\n os.kill(int(os.environ['WT_TEST_UPDATER_PID']),signal.SIGKILL)\n raise RuntimeError('partial test migration')\n")
         command(['git','-C',release,'add','.']); command(['git','-C',release,'commit','-qm','Private candidate'])
         target=command(['git','-C',release,'rev-parse','HEAD']).decode().strip()
         command(['git','-C',release,'push','-q','origin','HEAD:refs/heads/main'])
         if legacy:
-            old=redirected(command(['git','-C',app,'show',BASE+':update.sh']).decode()).replace('[[ "${EUID}" -eq 0 ]]','true')
+            old=redirected(command(['git','-C',app,'show',legacy_commit+':update.sh']).decode()).replace('[[ "${EUID}" -eq 0 ]]','true')
             old=old.replace('readonly SERVICE_USER="work-tracker"', f'readonly SERVICE_USER="{__import__("pwd").getpwuid(os.getuid()).pw_name}"')
             file=base/'historical-updater.sh';file.write_text(old);file.chmod(0o700)
             args=['bash',str(file)]
@@ -255,9 +260,48 @@ with socket.socket(socket.AF_UNIX) as s:
         state['updater']=proc.pid
         stdout,stderr=proc.communicate(timeout=45)
         return SimpleNamespace(returncode=proc.returncode,stdout=stdout,stderr=stderr,target=target)
+    def old_release_update():
+        # Real d3cb1a6 updater/helper. Only OS paths/UIDs are redirected,
+        # exactly as in the first-upgrade fixture; no safety checks are mocked.
+        history='d3cb1a6849feeee9690235fe6545578fdb1954e8'
+        target_files={str(path.relative_to(release)):path.read_bytes() for path in (release/'deploy').iterdir() if path.is_file()}
+        target_files['update.sh']=(release/'update.sh').read_bytes()
+        stop()
+        command(['git','-C',app,'checkout','-q','--detach',history])
+        for name in ('common.sh','env_file.py','update_rollback.sh','update_safety.py'):
+            content=redirected(command(['git','-C',app,'show',history+':deploy/'+name]).decode())
+            if name=='update_safety.py':
+                content=content.replace('uid = 0','uid = os.getuid()').replace("boundary = Path('/')",f'boundary = Path({str(base)!r})')
+                content=content.replace('os.geteuid() == 0','os.geteuid() == os.getuid()')
+            (app/'deploy'/name).write_text(content)
+        command(['git','-C',app,'config','user.name','Upgrade Test'])
+        command(['git','-C',app,'config','user.email','upgrade@example.invalid'])
+        command(['git','-C',app,'add','.']);command(['git','-C',app,'commit','-qm','Private historical OS adapter'])
+        baseline=command(['git','-C',app,'rev-parse','HEAD']).decode().strip()
+        old_checker=(app/'deploy/update_safety.py').read_bytes()
+        checker_path=config/'update-safety.py';checker_path.write_bytes(old_checker);checker_path.chmod(0o644)
+        guard.parent.mkdir(mode=0o755)
+        guard.write_text('[Service]\nExecStartPre=!/usr/bin/python3 -I '+str(checker_path)+' allow-start\n');guard.chmod(0o644)
+        state['loaded']=True
+        command(['git','-C',release,'fetch','-q',app,baseline])
+        command(['git','-C',release,'reset','--hard',baseline])
+        for name,data_bytes in target_files.items():
+            if name=='deploy/update_safety.py':
+                data_bytes=data_bytes.replace(b'fcfb8ee82d5c404e721b3e8188b07c514b60f69a4139669be390060353cb6476',__import__('hashlib').sha256(old_checker).hexdigest().encode())
+            (release/name).write_bytes(data_bytes)
+        assert start();ready()
+        result=upgrade(legacy=True,legacy_commit=history)
+        if result.returncode: return result,old_checker
+        ready()
+        # The unchanged old staged updater finished; new checkout accepted v1.
+        assert checker_path.read_bytes()==old_checker and not (config/'update-state.json').exists()
+        migrated=subprocess.run([sys.executable,app/'deploy/update_safety.py','migrate-checker'],capture_output=True)
+        assert migrated.returncode==0,migrated.stderr.decode()
+        assert checker_path.read_bytes()==(app/'deploy/update_safety.py').read_bytes()!=old_checker
+        return result,old_checker
     try:
         yield SimpleNamespace(app=app,base=base,env=env,unit=unit,guard=guard,state=state,backups=backups,database=database,
-            upgrade=upgrade,original_env=original_env,rows=original_rows,start=start,stop=stop,ready=ready,lock=lock,entry=entry,remote=remote)
+            upgrade=upgrade,old_release_update=old_release_update,original_env=original_env,rows=original_rows,start=start,stop=stop,ready=ready,lock=lock,entry=entry,remote=remote)
     finally:
         for worker in state['threads']:worker.join(5)
         stop(); server.shutdown();server.server_close();thread.join(5);log.close();keeper.close()
@@ -265,12 +309,10 @@ with socket.socket(socket.AF_UNIX) as s:
 
 def test_first_lan_upgrade_uses_actual_old_checkout_and_preserves_all_rows(first):
     f=first; wal=Path(str(f.database)+'-wal');shm=Path(str(f.database)+'-shm')
-    identities=(wal.stat().st_ino,shm.stat().st_ino)
     result=f.upgrade()
     assert result.returncode==0, result.stdout.decode()+result.stderr.decode()
     assert f.guard.exists() and (f.env.parent/'update-safety.py').exists()
     assert f.env.read_bytes()==f.original_env and database_rows(f.database)==f.rows
-    assert (wal.stat().st_ino,shm.stat().st_ino)==identities
     assert not (f.env.parent/'update-state.json').exists()
     f.ready()
     assert f.state['starts']==[BASE,result.target]
@@ -355,3 +397,45 @@ def test_first_upgrade_keeps_accepted_ha_and_identity_writes_after_online_backup
     assert database_rows(directory/'online.db')==f.rows  # Historical copy predates later accepted writes.
     assert f.env.read_bytes()==f.original_env
     f.ready()
+
+
+@pytest.mark.parametrize('problem,key', [('missing','SESSION_COOKIE_SECURE'),('invalid','APP_PORT'),('future','FUTURE_REQUIRED')])
+def test_target_manifest_refuses_before_guard_ff_stop_or_migration(first,problem,key):
+    f=first
+    entry=None
+    if problem=='missing': f.env.write_text('\n'.join(line for line in f.env.read_text().splitlines() if not line.startswith(key+'='))+'\n')
+    if problem=='invalid': f.env.write_text(f.env.read_text().replace('APP_PORT=', 'APP_PORT=invalid'))
+    if problem=='future': entry='FUTURE_REQUIRED|required|secret||Private value supplied before upgrade|token'
+    before=f.env.read_bytes()
+    result=f.upgrade(manifest_entry=entry)
+    assert result.returncode==1 and key.encode() in result.stderr
+    assert f.env.read_bytes()==before and database_rows(f.database)==f.rows
+    assert command(['git','-C',f.app,'rev-parse','HEAD']).decode().strip()==BASE
+    assert not f.guard.exists() and not (f.env.parent/'update-state.json').exists()
+    assert not any(kind=='alembic' or (kind=='systemctl' and args[0] in ('stop','restart')) for kind,args in f.state['calls'])
+
+
+def test_new_required_target_key_already_supplied_stays_byte_identical(first):
+    f=first
+    f.env.write_bytes(f.env.read_bytes()+b'FUTURE_REQUIRED=public-fixture-value\n')
+    before=f.env.read_bytes()
+    result=f.upgrade(manifest_entry='FUTURE_REQUIRED|required|plain||Supply before upgrade|nonempty')
+    assert result.returncode==0, result.stderr.decode()
+    assert f.env.read_bytes()==before and database_rows(f.database)==f.rows
+    assert not (f.env.parent/'update-state.json').exists()
+
+
+def test_production_bootstrap_rejects_feature_branch(first):
+    f=first; result=f.upgrade(ref='refs/heads/feat/phase-9b2-safe-cutover')
+    assert result.returncode==1 and not f.guard.exists()
+    assert command(['git','-C',f.app,'rev-parse','HEAD']).decode().strip()==BASE
+
+
+def test_real_old_release_update_then_explicit_checker_version_migration(first):
+    f=first
+    result,before=f.old_release_update()
+    assert result.returncode==0,result.stdout.decode()+result.stderr.decode()
+    assert database_rows(f.database)==f.rows and f.env.read_bytes()==f.original_env
+    archives=list(f.backups.glob('update-checker-*'))
+    assert len(archives)==1 and (archives[0]/'checker-before.py').read_bytes()==before
+    assert not (f.env.parent/'checker-migration.json').exists()

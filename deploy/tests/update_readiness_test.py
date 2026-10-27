@@ -18,7 +18,7 @@ def test_delayed_readiness_then_one_final_security_verification(cutover, monkeyp
         original()
     monkeypatch.setattr(tool, 'verify', verify)
     tool.update_verify(5)
-    assert len(observed) == 5 and final == [True]
+    assert len(observed) == 6 and final == [True]
     tool.recover(rollback=True)
 
 
@@ -46,7 +46,7 @@ def test_final_acl_failure_is_checked_once_after_ready(cutover, monkeypatch):
         raise p.Refusal('unexpected ACL response')
     monkeypatch.setattr(tool.host, 'private_probes', bad_acl)
     with pytest.raises(p.Refusal): tool.update_verify(5)
-    assert calls == ['ready', 'acl']
+    assert calls == ['ready', 'ready', 'acl']
     tool.recover(rollback=True)
 
 

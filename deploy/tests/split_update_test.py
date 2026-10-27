@@ -74,9 +74,12 @@ def updater(cutover, monkeypatch):
             cwd=ROOT / 'backend', env=os.environ | env, stdout=backend['log'], stderr=backend['log'])
     monkeypatch.setattr(host, 'app_control', app_control)
     monkeypatch.setattr(actual, 'active', host.active)
+    # Loopback Nginx runs as the test UID; real credential checks are covered
+    # by host_validation/readiness proc fixtures, not production systemd.
+    monkeypatch.setattr(actual, 'ingress_permissions', lambda pid, **kwargs: None)
     monkeypatch.setattr(actual, 'ingress_pid', lambda: str(host.process.pid) if host.active() else '0')
     def readiness(config, **kwargs):
-        try: actual.update_readiness(config | {'lan_ip': '127.0.0.1'}, **kwargs)
+        try: return actual.update_readiness(config | {'lan_ip': '127.0.0.1'}, **kwargs)
         except p.Pending:
             state['pending'] += 1
             raise

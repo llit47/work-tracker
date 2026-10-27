@@ -76,9 +76,11 @@ Updater wymaga czystego repozytorium i dostępu do gałęzi `main`. Wykonuje sp�
 
 Błąd **przed wywołaniem Alembic** pozwala przywrócić poprzedni kod, zależności, frontend i unit, zachowując bieżącą DB. Błąd **od próby wywołania Alembic**, także po migracji no-op lub po restarcie, oznacza `UPDATE REQUIRES MANUAL RECOVERY`: usługa jest zatrzymywana, kod kandydata i wszystkie kopie pozostają, a trwały guard blokuje start starej/niezweryfikowanej wersji po reboot. Nie ma automatycznego downgrade. Procedura zachowania danych i naprawy: [runbook 9B2](docs/deployment/phase9b2-cutover.md#odzyskiwanie-po-nieudanej-aktualizacji).
 
-Dla aktywnego splitu updater czeka na HTTP backendu i oba listenery proxy, domyślnie **60 s**; można podać `sudo /opt/work-tracker/update.sh --readiness-timeout 120` (zakres **5–300 s**). Tylko przejściowy brak procesu/socketu/połączenia podlega ponawianiu. Konfiguracja jest sprawdzana przed oczekiwaniem, a pełna kontrola TLS/ACL/uprawnień po gotowości — błędy bezpieczeństwa nie są ponawiane. `is-active` nie dowodzi gotowości HTTP. Limit obejmuje oczekiwanie readiness, nie build, migracje ani końcowe kontrole bezpieczeństwa.
+Dla aktywnego splitu updater czeka na HTTP backendu i oba listenery proxy, domyślnie **60 s**; można podać `sudo /opt/work-tracker/update.sh --readiness-timeout 120` (zakres **5–300 s**). Oczekiwanie obejmuje brak procesu/socketu oraz niepełne argv/env przed exec i zmianę UID workera Nginx; wymagane są dwa zgodne obrazy PID/workerów. Trwale zły runtime kończy się odmową w tym samym budżecie, a obcy listener, zły bind lub obcy UID są odrzucane od razu. Konfiguracja jest sprawdzana przed oczekiwaniem, a pełna kontrola TLS/ACL/uprawnień po gotowości — statyczne błędy bezpieczeństwa nie są ponawiane. Timeout rozróżnia niedostępne usługi i utrzymującą się niezgodność runtime. Na wolniejszym systemie wybierz np. 120 s po weryfikacji 9C. `is-active` nie dowodzi gotowości HTTP. Limit obejmuje oczekiwanie readiness, nie build, migracje ani końcowe kontrole bezpieczeństwa.
 
 Zaplanuj okno bez zdarzeń HA: odbiór webhooków jest przerwany od zatrzymania backendu przez migracje do gotowości usług; błąd wymagający naprawy wydłuża tę przerwę. **HA nie musi ponawiać żądań. Zachowanie zaakceptowanych zapisów nie gwarantuje przyjęcia żądania wysłanego podczas niedostępności.**
+
+Instalacje z trwałym checkerem utworzonym przez wcześniejszy bootstrap 9B2 po udanym update wykonują osobną operację `sudo python3 /opt/work-tracker/deploy/update_safety.py migrate-checker`. Nowy kod akceptuje katalogowaną v1, więc stary staged updater może zakończyć swoją transakcję. Dopiero po jego zakończeniu operacja pod wspólną blokadą wymienia checker na v2. Nie uruchamiaj jej przy aktywnym/niedokończonym update. [Migracja i odzyskanie po przerwaniu](docs/deployment/phase9b2-cutover.md#migracja-trwałego-checkera-v1--v2).
 
 Nowe wymagane ustawienia są definiowane w `deploy/config.manifest`. Updater dopisuje wyłącznie brakujące wymagane klucze, pyta o ich wartości i pokazuje bezpieczne wartości domyślne. Nie zmienia istniejących wartości, nie usuwa starszych lub nieznanych wpisów i nigdy nie wypisuje sekretów. Jeśli nie ma nowych wymaganych kluczy, aktualizacja nie zadaje pytań konfiguracyjnych.
 
@@ -277,8 +279,8 @@ migracja jako service user i restart z nowym unitem. Potwierdzić head
 Operator potwierdził wdrożenie 8B1-A/B oraz pozytywne testy package-install i
 service-user runtime na Debianie 13 LXC (main de963ae, head 20261025_08).
 To potwierdzenie operatora, nie samodzielny test Codexa w produkcji. Bieżące
-8B2 nie wykonuje deploymentu; ponowne lokalne package/runtime jest BLOCKED
-przez brak ensurepip i roota w środowisku Codexa.
+8B2 nie wykonuje deploymentu. Bieżący lokalny package-install przechodzi;
+runtime użytkownika usługi jest SKIP/NOT RUN bez roota.
 
 Rollback updatera przed wywołaniem Alembic zachowuje bieżącą DB; od próby migracji błąd wymaga ręcznej analizy kompatybilności, bez automatycznego cofania kodu i danych. Przy ręcznej naprawie zachowaj także sesje i historię limitera, nie przywracaj starszej DB kosztem nowych zapisów. Procedura w runbooku 9B2 zastępuje dawny automatyczny restore. Powrót do 8B1-A usuwa limiter, więc służy wyłącznie awaryjnemu użyciu w izolowanym LAN po analizie schematu.
 
@@ -366,7 +368,7 @@ sudo systemctl restart work-tracker
 
 ## Backup
 
-Updater zapisuje `/var/backups/work-tracker/update-<UTC>.<ID>/online.db` oraz, po potwierdzonym zatrzymaniu backendu, `pre-migration.db`. Ten sam prywatny katalog zawiera `unit.before`, staged checker i `transaction.json` z commitami/fazą. Katalog ma 0700, kopie 0600; nie są automatycznie usuwane ani odtwarzane. Starsze backupy `work_tracker-<timestamp-UTC>.db` pozostają bez zmian.
+Updater zapisuje `/var/backups/work-tracker/update-<UTC>.<ID>/online.db` oraz, po potwierdzonym zatrzymaniu backendu, `pre-migration.db`. Ten sam prywatny katalog zawiera `unit.before`, staged checker i `transaction.json` z commitami/fazą. Katalog ma 0700, kopie 0600; nie są automatycznie usuwane ani odtwarzane. Starsze backupy `work_tracker-<timestamp-UTC>.db` pozostają bez zmian. Retencja jest wyłącznie ręczna: chroń wszystkie wskazane przez dzienniki/niepewne transakcje oraz najnowsze punkty odzyskania; [procedura](docs/deployment/phase9b2-cutover.md#ręczna-retencja-backupów). SQLite może normalnie wykonywać checkpoint i zarządzać WAL/SHM; gwarancją są zachowane zatwierdzone dane, nie czas życia lub inode sidecarów.
 
 ## File locations
 
@@ -504,7 +506,7 @@ git diff --check
 Brak rzeczywistych binarek jest błędem tych testów, nie cichym PASS/skip.
 Testy 9B2 symulują apt/systemd/reboot; nie zastępują testu na nowym systemie.
 Dodatkowe regresje audytu: `ingress_audit_test.py`, `host_validation_test.py`,
-`split_update_test.py`, `update_readiness_test.py`, `update_safety_test.py` i `first_upgrade_test.py` w `deploy/tests/` (ten sam runner pytest).
+`split_update_test.py`, `update_readiness_test.py`, `update_safety_test.py`, `checker_migration_test.py`, `startup_stabilization_test.py` i `first_upgrade_test.py` w `deploy/tests/` (ten sam runner pytest).
 Test `service_user_runtime_test.sh` bez roota zwraca **77 = SKIP/NOT RUN**,
 nie PASS. Przerwij raportowanie tego kroku jako sukcesu.
 Opcjonalna prywatna denylista: `WT_PRIVATE_INFRASTRUCTURE_DENYLIST` wskazuje

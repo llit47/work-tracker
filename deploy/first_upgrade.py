@@ -23,8 +23,8 @@ import time
 
 BASE = '5d974b100a92f0b7aed6aefa9939f0d5383c9cac'
 ORIGIN = 'https://github.com/llit47/work-tracker.git'
-REFS = {'refs/heads/main', 'refs/heads/feat/phase-9b2-safe-cutover'}
-FILES = ('first_upgrade.py', 'update_safety.py', 'update_rollback.sh', 'common.sh', 'env_file.py', 'nginx_provision.py')
+REFS = {'refs/heads/main'}
+FILES = ('first_upgrade.py', 'update_safety.py', 'update_rollback.sh', 'common.sh', 'env_file.py', 'nginx_provision.py', 'config.manifest')
 SAFE_PATH = '/usr/sbin:/usr/bin:/sbin:/bin'
 
 
@@ -168,6 +168,31 @@ class FirstUpgrade:
         require(paths == [str(self.layout.guard)])
         require(run(['systemctl', 'show', '-p', 'NeedDaemonReload', '--value', 'work-tracker.service']).strip() == b'no')
 
+    def validate_config(self, directory):
+        """Pinned target validators, read-only, without forwarding values."""
+        spec = importlib.util.spec_from_file_location('first_env', directory / 'deploy/env_file.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        before = self.layout.env.read_bytes()
+        env = module.parse(before)
+        missing = []
+        for line in (directory / 'deploy/config.manifest').read_text().splitlines():
+            if not line or line.startswith('#'): continue
+            fields = line.split('|')
+            require(len(fields) == 6 and re.fullmatch('[A-Z][A-Z0-9_]*', fields[0]))
+            if fields[1] == 'required' and fields[0] not in env: missing.append(fields[0])
+        if missing:
+            raise Refusal('Brak wymaganych kluczy celu: ' + ', '.join(missing) + '. Uzupełnij prywatny env przed upgrade.')
+        try:
+            run(['/bin/bash', '-c', 'set -Eeuo pipefail; source "$1"; validate_required_config "$2" "$3"',
+                 'first-config', str(directory / 'deploy/common.sh'), str(directory / 'deploy/config.manifest'), str(self.layout.env)])
+        except subprocess.CalledProcessError as error:
+            # Even parser/library errors can include values; expose only names.
+            key = re.search(rb'Invalid value for configuration key: ([A-Z][A-Z0-9_]*)\.', error.stderr)
+            raise Refusal('Nieprawidłowa konfiguracja celu' + (': ' + key[1].decode() if key else ' origins/profilu/manifestu') +
+                          '. Popraw prywatny env przed upgrade; wartości ukryte.') from None
+        require(self.layout.env.read_bytes() == before)
+
     def prepare(self, sha, ref, timeout):
         l = self.layout
         require(re.fullmatch('[0-9a-f]{40}', sha) and ref in REFS and 5 <= timeout <= 300)
@@ -178,6 +203,7 @@ class FirstUpgrade:
         require(re.search(r'^ID="?(?:debian|ubuntu)"?$', Path('/etc/os-release').read_text(), re.M))
         require(run(['systemctl', 'show', '-p', 'FragmentPath', '--value', 'work-tracker.service']).decode().strip() == str(l.unit))
         require(not l.state.exists() and not l.state.is_symlink())
+        require(not (l.env.parent / 'checker-migration.json').exists() and not (l.env.parent / 'checker-migration.json').is_symlink())
         require(not l.guard.parent.exists() or not list(l.guard.parent.iterdir()))
         if l.guard.parent.exists(): checked(l.guard.parent, True)
         require(not (l.env.parent / 'update-safety.py').exists() and not (l.env.parent / 'update-safety.py').is_symlink())
@@ -200,6 +226,12 @@ class FirstUpgrade:
         (directory / 'deploy').mkdir(mode=0o700)
         sync(directory)
         for name in FILES: atomic(directory / 'deploy' / name, self.blob(sha, 'deploy/' + name), 0o700 if name == 'first_upgrade.py' else 0o600)
+        (directory / 'backend').mkdir(mode=0o700)
+        (directory / 'backend/app').mkdir(mode=0o700)
+        sync(directory / 'backend')
+        sync(directory)
+        atomic(directory / 'backend/app/origins.py', self.blob(sha, 'backend/app/origins.py'))
+        self.validate_config(directory)  # Before guard, FF, stop or Alembic.
         safety = self.safety(directory)
         require(self.blob(sha, 'deploy/work-tracker.service') == l.unit.read_bytes())
         # Validate the actual old LAN contract using verified target validators.
@@ -260,6 +292,8 @@ class FirstUpgrade:
             path = directory / 'deploy' / name
             checked(path)
             require(path.read_bytes() == self.blob(context['target'], 'deploy/' + name))
+        checked(directory / 'backend/app/origins.py')
+        require((directory / 'backend/app/origins.py').read_bytes() == self.blob(context['target'], 'backend/app/origins.py'))
         checked(updater)
         require(updater.read_bytes() == self.blob(context['target'], 'update.sh'))
         safety = self.safety(directory)
@@ -325,6 +359,9 @@ def main():
         elif args.operation == 'accept': print(BASE, tool.accept(args.directory, args.updater, args.owner))
         else: tool.verify_lan(args.directory, args.readiness_timeout)
         return 0
+    except Refusal as error:
+        print(f'FIRST UPGRADE REFUSED: {error}', file=sys.stderr)
+        return 1
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
         print('FIRST UPGRADE REFUSED / RECOVERY REQUIRED: zachowaj SQLite/WAL/SHM i backupy. Nie uruchamiaj starego updatera; patrz runbook 9B2. Wartości ukryte.', file=sys.stderr)
         return 1

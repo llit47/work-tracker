@@ -6,12 +6,16 @@ state, a dead/reused PID, a reboot or a failed migration require manual repair.
 The small staged copy remains usable after a pre-migration Git rollback.
 """
 import argparse
+import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import stat
 import sys
+import subprocess
+import tempfile
 import uuid
 
 GUARD_NAME = '90-work-tracker-update-safety.conf'
@@ -61,10 +65,40 @@ def atomic(path, data, mode=0o600):
     finally: temporary.unlink(missing_ok=True)
 
 
+# Exact historical standalone checker shipped by d3cb1a6. No filename/comment
+# ownership inference. Future incompatible formats require a separate migration.
+CHECKER_V1_SHA = 'fcfb8ee82d5c404e721b3e8188b07c514b60f69a4139669be390060353cb6476'
+CURRENT_CHECKER_VERSION = 2
+HISTORICAL_CHECKERS = {CHECKER_V1_SHA: 1}
+
+
+def digest(data): return hashlib.sha256(data).hexdigest()
+
+
+def encoded(value): return (json.dumps(value, sort_keys=True, indent=2) + '\n').encode()
+
+
+def read_json(path):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, 'Powtórzony klucz journala.')
+            result[key] = value
+        return result
+    return json.loads(path.read_bytes(), object_pairs_hook=unique)
+
+
+def checker_version(data):
+    if data == Path(__file__).read_bytes(): return CURRENT_CHECKER_VERSION
+    if digest(data) in HISTORICAL_CHECKERS: return HISTORICAL_CHECKERS[digest(data)]
+    raise Refusal('Nieznana lub zmieniona wersja trwałego checkera.')
+
+
 def stable_owned(path, *, uid=0, boundary=Path('/')):
     checked(path, uid, boundary)
-    require(stat.S_IMODE(path.stat().st_mode) == 0o644 and path.read_bytes() == Path(__file__).read_bytes(),
-            'Nieznana wersja/treść trwałego checkera; wymagana jawna analiza kompatybilności.')
+    require(stat.S_IMODE(path.stat().st_mode) == 0o644,
+            'Nieznane uprawnienia trwałego checkera.')
+    return checker_version(path.read_bytes())
 
 
 def guard_owned(path, *, uid=0, boundary=Path('/'), checker=Path('/etc/work-tracker/update-safety.py')):
@@ -81,6 +115,8 @@ class Layout:
     state = Path('/etc/work-tracker/update-state.json')
     guard = Path('/etc/systemd/system/work-tracker.service.d') / GUARD_NAME
     backups = Path('/var/backups/work-tracker')
+    deploy_lock = Path('/run/work-tracker-deploy.lock')
+    app = Path('/opt/work-tracker')
     proc = Path('/proc')
 
 
@@ -117,13 +153,9 @@ class Safety:
 
     def read(self):
         self.check(self.layout.state, private=True)
-        def unique(pairs):
-            result = {}
-            for key, value in pairs:
-                require(key not in result, 'Powtórzony klucz stanu update.')
-                result[key] = value
-            return result
-        value = json.loads(self.layout.state.read_bytes(), object_pairs_hook=unique)
+        return self.validate(read_json(self.layout.state))
+
+    def validate(self, value):
         require(isinstance(value, dict) and set(value) == {'version', 'phase', 'previous_commit', 'candidate_commit', 'directory', 'owner'}, 'Nieznany format stanu update.')
         require(value['version'] == 1 and value['phase'] in ('preparing', 'migrating', 'verifying', 'manual'), 'Nieznana faza update.')
         require(all(isinstance(value[key], str) and re.fullmatch('[0-9a-f]{40}', value[key]) for key in ('previous_commit', 'candidate_commit')), 'Nieprawidłowy commit stanu update.')
@@ -144,7 +176,11 @@ class Safety:
         try: return self.identity(record['owner']['pid']) == record['owner']
         except (OSError, ValueError, KeyError, TypeError, IndexError): return False
 
+    @property
+    def checker_journal(self): return self.layout.state.parent / 'checker-migration.json'
+
     def clear_required(self):
+        require(not self.checker_journal.exists() and not self.checker_journal.is_symlink(), 'Najpierw zakończ migrację checkera.')
         require(not self.layout.state.exists() and not self.layout.state.is_symlink(),
                 'UPDATE REQUIRES MANUAL RECOVERY: zachowaj bieżącą SQLite i backupy; sprawdź runbook przed startem/aktualizacją.')
 
@@ -181,10 +217,76 @@ class Safety:
         self.install()
 
     def allow_start(self):
+        require(not self.checker_journal.exists() and not self.checker_journal.is_symlink(), 'Niedokończona migracja checkera blokuje start.')
         if not self.layout.state.exists() and not self.layout.state.is_symlink(): return
         record = self.read()
         require(record['phase'] == 'verifying' and self.alive(record),
                 'UPDATE REQUIRES MANUAL RECOVERY: start zablokowany; bieżąca SQLite nie została cofnięta.')
+
+    def checkpoint(self, stage):
+        pass  # Test-only fault injection via a subclass, no CLI/env bypass.
+
+    def migrate_checker(self, commit):
+        """Explicit maintenance AFTER a completed update, under deployment lock.
+
+        The old staged updater can finish with v1; new validators accept v1.
+        This separate transaction never runs Alembic or restarts the service.
+        """
+        path = self.layout.state.parent / 'update-safety.py'
+        self.check(self.layout.guard)
+        require(self.layout.guard.read_bytes() == BOOTSTRAP_GUARD, 'Wymagany istniejący trwały guard bootstrapu.')
+        guard_owned(self.layout.guard, uid=self.layout.uid, boundary=self.layout.boundary, checker=path)
+        target = Path(__file__).read_bytes()
+        pending = self.checker_journal.exists() or self.checker_journal.is_symlink()
+        if pending:
+            self.check(self.checker_journal, private=True)
+            journal = read_json(self.checker_journal)
+            require(set(journal) == {'version', 'transaction', 'before_sha', 'target_sha'} and journal['version'] == 1,
+                    'Nieznany journal migracji checkera.')
+            require(journal['target_sha'] == digest(target), 'Odzyskaj zgodną wersją narzędzia migracji checkera.')
+            transaction = self.validate(journal['transaction'])
+            require(transaction['phase'] == 'preparing', 'Nieprawidłowa transakcja checkera.')
+            directory = Path(transaction['directory'])
+            require(directory.name.startswith('update-checker-') and transaction['previous_commit'] == transaction['candidate_commit'],
+                    'Journal nie opisuje transakcji wyłącznie checkera.')
+        else:
+            self.clear_required()  # Never borrow/bypass a normal updater state.
+            if checker_version(path.read_bytes()) == CURRENT_CHECKER_VERSION: return
+            require(re.fullmatch('[0-9a-f]{40}', commit), 'Nieprawidłowy commit checkera.')
+            self.check(self.layout.backups, directory=True)
+            directory = Path(tempfile.mkdtemp(prefix='update-checker-', dir=self.layout.backups))
+            sync_dir(self.layout.backups)
+            atomic(directory / 'checker-before.py', path.read_bytes())
+            transaction = dict(version=1, phase='preparing', previous_commit=commit, candidate_commit=commit,
+                               directory=str(directory), owner=self.identity(os.getpid()))
+            journal = dict(version=1, transaction=transaction, before_sha=digest(path.read_bytes()), target_sha=digest(target))
+            # v1 only knows update-state: create it BEFORE the checker journal.
+            self.write(transaction)
+            atomic(self.checker_journal, encoded(journal))
+            self.checkpoint('checker-journal')
+        backup = directory / 'checker-before.py'
+        self.check(backup, private=True)
+        before = backup.read_bytes()
+        require(checker_version(before) < CURRENT_CHECKER_VERSION and digest(before) == journal['before_sha'], 'Nieprawidłowy backup checkera.')
+        self.stable_checker()
+        require(path.read_bytes() in (before, target), 'Checker zmieniony podczas migracji.')
+        if self.layout.state.exists() or self.layout.state.is_symlink():
+            require(self.read() == transaction, 'Istnieje inna/zmieniona transakcja update.')
+        else:
+            self.check(directory / 'transaction.json', private=True)
+            require(read_json(directory / 'transaction.json') == transaction | {'phase': 'commit'} and path.read_bytes() == target,
+                    'Brak dowodu zakończenia transakcji checkera.')
+        if path.read_bytes() != target:
+            atomic(path, target, 0o644)
+        self.checkpoint('checker-written')
+        atomic(directory / 'transaction.json', encoded(transaction | {'phase': 'commit'}))
+        atomic(directory / 'checker-migration.completed.json', encoded(journal))
+        # From now on v2 checks BOTH journals, including after state removal.
+        self.layout.state.unlink(missing_ok=True)
+        sync_dir(self.layout.state.parent)
+        self.checkpoint('checker-state-cleared')
+        self.checker_journal.unlink()
+        sync_dir(self.checker_journal.parent)
 
     def remove_legacy_guard(self, app_dir):
         # An old release may not contain this checker. Only after a successful
@@ -197,7 +299,7 @@ class Safety:
 
 def main():
     parser = argparse.ArgumentParser(description='Bezpieczny stop gate aktualizacji; nigdy restore SQLite.')
-    parser.add_argument('operation', choices=['check', 'install', 'begin', 'migrating', 'verifying', 'commit', 'cancel', 'hold', 'allow-start', 'remove-legacy-guard'])
+    parser.add_argument('operation', choices=['check', 'install', 'begin', 'migrating', 'verifying', 'commit', 'cancel', 'hold', 'allow-start', 'remove-legacy-guard', 'migrate-checker'])
     parser.add_argument('--previous')
     parser.add_argument('--candidate')
     parser.add_argument('--directory', type=Path)
@@ -211,12 +313,20 @@ def main():
         elif args.operation == 'begin':
             require(args.owner_pid == os.getppid(), 'Właścicielem musi być proces updatera.')
             safety.begin(args.previous, args.candidate, args.directory, args.owner_pid)
+        elif args.operation == 'migrate-checker':
+            fd = os.open(safety.layout.deploy_lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+            with os.fdopen(fd, 'rb') as lock:
+                safety.check(safety.layout.deploy_lock, private=True)
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                commit = subprocess.run(['git', '-C', str(safety.layout.app), 'rev-parse', 'HEAD'],
+                                        check=True, capture_output=True, timeout=30).stdout.decode().strip()
+                safety.migrate_checker(commit)
         elif args.operation == 'hold': safety.hold()
         elif args.operation == 'allow-start': safety.allow_start()
         elif args.operation == 'remove-legacy-guard': safety.remove_legacy_guard(Path('/opt/work-tracker'))
         else: safety.transition(args.operation)
         return 0
-    except (OSError, ValueError, KeyError, TypeError, IndexError):
+    except (OSError, ValueError, KeyError, TypeError, IndexError, subprocess.SubprocessError):
         print('UPDATE REQUIRES MANUAL RECOVERY: nie można autoryzować operacji/startu. Zachowaj bieżącą SQLite, WAL/SHM i backupy; patrz runbook 9B2.', file=sys.stderr)
         return 1
 

@@ -173,7 +173,9 @@ if [[ "${ingress_update}" == true ]]; then
     python3 "${APP_DIR}/deploy/ingress_cutover.py" update-check --manifest-sha "${previous_manifest_sha}"
 fi
 log "Validating required configuration and browser origins before dependency updates, migrations or restart."
-sync_missing_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
+if [[ -z "${first_upgrade_directory}" ]]; then
+    sync_missing_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
+fi
 validate_required_config "${MANIFEST_FILE}" "${CONFIG_FILE}"
 chown root:"${SERVICE_USER}" "${CONFIG_FILE}"
 chmod 0640 "${CONFIG_FILE}"

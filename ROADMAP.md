@@ -508,7 +508,7 @@ Nie projektujemy obecnie recovery, generacji sesji ani dodatkowych kluczy.
 
 ### Phase 8B2 — Cloudflare Access and Internet Readiness
 
-**Status: IN PROGRESS — implementacja i testy ingress/JWT gotowe; lokalne X2 BLOCKED**
+**Status: IN PROGRESS — implementacja i testy ingress/JWT gotowe; package-install PASS, runtime wymaga roota/9C**
 
 Dependencies: 8B1-A i 8B1-B DONE (operator-confirmed). Bez publicznej aktywacji;
 rollout, DNS i faktyczne E2E należą do Phase 9.
@@ -539,7 +539,7 @@ Acceptance criteria:
   duplikaty/spoofing, 429/Retry-After, cookie/CSRF/heartbeat i brak resetu historii.
 - [x] X1 oraz lokalne migracje/config/updater/rollback/layout X2, pełny backend,
   frontend test/build; dokumentacja i nieaktywne local/remote config templates.
-- [ ] X2 8B2 package-install/runtime: BLOCKED — lokalnie brak ensurepip i roota;
+- [ ] X2 8B2: package-install PASS lokalnie; runtime NOT RUN — brak roota;
   A/B wcześniej potwierdzone przez operatora nie są testem zmienionego kodu.
 - [x] Rzeczywiste testy Access/IdP/Edge, IP i firewalla jawnie wydzielone jako
   **BLOCKED / REQUIRES PHASE 9 VERIFICATION**, z przygotowanymi live probes.
@@ -632,6 +632,12 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 - [x] Pierwszy update z rzeczywistego 5d974b1: przypięty SHA/ref, jawny bootstrap,
   checker poza checkoutem, efektywny guard przed FF/Alembic i exec z tym samym
   PID/blokadą. Ograniczony kontrakt LAN; nieznane/niepełne stany odmawiają.
+- [x] Audyt runtime: ograniczona stabilizacja pre-exec/argv/env i workera, dwie
+  zgodne obserwacje przed ścisłą finalną walidacją; trwałe naruszenia odrzucane.
+- [x] Katalogowana v1 checkera zgodna przez FF; osobna atomowa migracja v1 → v2
+  po zakończeniu updatera, bez zdjęcia guarda, z journalem i odzyskaniem SIGKILL.
+- [x] First-upgrade: tylko main + pełny SHA; readonly target-manifest preflight
+  przed guardem/FF/Alembic; brak późniejszych pytań/dopisywania env.
 - [x] Test kontraktu dostarczonego unitu z walidatorem i zbiorczy runner 0/77/FAIL.
 - [ ] Weryfikacja rzeczywistego apt/systemd/root-worker/reboot i izolacji sieci — Phase 9C.
   Obejmuje nowy guard aktualizacji, awarie migracji i bezpieczną ręczną naprawę.

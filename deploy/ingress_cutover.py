@@ -165,8 +165,9 @@ class Cutover:
 
     def require_no_update(self):
         state = getattr(self.layout, 'update_state', SafetyLayout.state)
-        p.require(not state.exists() and not state.is_symlink(),
-                  'Najpierw rozstrzygnij update-state; nie zmieniaj ingressu przy niepewnej bazie.')
+        checker = state.parent / 'checker-migration.json'
+        p.require(not any(path.exists() or path.is_symlink() for path in (state, checker)),
+                  'Najpierw rozstrzygnij update-state/migrację checkera; nie zmieniaj ingressu przy niepewnym stanie.')
 
     def activate(self, evidence, confirm, confirm_ha):
         self.require_no_update()
@@ -404,14 +405,21 @@ class Cutover:
         p.require(type(timeout) is int and 5 <= timeout <= 300, 'Readiness timeout musi wynosić 5..300 sekund.')
         transaction = self.verify_configuration()  # strict static/TLS/ownership checks, once before waiting
         deadline = time.monotonic() + timeout
+        previous, stable = None, 0
+        last = p.Pending('Start usług.')
         while True:
+            if time.monotonic() >= deadline:
+                reason = 'runtime argv/env/workera pozostaje niezgodny' if isinstance(last, p.RuntimeMismatch) else 'usługi nie osiągnęły gotowości'
+                raise p.Refusal(f'Timeout gotowości split po {timeout} s: {reason}; aktualizacja wymaga inspekcji.') from None
             try:
-                self.host.update_readiness(transaction['config'], deadline=deadline)
-                break
-            except p.Pending:
-                if time.monotonic() >= deadline:
-                    raise p.Refusal(f'Timeout gotowości split po {timeout} s; aktualizacja wymaga inspekcji.') from None
-                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+                current = self.host.update_readiness(transaction['config'], deadline=deadline)
+                stable = stable + 1 if current == previous else 1
+                previous = current
+                if stable >= 2: break
+                last = p.Pending('Oczekiwanie na drugi zgodny obraz procesów.')
+            except p.Pending as error:
+                previous, stable, last = None, 0, error
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
         self.verify()  # full final security checks, never retried
 
 
