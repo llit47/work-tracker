@@ -26,8 +26,9 @@
   - **Phase 8B2 — Cloudflare Access and Internet Readiness: IN PROGRESS (X2 runtime NOT RUN without root; package install PASS)**
 - **Phase 9 — Cloudflare public deployment: IN PROGRESS (tylko przygotowanie)**
   - **Phase 9B1 — Safe Nginx provisioning: DONE (lokalnie, bez aktywacji)**
-  - **Phase 9B2 — Fresh install/private cutover: IN PROGRESS (implemented / locally tested; real 9C NOT VERIFIED)**
-  - **Phase 9C/9D — Real infrastructure/public rollout: PLANNED**
+  - **Phase 9B2 — Fresh install/private cutover: IN PROGRESS (implemented / locally tested; LAN first-upgrade verified, split NOT VERIFIED)**
+  - **Phase 9C — Real infrastructure verification: DONE (operator-confirmed 2026-10-27; LAN/first-upgrade scope)**
+  - **Phase 9D — Public rollout: PLANNED (pozostałe bramki ingressu i Phase 8 nadal wymagane)**
 - **Phase 10 — Google Calendar integration: PLANNED**
 
 Szczegółowy zakres etapów i kryteria ukończenia znajdują się w `ROADMAP.md`.
@@ -133,7 +134,10 @@ Aktualne endpointy:
 - Testy operatora nie zastępują lokalnej walidacji zmienionego kodu ani bramek infrastruktury.
 - Proces: `work-tracker.service`; autostart po restarcie systemu i restart po awarii.
 - Instalacja: `install.sh`.
-- Aktualizacja: `update.sh` z backupem SQLite i rollbackiem.
+- Aktualizacja po 9B2: `update.sh` z backupami SQLite; błąd od próby Alembic wymaga ręcznej naprawy, bez automatycznego restore danych.
+- Stan potwierdzony przez operatora 27.10.2026: produkcja nadal LAN-only na 8B2 (`7f47c1e`), bez aktualizacji produkcyjnej.
+- Izolowane środowiska testowe: jedno działa na 9B2 (`d703650`), drugie po manual recovery na 9B1 (`5d974b1`). Identyfikatory infrastruktury pozostają prywatne.
+- Plan produkcyjny 8B2 → 9B1 → first-upgrade 9B2: [wyniki 9C i runbook](docs/deployment/phase9c-production-upgrade.md).
 - Kod: `/opt/work-tracker`.
 - Konfiguracja: `/etc/work-tracker/work-tracker.env`.
 - Baza: `/var/lib/work-tracker/work_tracker.db`.
@@ -181,7 +185,25 @@ Aktualne endpointy:
 
 ## Next implementation target
 
-**Phase 9B2 — implemented / locally tested; niezależna weryfikacja i 9C pozostają wymagane.**
+**Phase 9B2 — implemented / locally tested; Phase 9C zamknięta dla rzeczywistego LAN/first-upgrade, split nadal bez pełnej weryfikacji.**
+
+27.10.2026 operator wykonał testy na rzeczywistych kontenerach Debian LXC w
+Proxmox VE. Udane 8B2 → 9B1 → 9B2 potwierdziło backend/frontend/Alembic,
+`20261025_08 (head)`, SQLite `quick_check=ok`, HTTP health 200, login i restart
+systemd. Trwały ExecStartPre odmówił startu z niedokończonym `preparing`;
+środowisko przywrócono ze snapshotu `post-9b2-success`. Drugi test przerwał
+prawdziwy bootstrap przez SIGKILL po zapisie `preparing`: Git pozostał na 9B1,
+journal przetrwał, checker zwrócił 1, a systemd odmówił startu. Po potwierdzonym
+stopie (`MainPID=0`), kontroli SQLite (`integrity_check=ok`, revision
+`20261025_08`), backupie bieżącej DB oraz analizie kodu/deps/unitu zarchiwizowano
+aktywny journal, pozostawiając guard. Odzyskane 9B1 ma health 200, usługę active
+i SQLite ok, bez przywracania starszej bazy. Git był czysty, `pip check` poprawny,
+`NeedDaemonReload=no`.
+
+**NOT TESTED:** SIGKILL w `migrating` i `verifying`, fizyczna utrata zasilania,
+pełne odzyskanie po częściowo wykonanej migracji Alembic. Sukces w `preparing`
+nie dowodzi tych scenariuszy ani odbioru split/Internet.
+[Pełny zapis dowodów, ograniczenia i warunki deploymentu](docs/deployment/phase9c-production-upgrade.md).
 
 9B2 rozszerza generacje, walidację i bramki 9B1 o opcjonalny bootstrap Nginx
 oraz transakcję całej aplikacji. Instalator nadal domyślnie uruchamia LAN;
@@ -206,12 +228,14 @@ kod z zachowaniem bieżącej DB; od próby Alembic błąd zachowuje kod kandydat
 wszystkie zapisy, zatrzymuje usługę i zakłada trwałą blokadę do ręcznej naprawy.
 Dwa spójne snapshoty i dziennik identyfikują fazę, ale nie upoważniają do restore.
 Zapisane webhooki/korekty/sesje/limiter są testowane przed i po restarcie; przerwa
-HA nie ma gwarancji ponowienia żądania. Guard i realny reboot wymagają 9C.
+HA nie ma gwarancji ponowienia żądania. Guard/systemd dla `preparing` potwierdzono
+w 9C; realny reboot i pozostałe fazy awarii nie mają takiego potwierdzenia.
 Pierwsze przejście z 5d974b1 ma oddzielny bootstrap z przypiętym SHA/ref,
 sprawdzeniem starego hosta i trwałym checkerem poza checkoutem. Guard i journal
 poprzedzają FF/Alembic; exec zachowuje PID i blokadę. Zwykły stary updater
 pozostaje niedopuszczalną ścieżką pierwszego upgrade. Regresje używają faktycznego
-starego checkoutu/updatera, SQLite WAL, Alembic i SIGKILL; systemd jest symulowany.
+starego checkoutu/updatera, SQLite WAL, Alembic i SIGKILL; w lokalnych testach
+systemd jest symulowany. Osobny wynik rzeczywistego systemd opisano powyżej.
 Readiness obejmuje pre-exec/niepełne argv/env i inicjalizację workera, z dwoma
 zgodnymi obrazami przed jednorazową walidacją; timeout rozróżnia brak gotowości
 i niezgodny runtime. Znana v1 checkera pozostaje zgodna przez FF i kończy starą
@@ -226,12 +250,14 @@ walidacja pozostaje ścisła i jednorazowa. Timeout nie odtwarza SQLite.
 Readonly preflight istniejącego bindu LAN współdzieli reguły readiness; nazwy
 takie jak `localhost` są odrzucane przed guardem/FF/stopem/Alembic, bez zmiany env.
 Pełny backend 751 PASS, deploy/ingress 374 PASS, JWT 6 PASS, frontend test/build
-i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
+i shell config/rollback/permissions PASS. To wcześniejsze wyniki lokalne,
+odrębne od potwierdzenia operatora z 27.10.2026.
 Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
 osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.
-Rzeczywista instalacja/upgrade pakietów, uprawnienia root/www-data, systemd,
-reboot, źródła HA/SNAT, skuteczny firewall IPv4/IPv6 i negatywne próby pozostają
-**BLOCKED / REQUIRES 9C**, X2 Phase 8B2 również wymaga osobnej kontroli.
+Poza potwierdzonym LAN/first-upgrade nadal bez odbioru pozostają rzeczywiste
+apt/Nginx/root-worker, boot splitu, źródła HA/SNAT, skuteczny firewall IPv4/IPv6
+i negatywne próby. Te istniejące bramki prywatnego ingressu/publicznego rolloutu
+pozostają wymagane; X2 Phase 8B2 również wymaga osobnej kontroli.
 9D obejmuje osobno zatwierdzony publiczny rollout. Nie dotykano produkcji.
 
 Usunięto dane infrastruktury z bieżących przykładów/testów/docs; przykłady są

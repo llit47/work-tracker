@@ -607,7 +607,7 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 
 #### Phase 9B2 — Fresh install and complete private cutover
 
-**Status: IN PROGRESS — implemented / locally tested; real infrastructure NOT VERIFIED (9C)**
+**Status: IN PROGRESS — implemented / locally tested; LAN first-upgrade VERIFIED (9C), pełny split NOT VERIFIED**
 
 - [x] Domyślny LAN i opcjonalne przygotowanie HTTPS w instalatorze; kontrolowany
   bootstrap Nginx z trwałą maską/policy, bez startu generic Nginx i przejmowania obcych usług.
@@ -641,24 +641,51 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 - [x] Test kontraktu dostarczonego unitu z walidatorem i zbiorczy runner 0/77/FAIL.
 - [x] Historyczny runtime v1 w fixture’ach z przypiętymi SHA-256, bez zależności
   od commita PR; jawny wymóg historii bazowej i test checkoutu shallow/squash.
-- [ ] Weryfikacja rzeczywistego apt/systemd/root-worker/reboot i izolacji sieci — Phase 9C.
-  Obejmuje nowy guard aktualizacji, awarie migracji i bezpieczną ręczną naprawę.
+- [x] Rzeczywisty LAN first-upgrade, trwały guard/systemd i manual recovery po SIGKILL
+  w `preparing` — operator-confirmed 27.10.2026, Phase 9C (szczegóły poniżej).
+- [ ] Pozostały odbiór prywatnego ingressu: apt/root-worker/boot splitu i izolacja sieci.
+  Testy `migrating`/`verifying`, utraty zasilania i częściowej migracji nie są zaliczone.
 
 Procedury i ograniczenia: [runbook 9B2](docs/deployment/phase9b2-cutover.md).
 Brak aktywacji produkcji, zmian HA/Cloudflare/firewalla ani migracji SQLite.
 
 ### Phase 9C — Real private infrastructure verification
 
-**Status: PLANNED**
+**Status: DONE — operator-confirmed 27.10.2026, zakres LAN/first-upgrade i recovery `preparing`**
 
-- [ ] Debian/Ubuntu, także unprivileged kontenery: pakiety/systemd/root-worker, bindy,
-  rzeczywisty source IP HA/connectora, firewall IPv4/global IPv6, negatywne probes.
+Zamknięcie dotyczy poniższych rzeczywistych prób Debian LXC na Proxmox VE.
+Nie oznacza zaliczenia pełnej wcześniejszej checklisty ingressu ani zgody na
+publiczny rollout. Pozostałe bramki zachowano jawnie poniżej, bez nowej implementacji.
+
+- [x] 8B2 (`7f47c1e`) → 9B1 (`5d974b1`) → first-upgrade 9B2
+  (`d70365093503289296d627f3c07abeabbaf71e9f`): backend/frontend/Alembic poprawne,
+  SQLite `quick_check=ok`, `20261025_08 (head)`, health 200, login, restart systemd.
+- [x] Trwały ExecStartPre: odmowa startu niedokończonego `preparing` przez checker
+  i systemd; pełna sprawność testowego środowiska przywrócona ze snapshotu `post-9b2-success`.
+- [x] Druga niezależna próba: prawdziwy SIGKILL bootstrapu po zapisie `preparing`,
+  Git nadal 9B1, trwały journal, checker exit 1, systemd odmawia startu.
+- [x] Manual recovery: stop/MainPID=0, SQLite `integrity_check=ok`, revision
+  `20261025_08`, backup bieżącej DB, czysty Git, `pip check` poprawny,
+  `NeedDaemonReload=no`; po analizie kompatybilności archiwizacja aktywnego
+  journala z pozostawieniem guarda. Odzyskane 9B1 active/health 200/SQLite ok,
+  bez restore starszej SQLite.
+- [x] Stan produkcji odnotowany: nadal LAN-only 8B2; produkcji nie aktualizowano.
+- [ ] **NOT TESTED:** SIGKILL w `migrating` i `verifying`, fizyczna utrata zasilania,
+  pełna procedura odzyskania po częściowo wykonanej migracji Alembic.
+
+Pozostałe istniejące bramki przed aktywacją splitu/publicznym rolloutem:
+
+- [ ] Debian/Ubuntu, także unprivileged kontenery: pakiety/Nginx/root-worker,
+  boot splitu, bindy, rzeczywisty source IP HA/connectora, firewall IPv4/global IPv6,
+  negatywne probes. Wynik LAN/systemd nie jest dowodem tych kontroli.
 - [ ] CA/SAN z connectora w wybranej wspieranej wersji, tokenowe entry/exit/correction bez sesji,
-  niezależność HA od browsera, backup, pełny LAN rollback i reboot; domknięcie X2 8B2.
+  niezależność HA od browsera, pełny LAN rollback i reboot; domknięcie X2 8B2.
+
+[Wyniki, ograniczenia i runbook 8B2 → 9B1 → 9B2](docs/deployment/phase9c-production-upgrade.md).
 
 ### Phase 9D — Public rollout and end-to-end verification
 
-**Status: PLANNED — wymaga ukończenia Phase 8 i bramki 9C**
+**Status: PLANNED — wymaga ukończenia Phase 8 i pozostałych bramek ingressu; zamknięcie LAN 9C ich nie zastępuje**
 
 - [ ] Osobno zatwierdzona trasa WT we współdzielonym local cloudflared bez
   zmiany innych usług; Access/IdP/JWT/Edge, publiczne negatywne probes.

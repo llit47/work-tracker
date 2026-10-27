@@ -64,6 +64,14 @@ Instalator nie otwiera firewalla i nie konfiguruje routera, publicznego IP ani t
 
 ## Update
 
+Produkcyjne przejście **8B2 → 9B1 → 9B2** opisuje osobny
+[runbook po rzeczywistej weryfikacji 9C z 27.10.2026](docs/deployment/phase9c-production-upgrade.md).
+Produkcja pozostaje na 8B2; testy zakończono wyłącznie w izolowanych Debian LXC.
+Nie uruchamiaj starego updatera ani bezpośrednio z 8B2 do 9B2, ani w celu
+wybrania historycznego 9B1: pobiera aktualny `main`, bez przypięcia celu.
+First-upgrade wymaga dokładnego baseline 9B1 i pełnego SHA równego tipowi `main`;
+po przesunięciu `main` trzeba ponownie przejrzeć cel.
+
 **Pierwsze przejście z `5d974b1` do 9B2 wymaga [procedury first-upgrade](docs/deployment/phase9b2-cutover.md#pierwsza-aktualizacja-z-5d974b1).** Nie uruchamiaj wtedy starego `update.sh`: jego kopia w `/tmp` nie instaluje nowego guarda przed migracją. Operator wybiera przejrzany pełny SHA i zaufany ref; bootstrap sprawdza rzeczywisty stary checkout, instaluje trwały checker poza nim, weryfikuje guard systemd i przekazuje PID/blokadę nowemu updaterowi. Nie wystarczy skopiować samego nowego `update.sh` do starej instalacji.
 
 Poniższa zwykła komenda służy instalacjom, które już mają mechanizm 9B2:

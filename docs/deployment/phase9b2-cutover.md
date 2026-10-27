@@ -3,7 +3,9 @@
 Narzędzia są dla Debiana/Ubuntu z systemd, Pythonem >= 3.10 i OpenSSL 3.
 Nie konfigurują Cloudflare, DNS, routera, firewalla, hypervisora ani HA.
 HTTPS oznacza przygotowanie prywatnego ingressu, **nie działającą publiczną stronę**.
-Publiczny rollout jest osobną Phase 9D po testach 9C i bramkach Phase 8.
+Publiczny rollout jest osobną Phase 9D po pełnych bramkach ingressu i Phase 8.
+[Zamknięcie 9C z 27.10.2026 i produkcyjny runbook 8B2 → 9B1 → 9B2](phase9c-production-upgrade.md)
+obejmują zweryfikowany LAN/first-upgrade, nie odbiór całego splitu.
 Wszystkie parametry i dowody operatora pozostają poza publicznym repozytorium.
 
 ## 1. Nowa instalacja LAN
@@ -82,7 +84,8 @@ tej migracji automatycznie; jawne `bootstrap` może zaktualizować własne artef
 [Debian Policy](https://www.debian.org/doc/debian-policy/ch-opersys.html#running-init-scripts)
 wymaga respektowania invoke-rc.d przez skrypty pakietów. Maska systemd jest
 dodatkowym trwałym zabezpieczeniem. Rzeczywiste zachowanie pakietów i needrestart
-w konkretnej dystrybucji wymaga testu 9C; lokalny mock apt nie jest takim dowodem.
+w konkretnej dystrybucji nadal wymaga rzeczywistego testu; zakres LAN 9C
+i lokalny mock apt nie są takim dowodem.
 
 ## 3. Przygotowanie istniejącej instalacji
 
@@ -94,13 +97,19 @@ Stary updater kopiuje siebie do `/tmp` i po merge nadal wykonuje stary kod.
 Zwykłe uruchomienie go ani skopiowanie samego nowego update.sh **nie chroni
 pierwszej migracji**. Nie uruchamiaj ich do pierwszego przejścia.
 
+Dla produkcji startującej z 8B2 najpierw wykonaj
+[kontrolowane przejście do dokładnego 9B1](phase9c-production-upgrade.md#4-kontrolowane-przejście-8b2--9b1).
+Stary updater pobrałby obecny main, więc nie służy również do wybrania tego baseline.
+
 Wymagane: root, działający standardowy LAN/backend, Debian/Ubuntu, Python,
 Git/SQLite/OpenSSL/iproute2 z dotychczasowej instalacji, dostęp do origin oraz
 niezależna konsola. Sprawdź aktualny Alembic head i stan usługi bez wypisywania
 sekretów. Wybierz pełny **przejrzany SHA** zawierający ten bootstrap. Produkcyjnie
-użyj go dopiero po merge/zatwierdzeniu i 9C; poniższe polecenia nie są zgodą na
+użyj go po zatwierdzeniu celu i ocenie wyników/ograniczeń 9C; poniższe polecenia nie są zgodą na
 deployment. Jedynym dopuszczonym refem jest `refs/heads/main`, także w CLI. Pełny SHA
-pozostaje obowiązkowy i musi być niezależnie przejrzany. Nigdy nie resetuj
+pozostaje obowiązkowy, musi być niezależnie przejrzany i równy aktualnemu
+tipowi main. Po przesunięciu main trzeba przejrzeć nowy SHA, także gdy zmieniono
+tylko dokumentację; nie podmieniaj refa. Nigdy nie resetuj
 produkcyjnego Git do oczekiwanego SHA w celu obejścia odmowy innego baseline.
 
 Zarezerwuj wyłączne okno: **żaden inny administrator, cron ani automat nie może
@@ -200,9 +209,12 @@ i symlinki są odrzucane. Kolejna zmiana checkera wymaga jawnego podniesienia
 CURRENT_CHECKER_VERSION i katalogowania poprzednich zaufanych hashy wraz z testami
 zgodności formatu stanu; nie ma automatycznego uznawania zmodyfikowanego pliku. Procedura wymiany v1 → v2 poniżej; nazwa nie dowodzi własności.
 
-Prawdziwa interpretacja prefiksu !, sandbox, UID, restart/reboot i utrata
-zasilania wymagają 9C. Testy na rzeczywistym 5d974b1/Git/SQLite/Alembic oraz
-SIGKILL mają symulowane systemctl/uprawnienia i nie są dowodem produkcyjnym.
+Rzeczywisty restart systemd oraz odmowę przez guard/systemd po SIGKILL w
+`preparing` potwierdzono w 9C na Debian LXC, 27.10.2026. Reboot, fizyczna utrata
+zasilania i SIGKILL w `migrating`/`verifying` nie są zaliczone. Lokalne testy
+5d974b1/Git/SQLite/Alembic/SIGKILL mają symulowane systemctl/uprawnienia;
+[osobny dowód operatora](phase9c-production-upgrade.md#1-potwierdzone-wyniki-i-granice-weryfikacji)
+nie rozszerza ich na nieprzetestowane scenariusze.
 
 ### Kolejne aktualizacje i przygotowanie cutoveru
 
@@ -418,7 +430,8 @@ istnieje, brakuje dowodu do automatycznego wznowienia: **bezpieczna odmowa** i
 analiza na konsoli. Nie usuwaj stanu/guarda. Przy uszkodzonym backupie/journalu
 lub innej wersji docelowej też odmawia. Przerwany normalny update napraw według
 poniższej procedury, zanim uruchomisz migrację checkera. Realny restart/boot,
-UID/sandbox i utrata zasilania wymagają 9C; lokalny SIGKILL nie jest rebootem.
+UID/sandbox migracji checkera i utrata zasilania nadal wymagają rzeczywistej
+weryfikacji; zamknięcie LAN 9C ich nie zalicza, lokalny SIGKILL nie jest rebootem.
 
 ### Ręczna retencja backupów
 
@@ -517,7 +530,9 @@ Procedura operatora na prywatnej konsoli (bez publikowania env/DB/logów):
    zdarzeń i obserwacja legalnego ruchu. Przy problemie zatrzymaj ponownie,
    zachowaj wszystkie nowe zapisy i wróć do analizy, nie do starego restore.
 
-Guard wymaga prawdziwej weryfikacji systemd poświadczeń/sandboxu i reboot w 9C.
+Guard/systemd w `preparing` i recovery z zachowaniem guarda potwierdzono w 9C.
+Nie potwierdzono rebootu, utraty zasilania ani recovery po częściowej migracji;
+[wynik i ograniczenia](phase9c-production-upgrade.md#1-potwierdzone-wyniki-i-granice-weryfikacji).
 Pierwsze przejście jest obsługiwane wyłącznie przez przypięty bootstrap opisany
 powyżej; stary staged updater nadal nie otrzymuje ochrony wstecz. Nie uruchamiaj
 go do pierwszej aktualizacji. Stabilny checker nie zależy od archiwum i pozostaje
@@ -600,28 +615,45 @@ obce istniejące katalogi nie są chmodowane. Prywatne backupy pozostają 0700/0
 
 ## 8. Walidacja i bramka 9C
 
+**9C DONE w zakresie LAN/first-upgrade i recovery `preparing`, operator-confirmed
+27.10.2026.** Udane 8B2 → 9B1 → 9B2 potwierdziło aplikację, SQLite/head, health,
+login i restart systemd. Osobny SIGKILL po trwałym `preparing` potwierdził
+journal, odmowę guarda/systemd i manual recovery do 9B1 bez restore starszej DB.
+[Pełne wyniki i runbook produkcyjny](phase9c-production-upgrade.md) rozdzielają
+te dowody od niezaliczonych scenariuszy. Poniższa pełna checklista nadal
+określa pozostałe bramki przed aktywacją splitu/publicznym rolloutem.
+
 Lokalny zestaw używa prawdziwego OpenSSL/Nginx/Uvicorn i tymczasowego SQLite.
 Sockety są na loopback, apt i systemd symulowane. Osobny proces naprawdę otrzymuje
 SIGKILL; reboot jest symulacją kolejności recovery, nie prawdziwym restartem hosta.
 Komendy i wyniki lokalne: README i opis PR. Lokalny PASS nie ustawia flag evidence.
 
-Przed rzeczywistą aktywacją operator wykonuje na odizolowanym Debianie/Ubuntu:
+Potwierdzono na rzeczywistym Debian LXC:
+
+- [x] LAN 8B2 → 9B1 → first-upgrade 9B2, poprawny backend/frontend/Alembic,
+      `20261025_08 (head)`, SQLite quick_check ok, health 200, login i restart systemd.
+- [x] Trwały guard/systemd odmawiają startu z niedokończonym `preparing`;
+      rzeczywisty SIGKILL bootstrapu i manual recovery na bieżącej DB z pozostawieniem guarda.
+- [ ] SIGKILL w `migrating`/`verifying`, fizyczna utrata zasilania, pełne recovery
+      po częściowej migracji Alembic — **NOT TESTED**.
+
+Przed rzeczywistą aktywacją splitu pozostają testy na odizolowanym Debianie/Ubuntu:
 
 - [ ] Świeży LAN i HTTPS od końca do końca, realne apt/postinst/needrestart,
       brak domyślnego Nginx po instalacji, awarii apt, upgrade i reboot.
 - [ ] Istniejący obcy Nginx/policy: odmowa lub odczyt bez zmian cudzych usług/plików.
 - [ ] Rzeczywisty systemd: root master/www-data worker, uprawnienia, sandbox,
       stop/restart updatera, boot aktywnego split i nieaktywnego przygotowania.
-- [ ] First-upgrade z rzeczywistego 5d974b1: SHA/ref, brak obcych plików,
-      ciągła blokada/PID przy exec, guard przed FF/Alembic, awarie bootstrap/handoff,
-      SIGKILL migracji i reboot bez startu niekompatybilnego kodu.
+- [ ] Pozostałe awarie first-upgrade/handoff i szczegółowe kontrole ciągłości PID/blokady,
+      SIGKILL migracji i reboot bez startu niekompatybilnego kodu. Udany first-upgrade
+      i SIGKILL `preparing` opisane wyżej nie dowodzą pozostałych faz.
 - [ ] Zimny/opóźniony start: PID przed exec, argv/env, socket przed workerem,
       UID workera i dwa stabilne obrazy, potem pojedyncza finalna walidacja.
 - [ ] Rzeczywisty update d3cb1a6/v1 → nowe wydanie/v2, osobna migracja checkera,
       SIGKILL/zasilanie przed/po wymianie i odzyskanie bez zdjęcia guarda.
-- [ ] Guard update ExecStartPre z prefiksem !, odczyt stanu 0600 i sandbox;
-      SIGKILL/zasilanie w preparing/migrating/verifying, brak startu starego kodu,
-      wznowienie dopiero po naprawie oraz zgodny update → rollback-lan.
+- [ ] Pozostałe kontrole guarda/boot: SIGKILL w migrating/verifying, utrata zasilania
+      także w preparing, brak startu niekompatybilnego kodu i wznowienie dopiero po naprawie;
+      zgodny update → rollback-lan w split. Runtime sandbox poza zakresem dowodu LAN.
 - [ ] Opóźniony start backendu/proxy i timeout; przyjęte przed/po restarcie raw
       events, korekty, sesje/limiter zachowane przy błędzie. Ręczna naprawa
       częściowo wykonanej migracji na izolowanym klonie bez restore starszej DB.
@@ -661,7 +693,7 @@ Aktualna walidacja lokalna po audycie:
 | backend_package_install_test.sh | **PASS**, ponownie wykonany w bieżącym środowisku |
 | service_user_runtime_test.sh | **SKIP / NOT RUN**, brak roota, exit **77**, nie PASS |
 | Zbiorczy runner shell | **PASS=4 SKIP=1 FAIL=0**, exit 0; runtime bez roota nadal SKIP, nie PASS |
-| Rzeczywiste apt/systemd/root-worker/reboot/firewall/probes | **NOT RUN / REQUIRES 9C** |
+| Pozostałe rzeczywiste apt/Nginx/root-worker/boot splitu/firewall/probes | **NOT VERIFIED**, poza zamkniętym zakresem LAN 9C |
 | Access/IdP/Edge i publiczny rollout | **NOT RUN / 9D** |
 
 Z root repo (binarki mogą być wypakowane poza checkoutem):
@@ -708,7 +740,7 @@ testów ani przygotowania historii w checkoutcie produkcyjnym.
 | P2 znane wersje własnych artefaktów | **FIXED**: dokładne v1/v2, prywatny backup i dziennik, atomowe ponowienie; obce/nieznane pliki odrzucane |
 | P2 ExecStart/properties | **FIXED**: ścisły kontrakt pliku i obserwowanej konfiguracji, resource overrides tylko z jawnej listy; odmowa utraty flag |
 | P2 updater w split | **FIXED**: zgodny update zachowuje unit/archiwum/generację, niezgodny blokowany przed merge; sukces i błąd przed Alembic umożliwiają LAN rollback, błąd od Alembic wymaga najpierw naprawy |
-| P1 pierwszy upgrade | **FIXED w jawnym kontrakcie LAN**: przypięty bootstrap, niezależny trwały checker, guard efektywny przed FF/Alembic, exec z tym samym PID/FD; brak automatycznego wznowienia niepewnej fazy, rzeczywisty systemd pozostaje 9C |
+| P1 pierwszy upgrade | **FIXED w jawnym kontrakcie LAN**: przypięty bootstrap, niezależny trwały checker, guard efektywny przed FF/Alembic, exec z tym samym PID/FD; brak automatycznego wznowienia niepewnej fazy; 9C potwierdza LAN/systemd i SIGKILL preparing, pozostałe fazy bez potwierdzenia |
 | P1 stabilizacja procesów | **FIXED**: dynamiczne argv/env/workery mają wspólny deadline i dwie zgodne obserwacje, obce sockety/UID odrzucane od razu, finalna walidacja raz |
 | P1/P2 checker v1 → v2 | **FIXED**: dokładny katalog historyczny, zgodność przez FF, oddzielna migracja po starym updaterze, root backup/journal/fsync i odzyskanie bez zdjęcia guarda |
 | P2 target config / P3 ref | **FIXED**: readonly target-manifest przed transakcją, nazwy kluczy bez wartości, brak first-upgrade prompts, wyłącznie main i jawny pełny SHA |
@@ -719,7 +751,7 @@ testów ani przygotowania historii w checkoutcie produkcyjnym.
 | HTTP / umask / EnvironmentFile | **FIXED**: pełna ograniczona linia statusu, nowe katalogi 0755, dekodowanie quotes/escaping bez shella i ujawniania wartości |
 | Diagnostyka apt / SKIP | **FIXED**: etap i kod/timeout, operator naprawia dpkg; brak roota zwraca 77 |
 | Privacy / docs | **FIXED**: IPv4/IPv6 oraz hostname w URL/polach, prywatna denylista, skan bez wartości; LAN/HTTPS oraz lokalne/realne dowody rozdzielone |
-| Rzeczywiste apt/systemd/root/boot i sieć | **DEFERRED do 9C**, środowisko bez roota i docelowej infrastruktury; wymagana checklista powyżej |
+| Rzeczywista infrastruktura | **PARTIAL**: 9C LAN/first-upgrade/systemd i recovery preparing potwierdzone 27.10.2026; apt/Nginx/root-worker/boot splitu/sieć i pozostałe awarie nadal wymagają checklisty powyżej |
 
 Skan prywatności jest heurystyką: nie wykrywa dowolnej obfuskacji ani każdego
 hostname poza rozpoznanymi kontekstami. Zachowaj prywatną denylistę i ręczny
