@@ -308,7 +308,9 @@ class Host:
                 if remaining <= 0: raise TimeoutError('HTTP status timeout')
                 connection.settimeout(remaining)
                 chunk = connection.recv(1)
-                require(chunk and len(line) < 8192, 'Niepełna lub zbyt długa linia statusu HTTP.')
+                require(len(line) < 8192, 'Zbyt długa linia statusu HTTP.')
+                if not chunk:
+                    raise ConnectionError('Połączenie zakończone przed pełną linią statusu HTTP.')
                 line.extend(chunk)
             match = re.fullmatch(rb'HTTP/1\.[01] ([1-5][0-9]{2}) [^\r\n]*\r\n', line)
             require(match is not None, 'Nieprawidłowa linia statusu HTTP.')
@@ -335,6 +337,7 @@ class Host:
                     'Nginx HA nie odrzuca niezaufanego lokalnego źródła.')
 
     def lan_ready(self, config):
+        wildcard = '::' if ipaddress.ip_address(config['lan_ip']).version == 6 else '0.0.0.0'
         pid = execute(['systemctl', 'show', '-p', 'MainPID', '--value', 'work-tracker.service']).decode().strip()
         require(pid.isdigit() and int(pid) > 1, 'Brak PID działającego LAN.')
         process = self.proc / pid
@@ -342,17 +345,46 @@ class Host:
         for flag, expected in (('--host', None), ('--port', str(config['ha_port'])), ('--workers', '1')):
             require(argv.count(flag) == 1 and argv.index(flag) + 1 < len(argv), 'Proces LAN ma niezgodne argumenty.')
             actual = argv[argv.index(flag) + 1]
-            require(actual in ('0.0.0.0', config['lan_ip']) if expected is None else actual == expected,
+            require(actual in (wildcard, config['lan_ip']) if expected is None else actual == expected,
                     'Proces LAN ma niezgodne parametry.')
         require(argv.count('app.main:app') == 1 and argv.count('--no-proxy-headers') == 1 and '--proxy-headers' not in argv,
                 'LAN wymaga jednego Uvicorn bez proxy headers.')
         environment = dict(v.split('=', 1) for v in process.joinpath('environ').read_bytes().decode().split('\0') if '=' in v)
         require(environment.get('INGRESS_PROFILE', 'lan') == 'lan', 'Proces nie działa w profilu LAN.')
         sockets = [s for s in self.listeners() if s[1] == config['ha_port']]
-        require(len(sockets) == 1 and sockets[0][0] in ('0.0.0.0', config['lan_ip'])
+        require(len(sockets) == 1 and sockets[0][0] in (wildcard, config['lan_ip'])
                 and f'pid={pid},' in sockets[0][2], 'Port HA nie należy wyłącznie do backendu LAN.')
         require(self.request(config['lan_ip'], config['ha_port'], config['lan_ip'], '/api/health') == 200,
                 'LAN /api/health nie działa.')
+
+    def wait_lan_health(self, config, timeout=60):
+        """Bounded local HTTP readiness only; strict runtime checks follow once."""
+        require(type(timeout) is int and 5 <= timeout <= 300, 'Readiness timeout musi wynosić 5..300 sekund.')
+        address = ipaddress.ip_address(config['lan_ip'])  # Never resolve a hostname.
+        if address.is_unspecified:
+            address = ipaddress.ip_address('127.0.0.1' if address.version == 4 else '::1')
+        require((address.is_loopback or address.is_private) and not address.is_multicast,
+                'Readiness LAN wymaga prywatnego lokalnego adresu IP.')
+        require(address.is_loopback or self.local_ip(str(address)), 'Adres LAN nie należy do tego hosta.')
+        require(type(config['ha_port']) is int and 1 <= config['ha_port'] <= 65535, 'Nieprawidłowy port LAN.')
+        config = config | {'lan_ip': str(address)}
+        deadline = time.monotonic() + timeout
+        self._probe_deadline = deadline
+        try:
+            while time.monotonic() < deadline:
+                execute(['systemctl', 'is-active', '--quiet', 'work-tracker.service'], timeout=self.io_timeout(30))
+                try:
+                    if self.request(config['lan_ip'], config['ha_port'], config['lan_ip'], '/api/health') == 200:
+                        execute(['systemctl', 'is-active', '--quiet', 'work-tracker.service'], timeout=self.io_timeout(30))
+                        return config
+                except (ConnectionError, TimeoutError):
+                    pass
+                time.sleep(min(.1, max(0, deadline - time.monotonic())))
+        except Pending:
+            pass  # The shared deadline may expire between the service and HTTP probes.
+        finally:
+            self._probe_deadline = None
+        raise Refusal(f'Timeout gotowości HTTP LAN po {timeout} s; brak commit transakcji.')
 
     def ingress_permissions(self, pid, *, starting=False):
         import pwd
@@ -433,7 +465,7 @@ class Host:
             for port in (config['ha_port'], config['browser_port']):
                 with socket.create_connection((config['lan_ip'], port), timeout=self.io_timeout(1)): pass
             return backend, pid, worker
-        except (FileNotFoundError, ConnectionRefusedError, TimeoutError) as error:
+        except (FileNotFoundError, ConnectionError, TimeoutError) as error:
             raise Pending('Usługi jeszcze nie odpowiadają.') from error
         finally:
             self._probe_deadline = None

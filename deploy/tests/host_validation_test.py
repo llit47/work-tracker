@@ -238,7 +238,7 @@ def test_backend_health_and_private_probe_status_contract(host, lan, monkeypatch
 
 
 @pytest.mark.parametrize('response,expected', [(b'HTTP/1.1 200 OK\r\n', 200), (b'HTTP/1.0 422 Unprocessable\r\n', 422),
-                                              (b'HTTP/1.1 20', None), (b'garbage\r\n', None), (b'X' * 8193, None)])
+                                              (b'HTTP/1.1 20', ConnectionError), (b'garbage\r\n', None), (b'X' * 8193, None)])
 def test_http_status_line_fragmentation_over_real_tcp(host, response, expected):
     errors = []
     with socket.socket() as server:
@@ -257,8 +257,8 @@ def test_http_status_line_fragmentation_over_real_tcp(host, response, expected):
         thread = threading.Thread(target=serve)
         thread.start()
         try:
-            if expected is None:
-                with pytest.raises(p.Refusal): host.request('127.0.0.1', server.getsockname()[1], '127.0.0.1', '/api/health')
+            if expected is None or isinstance(expected, type):
+                with pytest.raises(expected or p.Refusal): host.request('127.0.0.1', server.getsockname()[1], '127.0.0.1', '/api/health')
             else:
                 assert host.request('127.0.0.1', server.getsockname()[1], '127.0.0.1', '/api/health') == expected
         finally:

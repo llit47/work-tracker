@@ -238,7 +238,7 @@ else
         runuser -u "${SERVICE_USER}" -- "${APP_DIR}/backend/.venv/bin/python" -c \
             'import sqlite3; c=sqlite3.connect("file:/var/lib/work-tracker/work_tracker.db?mode=ro",uri=True); assert c.execute("PRAGMA quick_check").fetchall()==[("ok",)]'
     else
-        systemctl is-active --quiet work-tracker.service || fail "Service failed to start after update."
+        python3 "${APP_DIR}/deploy/lan_readiness.py" --readiness-timeout "${readiness_timeout}"
     fi
 fi
 python3 "${safety_runner}" commit

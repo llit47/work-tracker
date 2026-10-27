@@ -19,7 +19,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import time
 
 BASE = '5d974b100a92f0b7aed6aefa9939f0d5383c9cac'
 ORIGIN = 'https://github.com/llit47/work-tracker.git'
@@ -306,7 +305,7 @@ class FirstUpgrade:
 
     def verify_lan(self, directory, timeout):
         # Runs only after FF and Alembic. Exact config/unit preservation and
-        # runtime checks once; only refused/timed-out HTTP is retried.
+        # runtime checks once; transport errors use the same bounded LAN gate.
         sys.path.insert(0, str(self.layout.app / 'deploy'))
         import nginx_provision as p
         from env_file import parse
@@ -321,17 +320,7 @@ class FirstUpgrade:
             host.app_layout_ready(layout)
             host.app_permissions(layout)
             config = dict(lan_ip='127.0.0.1' if env['APP_HOST'] == '0.0.0.0' else env['APP_HOST'], ha_port=int(env['APP_PORT']))
-            deadline = time.monotonic() + timeout
-            host._probe_deadline = deadline
-            try:
-                while True:
-                    try:
-                        require(host.request(config['lan_ip'], config['ha_port'], config['lan_ip'], '/api/health') == 200)
-                        break
-                    except (ConnectionRefusedError, TimeoutError):
-                        require(time.monotonic() < deadline)
-                        time.sleep(min(.1, max(0, deadline - time.monotonic())))
-            finally: host._probe_deadline = None
+            config = host.wait_lan_health(config, timeout)
             host.lan_ready(config)
             host.app_config_preserved(env)
         except p.Refusal:

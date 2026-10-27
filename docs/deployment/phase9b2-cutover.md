@@ -330,6 +330,18 @@ niezgodny runtime od niedostępnych usług. Obcy listener, zły bind/master UID
 i worker z obcym UID są natychmiastowym błędem. Pliki, TLS/CA/ACL i polityki
 nie podlegają retry. Końcowe ścisłe sprawdzenie wykonuje się raz po readiness.
 
+Zwykły update LAN również wymaga HTTP 200 z `GET /api/health` przed commit,
+z aktywną usługą aplikacji sprawdzaną przed próbami i po odpowiedzi. Używa
+skonfigurowanego portu i lokalnego prywatnego IP, bez DNS/publicznej trasy;
+wildcardy `0.0.0.0` i `::` są sondowane przez odpowiednie loopback.
+Po readiness jednorazowo sprawdza proces, właściciela/bind listenera i zachowanie
+DB/tokena. Błąd po Alembic zachowuje bieżącą SQLite i stan manual recovery.
+
+W LAN, first-upgrade i split connection reset/refused, broken pipe, timeout
+oraz EOF przed pełną linią statusu są transportowym brakiem gotowości w tym
+samym deadline. Pełna błędna linia statusu HTTP to odmowa, podobnie jak obcy
+listener, błędny bind, TLS, UID i statyczna polityka; nie są ponawiane.
+
 Domyślny budżet readiness wynosi **60 s**, zakres **5–300 s**:
 
 ```bash
@@ -622,13 +634,14 @@ Aktualna walidacja lokalna po audycie:
 | Zestaw | Wynik |
 |---|---|
 | Backend, pełny pytest | **PASS: 751**, 27 istniejących ostrzeżeń Alembic |
-| Deploy/ingress, pełny zestaw poniżej | **PASS: 336** |
+| Deploy/ingress, pełny zestaw poniżej | **PASS: 364** |
 | 9B1 provisioning / 9B2 cutover | **PASS: 55 / 48** |
 | Regresje audytu / walidatory Host | **PASS: 42 / 62** |
 | Rzeczywisty update.sh, awarie/SQLite i LAN rollback na lokalnym Git/proxy | **PASS: 12**, systemd/build/package adapters symulowane, rzeczywisty Alembic/SQLite/SIGKILL |
 | Osobna readiness / trwały guard i runner SKIP | **PASS: 10 / 25** |
 | First-upgrade: rzeczywisty 5d974b1, Git/SQLite WAL/Alembic/Uvicorn | **PASS: 26**, delayed LAN, walidacja ref/SHA/hosta, obce pliki, blokady, przerwanie bootstrap/handoff/migracji, boot refusal; historyczny updater jako kontrola błędu |
-| Stabilizacja pre-exec / migracja rzeczywistego checkera v1 → v2 | **PASS: 13 / 17**, kontrolowane proc; SIGKILL i atomowa wymiana rzeczywiste |
+| Stabilizacja pre-exec/transportu / migracja rzeczywistego checkera v1 → v2 | **PASS: 18 / 17**, kontrolowane proc; SIGKILL i atomowa wymiana rzeczywiste |
+| Zwykły update LAN / HTTP readiness | **PASS: 23**, parser HTTP, bounded retry reset/broken-pipe/EOF, aktywność usługi, odmowa obcego listenera i rzeczywisty updater z zachowaniem SQLite |
 | Integralność historycznych fixture’ów i jawny wymóg historii bazowej | **PASS: 11**, SHA-256 każdego pliku, zgodność CHECKER_V1_SHA, odmowa zmienionego fixture’u i brakującej historii |
 | Osobna próba shallow/squash bez commita PR | **PASS: 54, FAIL: 0, SKIP: 0**, 17 checker bez historii; 37 fixture/first-upgrade po lokalnym dostarczeniu BASE + rodzica, dodatkowo 2 kontrole przygotowania PASS |
 | Privacy / proxy security / ingress config / cloudflared config | **PASS: 3 / 8 / 3 / 1** |
@@ -653,6 +666,7 @@ WORK_TRACKER_NGINX_BIN=<NGINX_BIN> WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN
   deploy/tests/first_upgrade_test.py deploy/tests/checker_migration_test.py \
   deploy/tests/historical_fixtures_test.py \
   deploy/tests/startup_stabilization_test.py \
+  deploy/tests/lan_readiness_test.py \
   deploy/tests/infrastructure_privacy_test.py deploy/tests/ingress_security_test.py \
   deploy/tests/ingress_config_test.py deploy/tests/cloudflared_config_test.py -q
 ```

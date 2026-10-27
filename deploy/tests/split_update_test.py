@@ -119,6 +119,8 @@ def updater(cutover, monkeypatch):
     common.write_text(common.read_text().replace('/run/work-tracker-deploy.lock', str(tool.layout.deploy_lock))
                       .replace('/etc/work-tracker/ingress/cutover.json', str(tool.journal))
                       .replace(c.Layout.database_url, url))
+    lan = source / 'deploy/lan_readiness.py'
+    lan.write_text(lan.read_text().replace('/etc/work-tracker/work-tracker.env', str(tool.layout.env)))
     manifest = source / 'deploy/config.manifest'
     manifest.write_text(manifest.read_text().replace(c.Layout.database_url, url))
     (source / 'release-marker').write_text('old\n')

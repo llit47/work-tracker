@@ -83,3 +83,33 @@ def test_missing_process_expires_as_unavailable_without_final_verification(runti
     r=runtime;r.state['pid']='0'
     with pytest.raises(p.Refusal,match='usługi nie osiągnęły gotowości'): c.Cutover.update_verify(r.tool,5)
     assert not r.final
+
+
+@pytest.mark.parametrize('failure', [ConnectionResetError, BrokenPipeError, ConnectionError])
+def test_transient_http_termination_then_stable_ready_and_one_final_check(runtime, monkeypatch, failure):
+    r = runtime
+    calls = []
+    def health(_):
+        calls.append(True)
+        if len(calls) == 1: raise failure('startup transport termination')
+    monkeypatch.setattr(r.host, 'backend_health', health)
+    c.Cutover.update_verify(r.tool, 5)
+    assert len(calls) == 3 and r.clock[0] == .2 and r.final == [True]
+
+
+def test_permanent_connection_reset_expires_without_final_check(runtime, monkeypatch):
+    r = runtime
+    def health(_): raise ConnectionResetError('still restarting')
+    monkeypatch.setattr(r.host, 'backend_health', health)
+    with pytest.raises(p.Refusal, match='usługi nie osiągnęły gotowości'):
+        c.Cutover.update_verify(r.tool, 5)
+    assert 5 <= r.clock[0] <= 5.1 and not r.final
+
+
+def test_complete_malformed_http_response_is_not_a_retryable_transport_failure(runtime, monkeypatch):
+    r = runtime
+    def health(_): raise p.Refusal('Nieprawidłowa linia statusu HTTP.')
+    monkeypatch.setattr(r.host, 'backend_health', health)
+    with pytest.raises(p.Refusal, match='linia statusu'):
+        c.Cutover.update_verify(r.tool, 5)
+    assert r.clock[0] == 0 and not r.final
