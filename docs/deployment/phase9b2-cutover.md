@@ -337,6 +337,15 @@ wildcardy `0.0.0.0` i `::` są sondowane przez odpowiednie loopback.
 Po readiness jednorazowo sprawdza proces, właściciela/bind listenera i zachowanie
 DB/tokena. Błąd po Alembic zachowuje bieżącą SQLite i stan manual recovery.
 
+Wcześniej, przed guardem, Git FF, zależnościami, stopem i Alembic, read-only
+preflight sprawdza istniejący `APP_HOST`/port wspólnym walidatorem readiness.
+Przyjmuje numeryczne IPv4/IPv6: wildcard, loopback i lokalne prywatne adresy,
+bez DNS/HTTP. `localhost`, inne nazwy oraz publiczne/nielokalne IP są odrzucane
+z nazwą klucza i instrukcją dla operatora. Odmowa zachowuje usługę, env, SQLite
+i Git HEAD, bez transakcji manual recovery. Operator musi jawnie zmienić bind
+po analizie dostępności LAN/HA; nie ma automatycznej zamiany na loopback.
+First-upgrade wywołuje ten sam walidator przed guardem; kontrola split bez zmian.
+
 W LAN, first-upgrade i split connection reset/refused, broken pipe, timeout
 oraz EOF przed pełną linią statusu są transportowym brakiem gotowości w tym
 samym deadline. Pełna błędna linia statusu HTTP to odmowa, podobnie jak obcy
@@ -634,14 +643,14 @@ Aktualna walidacja lokalna po audycie:
 | Zestaw | Wynik |
 |---|---|
 | Backend, pełny pytest | **PASS: 751**, 27 istniejących ostrzeżeń Alembic |
-| Deploy/ingress, pełny zestaw poniżej | **PASS: 364** |
+| Deploy/ingress, pełny zestaw poniżej | **PASS: 374** |
 | 9B1 provisioning / 9B2 cutover | **PASS: 55 / 48** |
 | Regresje audytu / walidatory Host | **PASS: 42 / 62** |
 | Rzeczywisty update.sh, awarie/SQLite i LAN rollback na lokalnym Git/proxy | **PASS: 12**, systemd/build/package adapters symulowane, rzeczywisty Alembic/SQLite/SIGKILL |
 | Osobna readiness / trwały guard i runner SKIP | **PASS: 10 / 25** |
-| First-upgrade: rzeczywisty 5d974b1, Git/SQLite WAL/Alembic/Uvicorn | **PASS: 26**, delayed LAN, walidacja ref/SHA/hosta, obce pliki, blokady, przerwanie bootstrap/handoff/migracji, boot refusal; historyczny updater jako kontrola błędu |
+| First-upgrade: rzeczywisty 5d974b1, Git/SQLite WAL/Alembic/Uvicorn | **PASS: 27**, delayed LAN, walidacja ref/SHA/hosta, obce pliki, blokady, przerwanie bootstrap/handoff/migracji, boot refusal; historyczny updater jako kontrola błędu |
 | Stabilizacja pre-exec/transportu / migracja rzeczywistego checkera v1 → v2 | **PASS: 18 / 17**, kontrolowane proc; SIGKILL i atomowa wymiana rzeczywiste |
-| Zwykły update LAN / HTTP readiness | **PASS: 23**, parser HTTP, bounded retry reset/broken-pipe/EOF, aktywność usługi, odmowa obcego listenera i rzeczywisty updater z zachowaniem SQLite |
+| Zwykły update LAN / HTTP readiness | **PASS: 32**, readonly bind preflight, parser HTTP, bounded retry reset/broken-pipe/EOF, aktywność usługi, odmowa obcego listenera i rzeczywisty updater z zachowaniem SQLite |
 | Integralność historycznych fixture’ów i jawny wymóg historii bazowej | **PASS: 11**, SHA-256 każdego pliku, zgodność CHECKER_V1_SHA, odmowa zmienionego fixture’u i brakującej historii |
 | Osobna próba shallow/squash bez commita PR | **PASS: 54, FAIL: 0, SKIP: 0**, 17 checker bez historii; 37 fixture/first-upgrade po lokalnym dostarczeniu BASE + rodzica, dodatkowo 2 kontrole przygotowania PASS |
 | Privacy / proxy security / ingress config / cloudflared config | **PASS: 3 / 8 / 3 / 1** |

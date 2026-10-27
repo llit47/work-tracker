@@ -357,17 +357,26 @@ class Host:
         require(self.request(config['lan_ip'], config['ha_port'], config['lan_ip'], '/api/health') == 200,
                 'LAN /api/health nie działa.')
 
+    def lan_bind_config(self, config):
+        """Read-only bind preflight shared with HTTP readiness; never resolve DNS."""
+        guidance = ('APP_HOST wymaga numerycznego lokalnego adresu IPv4/IPv6 (prywatnego, loopback lub wildcard). '
+                    'Nazwy hostów są nieobsługiwane. Operator musi jawnie wybrać adres '
+                    'z zachowaniem wymaganej dostępności LAN; konfiguracja nie została zmieniona.')
+        try:
+            address = ipaddress.ip_address(config['lan_ip'])
+        except (ValueError, TypeError):
+            raise Refusal(guidance) from None
+        if address.is_unspecified:
+            address = ipaddress.ip_address('127.0.0.1' if address.version == 4 else '::1')
+        require((address.is_loopback or address.is_private) and not address.is_multicast, guidance)
+        require(address.is_loopback or self.local_ip(str(address)), guidance)
+        require(type(config['ha_port']) is int and 1 <= config['ha_port'] <= 65535, 'APP_PORT wymaga portu 1..65535.')
+        return config | {'lan_ip': str(address)}
+
     def wait_lan_health(self, config, timeout=60):
         """Bounded local HTTP readiness only; strict runtime checks follow once."""
         require(type(timeout) is int and 5 <= timeout <= 300, 'Readiness timeout musi wynosić 5..300 sekund.')
-        address = ipaddress.ip_address(config['lan_ip'])  # Never resolve a hostname.
-        if address.is_unspecified:
-            address = ipaddress.ip_address('127.0.0.1' if address.version == 4 else '::1')
-        require((address.is_loopback or address.is_private) and not address.is_multicast,
-                'Readiness LAN wymaga prywatnego lokalnego adresu IP.')
-        require(address.is_loopback or self.local_ip(str(address)), 'Adres LAN nie należy do tego hosta.')
-        require(type(config['ha_port']) is int and 1 <= config['ha_port'] <= 65535, 'Nieprawidłowy port LAN.')
-        config = config | {'lan_ip': str(address)}
+        config = self.lan_bind_config(config)
         deadline = time.monotonic() + timeout
         self._probe_deadline = deadline
         try:

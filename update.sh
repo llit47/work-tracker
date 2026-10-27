@@ -109,6 +109,9 @@ if [[ -e /etc/work-tracker/ingress/cutover.json || -L /etc/work-tracker/ingress/
     ingress_update=true
     previous_manifest_sha="$(sha256sum "${MANIFEST_FILE}" | cut -d ' ' -f 1)"
     python3 "${APP_DIR}/deploy/ingress_cutover.py" update-check --manifest-sha "${previous_manifest_sha}"
+elif [[ -z "${first_upgrade_directory}" ]]; then
+    # Refuse incompatible existing LAN binds before guard/FF/dependencies/stop/Alembic.
+    python3 "${APP_DIR}/deploy/lan_readiness.py" --preflight
 fi
 id "${SERVICE_USER}" >/dev/null 2>&1 || fail "Missing system user: ${SERVICE_USER}."
 getent group "${SERVICE_USER}" >/dev/null 2>&1 || fail "Missing system group: ${SERVICE_USER}."

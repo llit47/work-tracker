@@ -223,7 +223,9 @@ Aktualne komendy i wyniki regresji audytu: [runbook 9B2](docs/deployment/phase9b
 Zwykły update LAN również wymaga HTTP 200 przed commit, w tym samym budżecie
 60 s (5–300 s); reset/broken pipe/niepełny status EOF są ponawiane, a końcowa
 walidacja pozostaje ścisła i jednorazowa. Timeout nie odtwarza SQLite.
-Pełny backend 751 PASS, deploy/ingress 364 PASS, JWT 6 PASS, frontend test/build
+Readonly preflight istniejącego bindu LAN współdzieli reguły readiness; nazwy
+takie jak `localhost` są odrzucane przed guardem/FF/stopem/Alembic, bez zmiany env.
+Pełny backend 751 PASS, deploy/ingress 374 PASS, JWT 6 PASS, frontend test/build
 i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
 Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
 osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.

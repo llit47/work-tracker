@@ -173,3 +173,52 @@ def test_actual_ordinary_lan_update_waits_before_commit_and_preserves_sqlite(upd
         assert 'commit' not in operations and u.safety.read()['phase'] == 'manual'
         assert u.backend['process'] is None and b'REQUIRES MANUAL RECOVERY' in result.stderr
         with pytest.raises(safety_module.Refusal): u.safety.allow_start()
+
+
+@pytest.mark.parametrize('address', ['0.0.0.0', '::', '127.0.0.1', '::1', '10.123.45.10', '2001:db8::10'])
+def test_bind_preflight_accepts_supported_numeric_addresses_without_http_or_changes(lan_probe, tmp_path, monkeypatch, address):
+    import lan_readiness as command
+    host, _, calls = lan_probe
+    path = tmp_path / 'app.env'
+    path.write_text(f'APP_HOST={address}\nAPP_PORT=18000\nINGRESS_PROFILE=lan\n')
+    before = path.read_bytes()
+    monkeypatch.setattr(host, 'local_ip', lambda value: value in ('10.123.45.10', '2001:db8::10'))
+    monkeypatch.setattr(host, 'request', lambda *args: pytest.fail('preflight must not contact HTTP'))
+    monkeypatch.setattr(p.socket, 'getaddrinfo', lambda *args: pytest.fail('preflight must not resolve DNS'))
+    monkeypatch.setattr(command, 'Host', lambda: host)
+    monkeypatch.setattr(command, 'Path', lambda _: path)
+    monkeypatch.setattr(command.sys, 'argv', ['lan_readiness.py', '--preflight'])
+    assert command.main() == 0 and path.read_bytes() == before and calls == []
+
+
+@pytest.mark.parametrize('problem', ['localhost', 'public', 'nonlocal'])
+def test_actual_lan_bind_refusal_precedes_guard_ff_dependencies_stop_and_alembic(updater, problem):
+    u = updater
+    first = event(u)
+    seed_identity(u)
+    assert ha(u, '/correction', {'raw_event_id': first, 'time': '07:45'})[0] == 200
+    u.tool.recover(rollback=True)
+    # A public bind fixture is never contacted; the shared validator rejects it.
+    address = {'localhost': 'localhost', 'public': str(p.ipaddress.IPv4Address(0x08080808)), 'nonlocal': '10.123.45.99'}[problem]
+    p.atomic(u.tool.layout.env, u.tool.layout.env.read_bytes().replace(b'APP_HOST=0.0.0.0\n', f'APP_HOST={address}\n'.encode()), 0o640)
+    if problem == 'localhost':
+        u.tool.host.app_control('restart')
+    def health():
+        p.require(u.actual.request('127.0.0.1', u.tool.host.config['ha_port'], '127.0.0.1', '/api/health') == 200, 'test LAN not healthy')
+    u.tool.wait(health)
+    before = database_rows(u.database), u.tool.layout.env.read_bytes(), u.git(u.app, 'rev-parse', 'HEAD')
+    process = u.backend['process']
+    guard = u.safety.layout.guard
+    guard_before = guard.read_bytes() if guard.exists() else None
+    result = u.run()
+    assert result.returncode == 1 and b'APP_HOST' in result.stderr and b'Operator' in result.stderr
+    assert b'REQUIRES MANUAL RECOVERY' not in result.stderr
+    assert before == (database_rows(u.database), u.tool.layout.env.read_bytes(), u.git(u.app, 'rev-parse', 'HEAD'))
+    assert u.backend['process'] is process and process.poll() is None
+    health()
+    assert not u.safety.layout.state.exists()
+    assert guard_before == (guard.read_bytes() if guard.exists() else None)
+    assert not list((u.tool.layout.boundary / 'updates').glob('*'))
+    assert not any(kind in ('pip', 'npm', 'alembic', 'sqlite3', 'install') or
+                   (kind == 'systemctl' and args[0] in ('daemon-reload', 'stop', 'restart')) or
+                   (kind == 'safety' and args[0] != 'check') for kind, args in u.state['calls'])

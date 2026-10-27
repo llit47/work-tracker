@@ -10,13 +10,18 @@ from nginx_provision import Host, Refusal, require
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--preflight', action='store_true', help='Read-only bind validation, without HTTP or service changes.')
     parser.add_argument('--readiness-timeout', type=int, default=60)
     args = parser.parse_args()
     try:
         env = parse(Path('/etc/work-tracker/work-tracker.env').read_bytes())
         require(env.get('INGRESS_PROFILE', 'lan') == 'lan', 'Readiness LAN wymaga profilu LAN.')
         host = Host()
-        config = host.wait_lan_health(dict(lan_ip=env['APP_HOST'], ha_port=int(env['APP_PORT'])), args.readiness_timeout)
+        config = dict(lan_ip=env['APP_HOST'], ha_port=int(env['APP_PORT']))
+        if args.preflight:
+            host.lan_bind_config(config)
+            return 0
+        config = host.wait_lan_health(config, args.readiness_timeout)
         host.lan_ready(config)
         host.app_config_preserved(env)
     except Refusal as error:

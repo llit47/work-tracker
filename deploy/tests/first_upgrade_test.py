@@ -423,6 +423,22 @@ def test_target_manifest_refuses_before_guard_ff_stop_or_migration(first,problem
     assert not any(kind=='alembic' or (kind=='systemctl' and args[0] in ('stop','restart')) for kind,args in f.state['calls'])
 
 
+def test_first_upgrade_unsupported_bind_refuses_before_guard_and_preserves_running_lan(first):
+    f = first
+    f.env.write_bytes(f.env.read_bytes().replace(b'APP_HOST=0.0.0.0\n', b'APP_HOST=localhost\n'))
+    before = f.env.read_bytes()
+    process = f.state['process']
+    result = f.upgrade()
+    assert result.returncode == 1 and b'APP_HOST' in result.stderr and b'Operator' in result.stderr
+    assert f.env.read_bytes() == before and database_rows(f.database) == f.rows
+    assert command(['git', '-C', f.app, 'rev-parse', 'HEAD']).decode().strip() == BASE
+    assert not f.guard.exists() and not (f.env.parent / 'update-state.json').exists()
+    assert f.state['process'] is process and process.poll() is None
+    f.ready()
+    assert not any(kind in ('npm', 'alembic') or (kind == 'systemctl' and args[0] in ('daemon-reload', 'stop', 'restart'))
+                   for kind, args in f.state['calls'])
+
+
 def test_new_required_target_key_already_supplied_stays_byte_identical(first):
     f=first
     f.env.write_bytes(f.env.read_bytes()+b'FUTURE_REQUIRED=public-fixture-value\n')

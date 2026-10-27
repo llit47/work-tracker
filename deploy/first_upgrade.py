@@ -241,13 +241,17 @@ class FirstUpgrade:
         layout = p.Layout()
         layout.app_unit, layout.dropins, layout.env = l.unit, l.guard.parent, l.env
         host = p.Host()
+        env = parse(l.env.read_bytes())
+        try:
+            config = host.lan_bind_config(dict(lan_ip=env['APP_HOST'], ha_port=int(env['APP_PORT'])))
+        except p.Refusal as error:
+            raise Refusal(str(error)) from None
         try:
             host.app_layout_ready(layout)
             host.app_permissions(layout)
-            env = parse(l.env.read_bytes())
             require(env.get('INGRESS_PROFILE', 'lan') == 'lan' and env.get('DATABASE_URL') == 'sqlite:////var/lib/work-tracker/work_tracker.db')
             host.app_config_preserved(env)
-            host.lan_ready(dict(lan_ip='127.0.0.1' if env['APP_HOST'] == '0.0.0.0' else env['APP_HOST'], ha_port=int(env['APP_PORT'])))
+            host.lan_ready(config)
         except p.Refusal:
             raise Refusal('Preflight istniejącego LAN odmówił; brak zmian aplikacji/DB.') from None
         # Preserve original bytes privately, never print config or tokens.
