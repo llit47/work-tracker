@@ -220,7 +220,7 @@ i trwały journal. First-upgrade dopuszcza tylko main, sprawdza readonly target
 manifest przed guardem/FF/Alembic i nie dopisuje env w trakcie transakcji.
 
 Aktualne komendy i wyniki regresji audytu: [runbook 9B2](docs/deployment/phase9b2-cutover.md#8-walidacja-i-bramka-9c).
-Pełny backend 751 PASS, deploy/ingress 325 PASS, JWT 6 PASS, frontend test/build
+Pełny backend 751 PASS, deploy/ingress 336 PASS, JWT 6 PASS, frontend test/build
 i shell config/rollback/permissions PASS. Lokalna walidacja nie zamyka 9C.
 Testy używają prawdziwego Nginx/OpenSSL/Uvicorn, tymczasowej SQLite i SIGKILL
 osobnego procesu. Apt/systemd/reboot i dowody sieci są symulowane.

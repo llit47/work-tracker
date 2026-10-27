@@ -2,8 +2,8 @@
 
 Fixed paths, OS credentials, package/build commands and systemctl observations
 are redirected in private candidate blobs. No product CLI bypass. This is NOT
-proof of systemd/root/sandbox/reboot on Debian (9C). Historical files containing
-old examples remain only in disposable directories, never public fixtures.
+proof of systemd/root/sandbox/reboot on Debian (9C). The production baseline
+needs real Git history; the later v1 runtime uses hash-pinned public fixtures.
 """
 import importlib.util
 import json
@@ -23,9 +23,9 @@ from types import SimpleNamespace
 import pytest
 from nginx_provision_test import p
 from split_update_test import database_rows
+from historical_fixtures import BASE, SHA256, historical_file, require_baseline_history
 
 ROOT = p.ROOT
-BASE = '5d974b100a92f0b7aed6aefa9939f0d5383c9cac'
 
 
 def command(args, **kwargs):
@@ -36,13 +36,18 @@ def command(args, **kwargs):
 def first(tmp_path):
     base = tmp_path
     app, release, remote = (base / n for n in ('app', 'release', 'remote.git'))
+    require_baseline_history(ROOT)
     command(['git', 'clone', '-q', '--no-hardlinks', ROOT, app])
+    # A shallow source can hold BASE under a test-only ref, outside clone's refs.
+    command(['git', '-C', app, 'fetch', '-q', '--no-tags', '--depth=2', '--update-shallow', ROOT, BASE])
     command(['git', '-C', app, 'checkout', '-q', '--detach', BASE])
     assert command(['git', '-C', app, 'rev-parse', 'HEAD']).decode().strip() == BASE
     app.chmod(0o755); (app / '.git').chmod(0o755)
     for name in ('config','HEAD','index'): (app / '.git' / name).chmod(0o644)
     assert not (app / 'deploy/update_safety.py').exists()
-    command(['git', 'clone', '-q', '--bare', app, remote])
+    # Seed the test origin from BASE, not the invoking checkout's branch refs.
+    command(['git', 'init', '-q', '--bare', '--initial-branch=main', remote])
+    command(['git', '-C', remote, 'fetch', '-q', '--no-tags', '--depth=2', app, BASE+':refs/heads/main'])
     command(['git', '-C', app, 'remote', 'set-url', 'origin', remote])
     command(['git', 'clone', '-q', remote, release])
     command(['git', '-C', release, 'checkout', '-qb', 'candidate', BASE])
@@ -241,7 +246,7 @@ with socket.socket(socket.AF_UNIX) as s:
     for name in ('pip','alembic'):
         (venv/name).write_text(driver);(venv/name).chmod(0o755)
     # Real ss is used for real process socket ownership.
-    def upgrade(failure=None, expected=None, ref='refs/heads/main', legacy=False, late_write=False, manifest_entry=None, legacy_commit=BASE):
+    def upgrade(failure=None, expected=None, ref='refs/heads/main', legacy=False, late_write=False, manifest_entry=None, legacy_updater=None):
         state['failure']=failure; state['legacy']=legacy; state['late_write']=late_write
         if manifest_entry:
             with (release/'deploy/config.manifest').open('a') as stream: stream.write('\n'+manifest_entry+'\n')
@@ -251,7 +256,8 @@ with socket.socket(socket.AF_UNIX) as s:
         target=command(['git','-C',release,'rev-parse','HEAD']).decode().strip()
         command(['git','-C',release,'push','-q','origin','HEAD:refs/heads/main'])
         if legacy:
-            old=redirected(command(['git','-C',app,'show',legacy_commit+':update.sh']).decode()).replace('[[ "${EUID}" -eq 0 ]]','true')
+            source = legacy_updater if legacy_updater is not None else command(['git','-C',app,'show',BASE+':update.sh'])
+            old=redirected(source.decode()).replace('[[ "${EUID}" -eq 0 ]]','true')
             old=old.replace('readonly SERVICE_USER="work-tracker"', f'readonly SERVICE_USER="{__import__("pwd").getpwuid(os.getuid()).pw_name}"')
             file=base/'historical-updater.sh';file.write_text(old);file.chmod(0o700)
             args=['bash',str(file)]
@@ -261,15 +267,17 @@ with socket.socket(socket.AF_UNIX) as s:
         stdout,stderr=proc.communicate(timeout=45)
         return SimpleNamespace(returncode=proc.returncode,stdout=stdout,stderr=stderr,target=target)
     def old_release_update():
-        # Real d3cb1a6 updater/helper. Only OS paths/UIDs are redirected,
-        # exactly as in the first-upgrade fixture; no safety checks are mocked.
-        history='d3cb1a6849feeee9690235fe6545578fdb1954e8'
+        # Exact historical runtime on the unchanged BASE backend/frontend tree.
+        # Validate every blob before adapting OS paths/UIDs; no safety mocks.
+        historical = {name: historical_file(name) for name in SHA256}
         target_files={str(path.relative_to(release)):path.read_bytes() for path in (release/'deploy').iterdir() if path.is_file()}
         target_files['update.sh']=(release/'update.sh').read_bytes()
         stop()
-        command(['git','-C',app,'checkout','-q','--detach',history])
+        command(['git','-C',app,'checkout','-q','--detach',BASE])
+        for name, data_bytes in historical.items():
+            (app/name).write_bytes(data_bytes)
         for name in ('common.sh','env_file.py','update_rollback.sh','update_safety.py'):
-            content=redirected(command(['git','-C',app,'show',history+':deploy/'+name]).decode())
+            content=redirected(historical['deploy/'+name].decode())
             if name=='update_safety.py':
                 content=content.replace('uid = 0','uid = os.getuid()').replace("boundary = Path('/')",f'boundary = Path({str(base)!r})')
                 content=content.replace('os.geteuid() == 0','os.geteuid() == os.getuid()')
@@ -290,7 +298,7 @@ with socket.socket(socket.AF_UNIX) as s:
                 data_bytes=data_bytes.replace(b'fcfb8ee82d5c404e721b3e8188b07c514b60f69a4139669be390060353cb6476',__import__('hashlib').sha256(old_checker).hexdigest().encode())
             (release/name).write_bytes(data_bytes)
         assert start();ready()
-        result=upgrade(legacy=True,legacy_commit=history)
+        result=upgrade(legacy=True,legacy_updater=historical['update.sh'])
         if result.returncode: return result,old_checker
         ready()
         # The unchanged old staged updater finished; new checkout accepted v1.

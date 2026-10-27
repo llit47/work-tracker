@@ -7,12 +7,12 @@ import multiprocessing
 import os
 from pathlib import Path
 import signal
-import subprocess
 from types import ModuleType
 
 import pytest
 from nginx_provision_test import p
 import update_safety as u
+from historical_fixtures import historical_file
 
 
 def load_checker(path):
@@ -29,7 +29,7 @@ def versions(tmp_path):
     layout.backups=tmp_path/'backups';layout.deploy_lock=tmp_path/'deploy.lock'
     layout.guard.parent.mkdir(parents=True,mode=0o755);layout.guard.parent.parent.chmod(0o755);layout.backups.mkdir(mode=0o700)
     layout.deploy_lock.write_bytes(b'');layout.deploy_lock.chmod(0o600)
-    source=subprocess.check_output(['git','show','d3cb1a6849feeee9690235fe6545578fdb1954e8:deploy/update_safety.py'],cwd=p.ROOT)
+    source=historical_file('deploy/update_safety.py')
     historical=tmp_path/'historical-v1.py';u.atomic(historical,source)
     path=tmp_path/'update-safety.py';u.atomic(path,source,0o644)
     u.atomic(layout.guard,u.BOOTSTRAP_GUARD,0o644)
@@ -53,7 +53,7 @@ def test_old_staged_helper_finishes_across_checkout_change_then_versions_migrate
     with pytest.raises(u.Refusal): locked_migrate(safety)
     old.transition('migrating');old.transition('verifying')
     old.allow_start();safety.allow_start()
-    old.transition('commit')  # This really is the unchanged d3cb1a6 implementation.
+    old.transition('commit')  # The pinned, unchanged historical v1 implementation.
     guard=safety.layout.guard.read_bytes()
     locked_migrate(safety)
     assert u.checker_version(path.read_bytes())==2

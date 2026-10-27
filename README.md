@@ -507,6 +507,13 @@ Brak rzeczywistych binarek jest błędem tych testów, nie cichym PASS/skip.
 Testy 9B2 symulują apt/systemd/reboot; nie zastępują testu na nowym systemie.
 Dodatkowe regresje audytu: `ingress_audit_test.py`, `host_validation_test.py`,
 `split_update_test.py`, `update_readiness_test.py`, `update_safety_test.py`, `checker_migration_test.py`, `startup_stabilization_test.py` i `first_upgrade_test.py` w `deploy/tests/` (ten sam runner pytest).
+Historyczny runtime v1 jest zapisany jako fixture’y z przypiętymi SHA-256;
+testy nie potrzebują historycznych commitów PR. First-upgrade celowo wymaga
+rzeczywistego drzewa bazowego Phase 9B1 i jego rodzica: użyj pełnej historii
+(`fetch-depth: 0` w CI) albo jawnie przygotuj płytki checkout testowy według
+[instrukcji fixture’ów](deploy/tests/fixtures/README.md). Brak historii to FAIL,
+nie SKIP. `backend/.venv/bin/python deploy/tests/history_portability_check.py`
+sprawdza te regresje w płytkim snapshotcie z jednym commitem, bez commita PR.
 Test `service_user_runtime_test.sh` bez roota zwraca **77 = SKIP/NOT RUN**,
 nie PASS. Przerwij raportowanie tego kroku jako sukcesu.
 Opcjonalna prywatna denylista: `WT_PRIVATE_INFRASTRUCTURE_DENYLIST` wskazuje

@@ -622,13 +622,15 @@ Aktualna walidacja lokalna po audycie:
 | Zestaw | Wynik |
 |---|---|
 | Backend, pełny pytest | **PASS: 751**, 27 istniejących ostrzeżeń Alembic |
-| Deploy/ingress, pełny zestaw poniżej | **PASS: 325** |
+| Deploy/ingress, pełny zestaw poniżej | **PASS: 336** |
 | 9B1 provisioning / 9B2 cutover | **PASS: 55 / 48** |
 | Regresje audytu / walidatory Host | **PASS: 42 / 62** |
 | Rzeczywisty update.sh, awarie/SQLite i LAN rollback na lokalnym Git/proxy | **PASS: 12**, systemd/build/package adapters symulowane, rzeczywisty Alembic/SQLite/SIGKILL |
 | Osobna readiness / trwały guard i runner SKIP | **PASS: 10 / 25** |
 | First-upgrade: rzeczywisty 5d974b1, Git/SQLite WAL/Alembic/Uvicorn | **PASS: 26**, delayed LAN, walidacja ref/SHA/hosta, obce pliki, blokady, przerwanie bootstrap/handoff/migracji, boot refusal; historyczny updater jako kontrola błędu |
 | Stabilizacja pre-exec / migracja rzeczywistego checkera v1 → v2 | **PASS: 13 / 17**, kontrolowane proc; SIGKILL i atomowa wymiana rzeczywiste |
+| Integralność historycznych fixture’ów i jawny wymóg historii bazowej | **PASS: 11**, SHA-256 każdego pliku, zgodność CHECKER_V1_SHA, odmowa zmienionego fixture’u i brakującej historii |
+| Osobna próba shallow/squash bez commita PR | **PASS: 54, FAIL: 0, SKIP: 0**, 17 checker bez historii; 37 fixture/first-upgrade po lokalnym dostarczeniu BASE + rodzica, dodatkowo 2 kontrole przygotowania PASS |
 | Privacy / proxy security / ingress config / cloudflared config | **PASS: 3 / 8 / 3 / 1** |
 | JWTValidator cloudflared | **PASS: 6 scenariuszy**, lokalny JWKS TLS, bez tunelu |
 | Frontend npm test i npm run build | **PASS** |
@@ -649,6 +651,7 @@ WORK_TRACKER_NGINX_BIN=<NGINX_BIN> WORK_TRACKER_CLOUDFLARED_BIN=<CLOUDFLARED_BIN
   deploy/tests/host_validation_test.py deploy/tests/split_update_test.py \
   deploy/tests/update_readiness_test.py deploy/tests/update_safety_test.py \
   deploy/tests/first_upgrade_test.py deploy/tests/checker_migration_test.py \
+  deploy/tests/historical_fixtures_test.py \
   deploy/tests/startup_stabilization_test.py \
   deploy/tests/infrastructure_privacy_test.py deploy/tests/ingress_security_test.py \
   deploy/tests/ingress_config_test.py deploy/tests/cloudflared_config_test.py -q
@@ -663,6 +666,15 @@ migracje SQLite, w tym testową częściową DDL; pełne migracje są też w bac
 Migracje artefaktów sprawdzają ponowienie po błędzie przed/po atomowej wymianie;
 cutover nadal sprawdza rzeczywiste SIGTERM/SIGKILL osobnego procesu. Updater dodatkowo otrzymuje SIGKILL po zaakceptowanym zapisie HA; bieżące wiersze pozostają, a kolejny start jest blokowany.
 Brak końcowych błędów wykonanych testów. SKIP runtime nie jest zaliczany jako PASS.
+
+Historyczny checker v1 i jego rzeczywisty updater/helpery są fixture’ami z
+przypiętymi SHA-256, w tym zgodnością checkera z `CHECKER_V1_SHA`; testy nie
+odczytują już commita PR z Git. First-upgrade nadal świadomie testuje rzeczywiste
+drzewo `5d974b1` i jego rodzica. Wymaga pełnej historii albo jawnego przygotowania
+płytkiego checkoutu testowego; brak tych obiektów to FAIL, nigdy SKIP.
+[Proweniencja, komendy przygotowania historii i test shallow/squash](../../deploy/tests/fixtures/README.md)
+opisują również izolowany `history_portability_check.py`. Nie uruchamiać tych
+testów ani przygotowania historii w checkoutcie produkcyjnym.
 
 ## 9. Rozstrzygnięcie audytu
 

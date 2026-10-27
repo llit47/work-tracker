@@ -639,6 +639,8 @@ Dowody i ograniczenia: [runbook 9B1](docs/deployment/phase9b1-nginx.md).
 - [x] First-upgrade: tylko main + pełny SHA; readonly target-manifest preflight
   przed guardem/FF/Alembic; brak późniejszych pytań/dopisywania env.
 - [x] Test kontraktu dostarczonego unitu z walidatorem i zbiorczy runner 0/77/FAIL.
+- [x] Historyczny runtime v1 w fixture’ach z przypiętymi SHA-256, bez zależności
+  od commita PR; jawny wymóg historii bazowej i test checkoutu shallow/squash.
 - [ ] Weryfikacja rzeczywistego apt/systemd/root-worker/reboot i izolacji sieci — Phase 9C.
   Obejmuje nowy guard aktualizacji, awarie migracji i bezpieczną ręczną naprawę.
 
